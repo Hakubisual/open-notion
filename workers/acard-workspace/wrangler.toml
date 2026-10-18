@@ -1,0 +1,12 @@
+name = "acard-workspace"
+main = "index.js"
+compatibility_date = "2026-10-15"
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "WORKSPACE"
+class_name = "WorkspaceStore"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WorkspaceStore"]

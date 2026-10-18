@@ -1,0 +1,61 @@
+/* Acard phone and dark shell. StyleGallery fixed-sidenav-shell owns drawer
+   scrolling; imposter layers the backdrop; cluster wraps metadata and actions. */
+.reader .drawer-backdrop, .reader .drawer-close { display: none; }
+.reader .menu, .reader .overlay .sheet { background: var(--surface); color: var(--fg); border-color: var(--line); }
+.reader .overlay { overscroll-behavior: contain; }
+.reader .overlay .sheet { overscroll-behavior: contain; }
+.reader .tree a.on { background: var(--accent-soft); color: var(--accent-strong); }
+.reader .page-head .pageicon { background: var(--bg-soft); }
+.reader .side-root > .row > a { color: var(--accent-strong); }
+.reader .kbd { border: 1px solid var(--line); }
+html[data-theme="dark"] .reader .page-head .pageicon img:not(.mark) { filter: invert(1) hue-rotate(180deg) brightness(1.6); }
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) .reader .page-head .pageicon img:not(.mark) { filter: invert(1) hue-rotate(180deg) brightness(1.6); }
+  html:not([data-theme="light"]):not([data-theme="dark"]) #theme .t-light { display: none; }
+  html:not([data-theme="light"]):not([data-theme="dark"]) #theme .t-dark { display: inline; }
+}
+
+@media (max-width: 899px) {
+  html.drawer-open { overflow: hidden; }
+  .reader.drawer-open { position: fixed; top: var(--drawer-scroll-top); width: 100%; overflow: hidden; }
+  .reader .mbar { padding-top: env(safe-area-inset-top); height: calc(52px + env(safe-area-inset-top)); }
+  .reader .mbar #menu { width: 44px; height: 44px; border: 0; border-radius: 10px; }
+  .reader .sidebar, .reader .sidebar.open, html.side-collapsed .reader .sidebar {
+    display: flex; width: min(320px, calc(100vw - 48px)); max-height: none;
+    padding: calc(18px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+    border-radius: 0; border-top: 0; overscroll-behavior: contain;
+    visibility: hidden; transition: transform var(--dur-3) var(--ease-out), visibility 180ms;
+  }
+  .reader .sidebar.open, html.side-collapsed .reader .sidebar.open { visibility: visible; }
+  .reader .sidebar.open::after { content: none; }
+  .reader .drawer-backdrop:not([hidden]) {
+    display: block; position: fixed; inset: 0; z-index: 45; width: 100%; height: 100%;
+    padding: 0; border: 0; border-radius: 0; background: rgba(20, 18, 32, .48); cursor: pointer;
+  }
+  .reader .drawer-close { display: inline-flex; width: 44px; height: 44px; border: 0; border-radius: 10px; font-size: var(--fs-24); }
+  .reader .side-brand { padding-right: 0; margin-bottom: 12px; }
+  .reader #palette-open { display: flex; min-height: 44px; }
+  .reader .side-foot { position: sticky; bottom: calc(-16px - env(safe-area-inset-bottom)); margin-top: 10px; padding: 8px 0; background: var(--sidebar); border-top: 1px solid var(--line); }
+  .reader .side-foot .icon { width: 44px; height: 44px; }
+  .reader .side-new, .reader .tree a, .reader .brand, .reader .more { min-height: 44px; }
+  .reader .page-head-row { gap: 12px; flex-wrap: wrap; padding-bottom: 8px; }
+  .reader .page-head .pageicon { flex-shrink: 0; }
+  .reader .page-actions { flex-wrap: wrap; justify-content: flex-end; gap: 0; margin-left: auto; }
+  .reader .page-actions .icon { width: 44px; height: 44px; min-width: 44px; }
+  .reader .pa-share { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 10px; }
+  .reader .byline { gap: 8px 12px; margin-bottom: 24px; }
+  .reader .byline > span { padding: 0; border: 0; }
+  .reader .byline .chip, .reader .byline .chip + .chip { margin-left: 0; padding: 0 10px; }
+  .reader .menu { min-width: 220px; max-width: calc(100vw - 36px); }
+  .reader .menu a, .reader .menu .menuitem { min-height: 44px; }
+  .reader .overlay { padding: calc(64px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom)); }
+  .reader .overlay .sheet { max-height: calc(100dvh - 96px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .reader .overlay .close { min-height: 44px; }
+  .reader .thumbbar { padding-bottom: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader .sidebar, .reader .sidebar.open { transition: none; }
+}
+

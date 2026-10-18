@@ -1,0 +1,3 @@
+# Built by scripts/build-editor-next.ts; tests/editor-next.test.ts compares bytes, so checkout must not convert line endings.
+assets/features/lazy/editor-next.js -text
+assets/features/lazy/editor-next.css -text

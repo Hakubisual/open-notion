@@ -1,0 +1,31 @@
+{
+  "name": "opennotion-desktop",
+  "productName": "OpenNotion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenNotion desktop client: connects to an OpenNotion server on your network",
+  "author": "OpenNotion contributors",
+  "license": "MIT",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "38.2.0",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "io.github.opennotion.desktop",
+    "productName": "OpenNotion",
+    "directories": { "output": "out", "buildResources": "build" },
+    "files": ["main.cjs", "preload.cjs", "connect.html", "icon.png", "package.json"],
+    "asar": true,
+    "artifactName": "OpenNotion-${version}-${os}-${arch}.${ext}",
+    "publish": null,
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "icon.png" },
+    "nsis": { "oneClick": true, "perMachine": false, "artifactName": "OpenNotion-Setup-${version}.${ext}", "createDesktopShortcut": true, "createStartMenuShortcut": true },
+    "mac": { "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }], "category": "public.app-category.productivity", "icon": "icon.png", "identity": null },
+    "linux": { "target": [{ "target": "AppImage", "arch": ["x64"] }], "category": "Office", "icon": "icon.png" }
+  }
+}

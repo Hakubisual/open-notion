@@ -1,0 +1,62 @@
+(function () {
+  var editor = window.AcardEditor;
+  if (!editor) return;
+  var saved = new Map();
+  function stable(value) {
+    if (Array.isArray(value)) return value.map(stable);
+    if (value && typeof value === "object") {
+      var result = {};
+      Object.keys(value).sort().forEach(function (key) { result[key] = stable(value[key]); });
+      return result;
+    }
+    return value;
+  }
+  function hash(block) {
+    var text = JSON.stringify(stable({ id: block.id, type: block.type || "paragraph", text: block.text || "",
+      checked: block.checked === true, indent: block.indent || 0, meta: block.meta || null }));
+    var value = 5381;
+    for (var i = 0; i < text.length; i++) value = ((value << 5) + value + text.charCodeAt(i)) | 0;
+    return value >>> 0;
+  }
+  function remember(slug, title, blocks, updated) {
+    var state = { title: title, updated: updated, order: blocks.map(function (block) { return block.id; }),
+      hashes: new Map(blocks.map(function (block) { return [block.id, hash(block)]; })) };
+    saved.set(slug, state);
+    return state;
+  }
+  async function read(slug) {
+    var current = await editor.api("/page/" + encodeURIComponent(slug));
+    return remember(slug, current.page.title, current.blocks, current.page.updated);
+  }
+  editor.provide("changed-blocks", { send: async function (slug, payload, previous) {
+    // Freeze the submitted state before an asynchronous read or network send.
+    payload = JSON.parse(JSON.stringify(payload));
+    var base = saved.get(slug) || await read(slug);
+    var next = new Map(payload.blocks.map(function (block) { return [block.id, hash(block)]; }));
+    var order = payload.blocks.map(function (block) { return block.id; });
+    var delta = { base_updated: base.updated, upserts: [], deletes: base.order.filter(function (id) { return !next.has(id); }) };
+    payload.blocks.forEach(function (block, ord) {
+      if (base.hashes.get(block.id) !== next.get(block.id)) delta.upserts.push(Object.assign({}, block, { ord: ord }));
+    });
+    if (JSON.stringify(order) !== JSON.stringify(base.order)) delta.order = order;
+    if (payload.title !== base.title) delta.title = payload.title;
+    if (!delta.upserts.length && !delta.deletes.length && !delta.order && delta.title === undefined) {
+      return new Response(JSON.stringify({ ok: true, updated: base.updated, blocks: order.length }));
+    }
+    var response = await fetch("/api/page/" + encodeURIComponent(slug) + "/blocks", {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(delta)
+    });
+    if (response.status === 409) {
+      await read(slug);
+      // Keep the existing full-save conflict policy and transport composition.
+      // Never persist a delta whose baseline would disappear after a reload.
+      saved.delete(slug);
+      return previous.call(editor, slug, payload);
+    }
+    if (response.ok) {
+      var result = await response.clone().json();
+      remember(slug, payload.title, payload.blocks, result.updated);
+    }
+    return response;
+  } });
+})();

@@ -1,0 +1,65 @@
+/* Page header from the draft, with the owner's gradient covers instead of photos. StyleGallery frame (cover slot), imposter (icon over the cover edge), cluster (meta row). */
+.reader article, .reader .blocks, .reader .backlinks, .reader .foot, .reader .toc, .reader .results { max-width: none; }
+.reader article > :not(.page-head):not(.overview):not(.page-top):not(.blocks) { max-width: 940px; }
+.reader .blocks { max-width: 1170px; }
+.reader .page-head { position: relative; margin: 0 calc(-1 * var(--page-pad-right)) 0 calc(-1 * var(--page-pad)); }
+.reader .page-head .pagecover { position: relative; height: 198px; margin: 0; overflow: clip; }
+.reader .page-head .pagecover:not(.grad) { background: var(--cover); }
+.reader .page-head .pagecover img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 0 50%; }
+.reader .page-head-row { position: relative; display: flex; align-items: flex-start; justify-content: space-between; padding: 0 var(--page-pad-right) 0 var(--page-pad); min-height: 64px; }
+.reader .page-head .pageicon {
+  display: grid; place-items: center; width: 88px; height: 88px; margin: -44px 0 0; font-size: var(--fs-44);
+  background: var(--surface); border: 0; border-radius: 16px; box-shadow: 0 2px 10px rgba(40, 36, 70, .08), 0 0 0 1px rgba(40, 36, 70, .04);
+}
+.reader .page-head .pageicon img { width: 88px; height: 88px; border-radius: 16px; }
+.reader .page-head .pageicon .ico { width: 44px; height: 44px; color: var(--fg-dim); }
+.page-actions { display: flex; align-items: center; gap: 4px; margin-top: 14px; }
+.page-actions .icon { width: 38px; height: 38px; min-width: 38px; border-radius: 8px; color: var(--fg); background: transparent; border: 0; }
+.page-actions .icon .ico { width: 20px; height: 20px; }
+.page-actions .icon:hover, .pa-share:hover { background: var(--bg-soft); }
+.pa-share { height: 38px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-15); cursor: pointer; }
+#fav[aria-pressed="true"] { color: #e3a008; }
+#fav[aria-pressed="true"] .ico { fill: currentColor; }
+.page-actions .menu { top: calc(100% + 4px); }
+.reader article h1 { margin: 6px 0 14px; font-size: var(--fs-44); line-height: 1.2; font-weight: 800; letter-spacing: -.03em; color: var(--fg); }
+.reader .lede { margin: 0 0 14px; font-size: var(--fs-17); color: var(--fg-dim); }
+.fd-headtags:empty{min-height:26px;margin:8px 0 14px}
+.reader .byline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 0; margin: 0 0 30px; color: var(--fg-dim); font-size: var(--fs-14); }
+.reader .byline > span { display: inline-flex; align-items: center; gap: 8px; padding: 0 16px; border-left: 1px solid var(--line); }
+.reader .byline > span:first-child { padding-left: 0; border-left: 0; }
+.reader .byline .who { color: var(--fg-dim); font-weight: 400; }
+.reader .byline .avatars { display: inline-flex; }
+.reader .byline .avatars img, .reader .byline .avatars i { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--bg); margin-left: -8px; background: var(--accent-soft); object-fit: cover; }
+.reader .byline .avatars > :first-child { margin-left: 0; }
+.reader .byline .avatars i { display: inline-grid; place-items: center; font: 700 var(--fs-12)/1 var(--font-body); color: var(--accent-strong); font-style: normal; }
+.reader .byline .when .ico { width: 17px; height: 17px; }
+.reader .byline .chip { height: 30px; padding: 0 11px; gap: 6px; margin-left: 8px; border: 0; border-radius: 8px; background: var(--bg-soft); color: var(--fg); font-size: var(--fs-14); }
+.reader .byline span.chip { border-left: 0; }
+.reader .byline .chip + .chip { margin-left: 8px; }
+.reader .byline .chip .ico { width: 16px; height: 16px; color: var(--fg-dim); }
+
+@media (max-width: 899px) {
+  .reader .page-head { margin: 0 -18px; }
+  .reader .page-head .pagecover { height: 132px; }
+  .reader .page-head-row { padding: 0 18px; }
+  .reader .page-head .pageicon, .reader .page-head .pageicon img { width: 64px; height: 64px; }
+  .reader .page-head .pageicon { margin-top: -32px; border-radius: 14px; }
+  .page-actions { margin-top: 8px; }
+  .pa-share { display: none; }
+  .reader article h1 { font-size: var(--fs-28); }
+  .reader .byline { font-size: var(--fs-13); }
+  .reader .byline > span { padding: 0 10px; }
+}
+
+.grad { background-image: var(--grad-glow), var(--grad-1); background-size: cover; }
+.grad.g2 { background-image: var(--grad-glow), var(--grad-2); }
+.grad.g3 { background-image: var(--grad-glow), var(--grad-3); }
+.grad.g4 { background-image: var(--grad-glow), var(--grad-4); }
+.grad.g5 { background-image: var(--grad-glow), var(--grad-5); }
+.grad.g6 { background-image: var(--grad-glow), var(--grad-6); }
+.reader .page-head .pagecover.grad { background-color: var(--bg-soft); background-size: cover; }
+.reader .brandcover::before { content: ""; position: absolute; inset: 0; background: url("/cover-pattern.svg") 0 0 / 46px repeat; opacity: .07; }
+html[data-theme="dark"] .reader .brandcover::before { opacity: .06; filter: invert(1); }
+.reader .page-head .brandcover img { position: absolute; right: 9%; top: 24px; width: 150px; height: 150px; opacity: .55; }
+@media (max-width: 899px) { .reader .page-head .brandcover img { top: 18px; width: 96px; height: 96px; } }
+.reader .pageicon img.mark { width: 60px; height: 60px; }

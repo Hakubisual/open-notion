@@ -1,0 +1,87 @@
+/* Acard inline tables: StyleGallery tab-strip (scrolling peer tabs adaptation),
+   media-object (avatar/name pair), and box (cell spacing).
+   The frame owns horizontal scrolling; the reader page never does. */
+.reader article > .blocks:has(.table-section) { max-width: 1170px; }
+.reader main.wide article:has(> .page-head) > .dbbrowser[data-db] { max-width: 100%; }
+.reader .table-section, .reader .dbbrowser { min-width: 0; max-width: 100%; margin: 26px 0; }
+.reader .table-heading { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; padding: 14px 0 0; border-top: 1px solid var(--line); font-size: var(--fs-19); font-weight: 700; line-height: 1.5; }
+.reader .table-heading .ico { width: 22px; height: 22px; flex-basis: 22px; }
+.reader .page-top + .dbbrowser, .reader .page-top + .blocks > .table-section:first-child { margin-top: 0; }
+.reader .page-top + .dbbrowser .table-heading, .reader .page-top + .blocks > .table-section:first-child .table-heading { border-top: 0; padding-top: 0; }
+.reader .table-toolbar, .reader .dbbrowser .dbbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 18px; padding: 0; border: 0; margin: 0 0 4px; }
+.reader .table-tabs, .reader .dbbrowser .dbtabs { display: flex; align-items: center; flex-wrap: nowrap; overflow-x: auto; gap: 2px; width: auto; min-width: 0; }
+.reader .table-tab, .reader .dbbrowser .dbtab { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 8px; padding: 10px 12px; min-height: 42px; border-radius: 0; background: none; color: var(--fg-dim); font-size: var(--fs-14); font-weight: 400; line-height: 1.5; white-space: nowrap; cursor: pointer; }
+.reader .table-tab.on, .reader .dbbrowser .dbtab.on { color: var(--fg); background: none; box-shadow: inset 0 -2px var(--fg); }
+.reader .table-new { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; margin-left: auto; padding: 8px 0 8px 10px; border-radius: 9px; background: var(--accent-strong); color: var(--on-accent); font-size: var(--fs-14); line-height: 20px; text-decoration: none; }
+.reader .table-new-tail { display: inline-flex; align-items: center; justify-content: center; width: 34px; margin-left: 5px; border-left: 1px solid color-mix(in srgb, var(--on-accent) 22%, transparent); }
+.reader .table-new:hover { background: var(--accent-strong); text-decoration: none; }
+.reader .table-new:focus-visible, .reader .stable:focus-visible, .reader .dbtablewrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.reader .stable, .reader .dbtablewrap { width: 100%; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; margin: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.reader .stable table, .reader .dbtablewrap .dbtable { display: table; width: 100%; min-width: 680px; table-layout: auto; margin: 0; border: 0; border-collapse: separate; border-spacing: 0; overflow: visible; font-size: var(--fs-14); line-height: 1.5; }
+.reader .stable th, .reader .stable td, .reader .dbtable th, .reader .dbtable td { height: 39px; padding: 6px 20px; text-align: left; vertical-align: middle; border: 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: none; white-space: nowrap; }
+.reader .stable th, .reader .dbtablewrap .dbtable th { height: 42px; font-size: var(--fs-13); font-weight: 400; color: var(--fg-dim); background: var(--surface); }
+.reader .stable :is(th, td):last-child, .reader .dbtable :is(th, td):last-child { border-right: 0; }
+.reader .stable tbody tr:last-child td, .reader .dbtable tbody:last-child tr:last-child td, .reader .dbtable tfoot tr:last-child td { border-bottom: 0; }
+.reader :is(.stable, .dbtable) :is(th, td) { max-width: 420px; }
+.reader .stable :is(th, td) { white-space: normal; overflow-wrap: anywhere; }
+.reader .thname { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.reader .thname .ico { width: 15px; height: 15px; flex-basis: 15px; }
+.reader .stable .table-select, .reader .dbtable .table-select { width: 48px; min-width: 48px; padding: 0; text-align: center; }
+.reader .table-check { display: inline-block; width: 15px; height: 15px; vertical-align: middle; border: 1px solid color-mix(in srgb, var(--fg-dim) 55%, var(--surface)); border-radius: 3px; }
+.reader .table-person { display: inline-flex; align-items: center; gap: 8px; }
+.reader .table-person img, .reader .table-person i { flex: 0 0 24px; width: 24px; height: 24px; margin: 0; border-radius: 50%; object-fit: cover; }
+.reader .table-person i { display: inline-grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-12); font-style: normal; }
+.reader :is(.stable, .dbbrowser, .dbprops) .tag { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 3px 12px; font-size: var(--fs-12); font-weight: 500; line-height: 1.5; white-space: nowrap; box-shadow: none; }
+.reader :is(.stable, .dbbrowser, .dbprops) .tag.green { background: var(--tag-green-bg); color: var(--tag-green-fg); }
+.reader :is(.stable, .dbbrowser, .dbprops) .tag.blue { background: var(--tag-blue-bg); color: var(--tag-blue-fg); }
+.reader :is(.stable, .dbbrowser, .dbprops) .tag.purple { background: var(--tag-purple-bg); color: var(--tag-purple-fg); }
+.reader :is(.stable, .dbbrowser, .dbprops) :is(.tag.red, .tag.pink) { background: var(--tag-red-bg); color: var(--tag-red-fg); }
+.reader :is(.stable, .dbbrowser, .dbprops) .tag.gray { background: var(--tag-gray-bg); color: var(--tag-gray-fg); }
+.reader :is(.stable, .dbbrowser, .dbprops) .tag.yellow { background: var(--tag-yellow-bg); color: var(--tag-yellow-fg); }
+.reader :is(.stable, .dbbrowser, .dbprops) .table-status::before { content: ""; display: block; width: 6px; height: 6px; margin: 0; border-radius: 50%; background: currentColor; color: inherit; }
+.reader .dbtable tbody tr:has(.tag.decide) { background: none; }
+.reader .dbtable tbody tr:has(.tag.decide) td:first-child { box-shadow: none; }
+.reader .stable tbody tr:hover, .reader .dbtable tbody tr:hover { background: var(--bg-soft); }
+.reader .dbtable .rowtitle { padding: 0; font-weight: 400; min-height: 44px; display: inline-flex; align-items: center; }
+.reader .dbtable .docicon { display: none; }
+.reader :is(.stable, .dbbrowser) .numwrap { display: flex; align-items: center; gap: 10px; min-width: 148px; }
+.reader :is(.stable, .dbbrowser) .numtext { order: -1; min-width: 38px; font-size: var(--fs-14); color: var(--fg); font-variant-numeric: tabular-nums; }
+.reader :is(.stable, .dbbrowser) .numbartrack { flex: 1; min-width: 90px; height: 11px; border-radius: 999px; background: var(--bar-track); overflow: hidden; }
+.reader :is(.stable, .dbbrowser) .numbar { display: block; height: 100%; border-radius: inherit; background: #70aaf4; }
+.reader :is(.stable, .dbbrowser) .complete .numbar { background: #70bba5; }
+.reader .dbbrowser :is(.dbbody, .dbhost) { min-width: 0; max-width: 100%; }
+.reader .dbbrowser .dbcellhost { padding: 0 20px; }
+.reader .dbbrowser .dbcell { min-height: 38px; padding: 0; }
+.reader .dbbrowser .dbinput { font-size: var(--fs-14); font-weight: 400; }
+.reader .dbbrowser .dbtitle { min-width: 0; }
+.reader .dbbrowser .c-title { position: relative; }
+.reader .dbbrowser .dbopen { position: absolute; right: 0; opacity: 0; background: var(--surface); }
+.reader .dbbrowser .c-title:is(:hover, :focus-within) .dbopen { opacity: 1; }
+.reader .dbbrowser .dbth { padding: 0; }
+.reader .dbbrowser .dbresize { right: 0; }
+.reader .dbbrowser .dbthname { display: flex; align-items: center; gap: 8px; padding: 0; font-size: var(--fs-13); font-weight: 400; color: var(--fg-dim); }
+.reader .dbbrowser .dbthname .ico { width: 15px; height: 15px; }
+.reader .dbbrowser :is(.dbdatebutton, .dbnumberbutton) { border: 0; padding: 0; background: none; color: var(--fg); font: inherit; cursor: pointer; text-align: left; }
+.reader .dbbrowser .dbnew-split { gap: 0; padding: 0; }
+.reader .dbbrowser .dbnew-split button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.reader .dbbrowser .dbnew-main { padding: 8px 10px; }
+.reader .dbbrowser .table-new-tail { margin: 0; min-height: 36px; border-left: 1px solid #ffffff38; }
+.reader .dbbrowser .dbstatus { position: absolute; margin: 3px 0; font-size: var(--fs-11); }
+.reader .table-check { margin: 0; accent-color: var(--accent); cursor: pointer; }
+.reader span.table-check.on { background: var(--accent); border-color: var(--accent); }
+.reader span.table-check.on::after { content: "✓"; display: block; color: var(--on-accent); font-size: var(--fs-11); line-height: 13px; text-align: center; }
+.reader .dbbrowser .dbv-card { background: var(--surface); color: var(--fg); border-color: var(--line); }
+.reader .dbbrowser .dbv-calendar { overflow-x: auto; }
+.reader .dbbrowser .dbv-cal-grid { min-width: 640px; }
+.reader .dbbrowser .dbv-gallery { grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); }
+@media (max-width: 599px) {
+  .reader .table-toolbar, .reader .dbbrowser .dbbar { gap: 8px; margin-bottom: 8px; }
+  .reader .table-tab, .reader .dbbrowser .dbtab { gap: 6px; padding-inline: 8px; }
+  .reader .table-new { min-height: 44px; }
+  .reader .table-tabs, .reader .dbbrowser .dbtabs { width: 100%; }
+}
+
+.reader :is(.dbtable, .stable) .dbnodate { color: var(--fg-dim); opacity: .7; font-size: .95em; }
+.reader .dbbrowser .dbdatebutton.dbnodate { color: var(--fg-dim); }
+/* #15: while dragging, the card left behind fades so it is not read as a second copy of the dragged one. */
+.dbv-card.dragging { opacity: .35; }

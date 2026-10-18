@@ -1,0 +1,26 @@
+.photo-text-dialog{box-sizing:border-box;width:min(560px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:auto;padding:var(--space-6);border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface);color:var(--fg);box-shadow:var(--shadow-menu);font:var(--text-ui)/1.6 var(--font-body)}
+.photo-text-dialog::backdrop{background:color-mix(in srgb,var(--fg) 18%,transparent)}
+.photo-text-dialog h2{display:flex;align-items:center;gap:var(--space-3);padding-right:var(--space-8);font-size:var(--fs-21);margin:0 0 var(--space-3);line-height:1.5}
+.photo-text-badge{display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:var(--radius-sm);background:var(--accent-soft);color:var(--accent)}
+.photo-text-badge svg{width:24px;height:24px}
+.photo-text-dialog .photo-text-dismiss{position:absolute;top:var(--space-4);right:var(--space-4);padding:0;width:44px;border:0;background:transparent;color:var(--fg-dim);font-size:var(--fs-24)}
+.photo-text-preview{width:min(880px,calc(100vw - 32px))}
+.photo-text-dialog p{margin:var(--space-3) 0;color:var(--fg-dim);overflow-wrap:anywhere}
+.photo-text-fields{display:grid;gap:var(--space-4)}
+.photo-text-fields>label{display:grid;gap:var(--space-2);padding:var(--space-4);border:1px dashed var(--line);border-radius:var(--radius-sm);background:var(--mint)}
+.photo-text-columns{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-6);align-items:stretch}
+.photo-text-image{display:block;width:100%;height:300px;object-fit:contain;border-radius:var(--radius-sm);background:var(--bg-soft)}
+.photo-text-result{display:flex;flex-direction:column;gap:var(--space-2);min-width:0}
+.photo-text-result label{font-weight:600}
+.photo-text-fields input{max-width:100%;min-width:0;font:inherit;color:var(--fg)}
+.photo-text-fields textarea{box-sizing:border-box;width:100%;flex:1;min-height:180px;resize:vertical;padding:var(--space-4);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--fg);font:var(--fs-16)/1.8 var(--font-body)}
+.photo-text-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--space-2);margin-top:var(--space-5);padding-top:var(--space-4);border-top:1px solid var(--line)}
+.photo-text-dialog button,.photo-text-fields input::file-selector-button{min-height:44px;padding:var(--space-2) var(--space-4);border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--fg);font:inherit;cursor:pointer}
+.photo-text-dialog button:hover{background:var(--accent-soft)}
+.photo-text-dialog .photo-text-primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.photo-text-dialog .photo-text-secondary{background:var(--accent-soft);color:var(--accent-strong)}
+.photo-text-dialog .photo-text-cancel{border-color:transparent;color:var(--fg-dim)}
+.photo-text-dialog :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.photo-text-dialog button:disabled{opacity:.5;cursor:not-allowed}
+.photo-text-dialog .photo-text-note{font-size:var(--text-small)}
+@media(max-width:600px){.photo-text-dialog{padding:var(--space-5)}.photo-text-dialog h2{font-size:var(--fs-17);gap:var(--space-2)}.photo-text-badge{width:32px;height:32px}.photo-text-columns{grid-template-columns:minmax(0,1fr);gap:var(--space-3)}.photo-text-image{height:160px}.photo-text-fields textarea{flex:none;min-height:144px;height:144px}.photo-text-actions button{flex:1;padding-inline:var(--space-2)}}

@@ -1,0 +1,12 @@
+CREATE VIRTUAL TABLE IF NOT EXISTS page_fts USING fts5(slug UNINDEXED, title, body, tokenize='unicode61 remove_diacritics 2');
+CREATE VIRTUAL TABLE IF NOT EXISTS page_fts_ko USING fts5(slug UNINDEXED, title, body, tokenize='unicode61 remove_diacritics 2');
+CREATE TABLE IF NOT EXISTS page_fts_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS page_fts_dirty (slug TEXT PRIMARY KEY);
+CREATE TRIGGER IF NOT EXISTS page_fts_pages_insert AFTER INSERT ON pages BEGIN INSERT OR IGNORE INTO page_fts_dirty (slug) VALUES (new.slug); END;
+CREATE TRIGGER IF NOT EXISTS page_fts_pages_update AFTER UPDATE ON pages BEGIN INSERT OR IGNORE INTO page_fts_dirty (slug) VALUES (new.slug); END;
+CREATE TRIGGER IF NOT EXISTS page_fts_pages_delete AFTER DELETE ON pages BEGIN INSERT OR IGNORE INTO page_fts_dirty (slug) VALUES (old.slug); END;
+CREATE TRIGGER IF NOT EXISTS page_fts_blocks_insert AFTER INSERT ON blocks BEGIN INSERT OR IGNORE INTO page_fts_dirty (slug) VALUES (new.page); END;
+CREATE TRIGGER IF NOT EXISTS page_fts_blocks_update AFTER UPDATE ON blocks BEGIN INSERT OR IGNORE INTO page_fts_dirty (slug) VALUES (new.page); END;
+CREATE TRIGGER IF NOT EXISTS page_fts_blocks_delete AFTER DELETE ON blocks BEGIN INSERT OR IGNORE INTO page_fts_dirty (slug) VALUES (old.page); END;
+CREATE TRIGGER IF NOT EXISTS page_fts_trash_insert AFTER INSERT ON editor_trash BEGIN DELETE FROM page_fts WHERE slug = new.page; DELETE FROM page_fts_ko WHERE slug = new.page; DELETE FROM page_fts_dirty WHERE slug = new.page; END;
+CREATE TRIGGER IF NOT EXISTS page_fts_trash_delete AFTER DELETE ON editor_trash BEGIN INSERT OR IGNORE INTO page_fts_dirty (slug) VALUES (old.page); END;

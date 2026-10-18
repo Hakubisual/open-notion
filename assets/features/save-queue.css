@@ -1,0 +1,13 @@
+.save-state {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.editing .topbar {
+  height: auto;
+  min-height: 56px;
+}
+.editing .save-state {
+  padding-block: 8px;
+}

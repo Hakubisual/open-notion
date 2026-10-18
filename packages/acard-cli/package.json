@@ -1,0 +1,27 @@
+{
+  "name": "acard-cli",
+  "version": "0.1.0",
+  "description": "Acard 노트 로컬 CLI: pull/push 마크다운 동기화와 stdio MCP 프록시",
+  "type": "module",
+  "bin": {
+    "acard": "bin/acard.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "zod": "^4.6.7"
+  }
+}

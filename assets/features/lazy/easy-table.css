@@ -1,0 +1,28 @@
+.easy-table { position: relative; }
+.easy-table .et-bar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-bottom: 6px; font-size: var(--fs-12); color: var(--fg-soft, #666); }
+.easy-table .et-toggle { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.easy-table .et-toggle input { accent-color: var(--accent, #7b68ee); }
+.easy-table .et-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.easy-table .et-grid { width: 100%; border-collapse: collapse; table-layout: fixed; display: table; font-size: var(--fs-14); }
+.easy-table .et-grid th, .easy-table .et-grid td { position: relative; border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+.easy-table .et-grid tr > :first-child { border-left: 0; }
+.easy-table .et-grid thead th { border-top: 0; background: color-mix(in srgb, var(--accent, #7b68ee) 10%, var(--bg)); font-weight: 600; }
+.easy-table .et-grid.no-head thead th { background: var(--bg); font-weight: 400; }
+.easy-table .et-grid .cell { outline: none; min-height: 1.5em; padding: 2px 4px; border-radius: 4px; padding-right: 18px; overflow-wrap: anywhere; }
+.easy-table .et-grid .cell:focus { box-shadow: 0 0 0 2px var(--accent, #7b68ee); background: var(--bg); }
+.easy-table .et-colbtn { position: absolute; right: 6px; top: 7px; border: 0; background: none; color: var(--fg-soft, #888); cursor: pointer; font-size: var(--fs-14); padding: 0 2px; border-radius: 4px; }
+.easy-table .et-colbtn:hover { background: var(--bg-soft); }
+.easy-table .et-resize { position: absolute; right: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 1; }
+.easy-table .et-resize:hover { background: var(--accent, #7b68ee); opacity: .5; }
+.easy-table .et-rowtools { width: 34px; border-right: 0; text-align: center; }
+.easy-table col:last-child { width: auto; }
+.easy-table .rowdel { opacity: 0; border: 0; background: none; cursor: pointer; color: var(--fg-soft, #888); }
+.easy-table tr:hover .rowdel, .easy-table .rowdel:focus { opacity: 1; }
+.easy-table .et-tools { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.easy-table .et-pill { border: 1px solid color-mix(in srgb, var(--accent, #7b68ee) 35%, var(--line)); background: color-mix(in srgb, var(--accent, #7b68ee) 8%, var(--bg)); color: var(--accent, #7b68ee); border-radius: 999px; padding: 4px 14px; font: inherit; font-size: var(--fs-13); cursor: pointer; }
+.easy-table .et-hint { font-size: var(--fs-12); color: var(--fg-soft, #888); }
+.et-menu { position: fixed; z-index: 1200; min-width: 170px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.12); padding: 6px; display: grid; font-weight: 400; }
+.et-menu button { text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 6px; font: inherit; font-size: var(--fs-13); color: var(--fg); cursor: pointer; }
+.et-menu button:hover { background: var(--bg-soft); }
+.et-menu .danger { color: #e5484d; }
+@media (max-width: 560px) { .easy-table .et-hint { display: none; } .easy-table .et-grid { font-size: var(--fs-13); } }

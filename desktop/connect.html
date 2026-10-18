@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>OpenNotion - Connect</title>
+<style>
+  :root { --ink: #1F2A44; --green: #2BB673; --bg: #F6F7F9; --line: #D9DEE7; --muted: #5B6478; --err: #B42318; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+  main { width: min(440px, 90vw); background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 36px 32px 28px; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+  .brand svg { width: 44px; height: 44px; }
+  .brand b { font-size: 24px; letter-spacing: -0.3px; }
+  .brand b span { color: var(--green); }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 6px; }
+  input { width: 100%; padding: 11px 12px; font-size: 15px; border: 1px solid var(--line); border-radius: 10px; outline: none; }
+  input:focus { border-color: var(--green); box-shadow: 0 0 0 3px #2BB67333; }
+  button { margin-top: 16px; width: 100%; padding: 11px; font-size: 15px; font-weight: 600; border: 0; border-radius: 10px;
+    background: var(--ink); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: progress; }
+  .error { color: var(--err); font-size: 13px; margin-top: 12px; min-height: 18px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <svg viewBox="0 0 64 64" aria-hidden="true">
+      <path d="M34 6H14a8 8 0 0 0-8 8v36a8 8 0 0 0 8 8h28a8 8 0 0 0 8-8V26" fill="none" stroke="#1F2A44" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M38.5 4.5c0-1.3 1.6-2 2.5-1L54.5 17c.9.9.3 2.5-1 2.5H43a4.5 4.5 0 0 1-4.5-4.5z" fill="#2BB673"/>
+      <path d="M16 28h20M16 37h16M16 46h11" stroke="#1F2A44" stroke-width="5" stroke-linecap="round"/>
+    </svg>
+    <b><span>Open</span>Notion</b>
+  </div>
+  <h1>Connect to your server</h1>
+  <p>Enter the address of the OpenNotion server on your network. Your admin can tell you what it is.</p>
+  <form id="form">
+    <label for="server">Server address</label>
+    <input id="server" name="server" placeholder="192.168.0.10:47811" autocomplete="url" spellcheck="false" autofocus required>
+    <button id="go" type="submit">Connect</button>
+    <div class="error" id="error" role="alert"></div>
+  </form>
+  <div class="hint">You can change the server later from the Server menu.</div>
+</main>
+<script>
+  const params = new URLSearchParams(location.search);
+  const input = document.getElementById("server");
+  const error = document.getElementById("error");
+  const go = document.getElementById("go");
+  input.value = (params.get("server") || "").replace(/^http:\/\//, "");
+  error.textContent = params.get("error") || "";
+  document.getElementById("form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    go.disabled = true; go.textContent = "Connecting…"; error.textContent = "";
+    const result = await window.opennotion.connect(input.value);
+    if (!result.ok) { error.textContent = result.error; go.disabled = false; go.textContent = "Connect"; }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="meta.reset">New password - Acard</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+
+<link rel="preload" href="/fonts/pretendard-core.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/_site/styles.css">
+<link rel="stylesheet" href="/_site/auth.css">
+</head>
+<body>
+<main class="auth">
+  <div class="auth-box">
+    <a class="auth-logo" href="/"><svg class="wordmark" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="OpenNotion" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+    <h1 data-i18n="auth.reset.title">Choose a new password</h1>
+    <form class="auth-form" data-action="reset" novalidate>
+      <div class="field"><label for="password" data-i18n="auth.newPw8">New password (8+ characters)</label><input class="input" id="password" name="password" type="password" autocomplete="new-password" minlength="8" required></div>
+      <button class="btn btn-primary" type="submit" data-i18n="auth.reset.btn">Change password</button>
+      <div class="msg" role="status"></div>
+    </form>
+  </div>
+<nav class="lang-switch" aria-label="Language" data-i18n-attr="aria-label:lang.label"><a href="?lang=en" data-lang="en" lang="en">EN</a><a href="?lang=ko" data-lang="ko" lang="ko">한국어</a><a href="?lang=zh" data-lang="zh" lang="zh-CN">中文</a></nav>
+</main>
+<script src="/_site/auth.js" defer></script>
+</body>
+</html>

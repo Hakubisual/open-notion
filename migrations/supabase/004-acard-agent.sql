@@ -1,0 +1,22 @@
+-- acard-agent: built-in agent sessions, activities, suggestions, chat and usage counters. Additive and idempotent.
+SET search_path = acard;
+CREATE TABLE IF NOT EXISTS agent_sessions (id TEXT PRIMARY KEY, page TEXT NOT NULL, row_id TEXT, origin TEXT NOT NULL DEFAULT 'mention', instruction TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', memory TEXT NOT NULL DEFAULT '[]', steps bigint NOT NULL DEFAULT 0, tokens_in bigint NOT NULL DEFAULT 0, tokens_out bigint NOT NULL DEFAULT 0, lease_until bigint NOT NULL DEFAULT 0, error TEXT, created bigint NOT NULL, updated bigint NOT NULL);
+CREATE INDEX IF NOT EXISTS agent_sessions_page ON agent_sessions(page, created);
+CREATE TABLE IF NOT EXISTS agent_activities (id TEXT PRIMARY KEY, session TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', data TEXT, created bigint NOT NULL);
+CREATE INDEX IF NOT EXISTS agent_activities_session ON agent_activities(session, created);
+CREATE TABLE IF NOT EXISTS agent_suggestions (id TEXT PRIMARY KEY, session TEXT NOT NULL, kind TEXT NOT NULL, target TEXT, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created bigint NOT NULL, decided bigint);
+CREATE INDEX IF NOT EXISTS agent_suggestions_session ON agent_suggestions(session, status);
+CREATE TABLE IF NOT EXISTS agent_chat (id TEXT PRIMARY KEY, page TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, session TEXT, created bigint NOT NULL);
+CREATE INDEX IF NOT EXISTS agent_chat_page ON agent_chat(page, created);
+CREATE TABLE IF NOT EXISTS agent_usage (key TEXT PRIMARY KEY, count bigint NOT NULL, reset bigint NOT NULL);
+ALTER TABLE agent_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_activities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_suggestions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_chat ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_usage ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON agent_sessions, agent_activities, agent_suggestions, agent_chat, agent_usage TO acard_app;
+DROP POLICY IF EXISTS acard_app_all ON acard.agent_sessions; CREATE POLICY acard_app_all ON acard.agent_sessions TO acard_app USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS acard_app_all ON acard.agent_activities; CREATE POLICY acard_app_all ON acard.agent_activities TO acard_app USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS acard_app_all ON acard.agent_suggestions; CREATE POLICY acard_app_all ON acard.agent_suggestions TO acard_app USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS acard_app_all ON acard.agent_chat; CREATE POLICY acard_app_all ON acard.agent_chat TO acard_app USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS acard_app_all ON acard.agent_usage; CREATE POLICY acard_app_all ON acard.agent_usage TO acard_app USING (true) WITH CHECK (true);

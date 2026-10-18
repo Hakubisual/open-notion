@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>설정 - Acard</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+
+<link rel="preload" href="/fonts/pretendard-core.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/_site/styles.css">
+<link rel="stylesheet" href="/_site/auth.css">
+<link rel="stylesheet" href="/_site/onboarding.css">
+</head>
+<body>
+<main class="auth onb">
+  <a class="onb-back" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg>돌아가기</a>
+  <div class="auth-box">
+    <a class="auth-logo" href="/"><svg class="wordmark" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="OpenNotion" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+    <form class="onb-step" id="step1" novalidate>
+      <h1>프로필 설정</h1>
+      <p class="sub" id="me-email"></p>
+      <div class="avatar-wrap">
+        <div class="avatar" id="avatar"></div>
+      </div>
+      <div class="field">
+        <label for="display_name">이름</label>
+        <input class="input" id="display_name" name="display_name" maxlength="40" autocomplete="name" required>
+      </div>
+      <div class="field">
+        <label for="handle">공개 주소</label>
+        <div class="handle-box"><input class="input" id="handle" name="handle" maxlength="30" autocapitalize="off" spellcheck="false" required><span class="suffix">.notes.example.com</span></div>
+        <p class="handle-state" id="handle-state" aria-live="polite"></p>
+        <p class="hint">공개 블로그 주소로 예약돼요 (곧 열려요)</p>
+      </div>
+      <div class="field">
+        <label for="lang">언어</label>
+        <select class="input" id="lang" name="lang" translate="no"><option value="en">English</option><option value="ko">한국어</option><option value="zh">中文（简体）</option></select>
+      </div>
+      <button class="btn btn-primary btn-wide" type="submit">저장</button>
+      <div class="msg" role="status"></div>
+    </form>
+    <section class="home-edit" id="home"><h2>홈 꾸미기</h2><p class="hint">홈에 보일 위젯을 켜고 끄고, 화살표로 순서를 바꿔요.</p><ol class="home-widgets" id="home-widgets"></ol><button class="btn btn-primary btn-wide" type="button" id="home-save">홈 저장</button><div class="msg" id="home-msg" role="status"></div></section>
+    <section class="ai-usage" id="ai-usage" hidden aria-live="polite"><h2>AI 사용량</h2><p id="ai-usage-month"></p><p class="hint" id="ai-usage-day"></p></section>
+  </div>
+</main>
+<script src="/_site/settings.js" defer></script>
+</body>
+</html>

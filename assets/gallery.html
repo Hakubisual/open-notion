@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>컴포넌트 갤러리 · __SITE_NAME__</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="/fonts/pretendard-core.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/acard-shell.css">
+<link rel="stylesheet" href="/acard-page.css">
+<link rel="stylesheet" href="/db.css">
+<link rel="stylesheet" href="/gallery.css">
+<link rel="stylesheet" href="/editor.css">
+<script>try{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head>
+<body>
+<a class="skip" href="#gal">본문으로</a>
+<main class="gal" id="gal">
+  <header class="gal-head">
+    <div>
+      <h1>컴포넌트 갤러리</h1>
+      <p>Acard 화면에 쓰는 버튼, 입력칸, 메뉴, 창, 블록을 상태별로 한곳에 모았어요. 모든 화면이 이 모양을 따릅니다.</p>
+    </div>
+    <div class="gal-theme" role="group" aria-label="화면 모드">
+      <button type="button" class="btn-s" data-theme-set="auto">자동</button>
+      <button type="button" class="btn-s" data-theme-set="light">라이트</button>
+      <button type="button" class="btn-s" data-theme-set="dark">다크</button>
+    </div>
+  </header>
+
+  <div class="gal-grid">
+    <section class="gal-card wide" aria-labelledby="g-btn">
+      <h2 id="g-btn">버튼</h2>
+      <div class="gal-row"><span class="gal-label">주 버튼</span>
+        <button type="button" class="btn-p">저장</button>
+        <button type="button" class="btn-p is-hover">호버</button>
+        <button type="button" class="btn-p is-active">누름</button>
+        <button type="button" class="btn-p is-focus">포커스</button>
+        <button type="button" class="btn-p" disabled>비활성</button>
+        <button type="button" class="btn-p" aria-busy="true"><span class="spin" aria-hidden="true"></span>저장 중</button>
+      </div>
+      <div class="gal-row"><span class="gal-label">보조</span>
+        <button type="button" class="btn-s">취소</button>
+        <button type="button" class="btn-s is-hover">호버</button>
+        <button type="button" class="btn-s is-active">누름</button>
+        <button type="button" class="btn-s is-focus">포커스</button>
+        <button type="button" class="btn-s" disabled>비활성</button>
+        <button type="button" class="btn-s" aria-busy="true"><span class="spin" aria-hidden="true"></span>불러오는 중</button>
+      </div>
+      <div class="gal-row"><span class="gal-label">파괴</span>
+        <button type="button" class="btn-d">삭제</button>
+        <button type="button" class="btn-d is-hover">호버</button>
+        <button type="button" class="btn-d is-active">누름</button>
+        <button type="button" class="btn-d is-focus">포커스</button>
+        <button type="button" class="btn-d" disabled>비활성</button>
+        <button type="button" class="btn-d" aria-busy="true"><span class="spin" aria-hidden="true"></span>삭제 중</button>
+      </div>
+      <div class="gal-row"><span class="gal-label">아이콘</span>
+        <button type="button" class="icon" aria-label="즐겨찾기"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg></button>
+        <button type="button" class="icon" aria-label="더보기"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+      </div>
+      <p class="gal-note">주 버튼 흰 글자 대비 6.3:1. 휴대폰에서는 모든 버튼이 높이 44px 이상이에요.</p>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-field">
+      <h2 id="g-field">입력칸</h2>
+      <div class="field"><label for="f1">페이지 제목</label><input id="f1" placeholder="제목을 입력하세요"></div>
+      <div class="field"><label for="f2">비활성</label><input id="f2" value="바꿀 수 없어요" disabled></div>
+      <div class="field err"><label for="f3">이메일</label><input id="f3" value="hig-qa@" aria-invalid="true" aria-describedby="f3m"><span class="msg" id="f3m">이메일 형식이 아니에요.</span></div>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-search">
+      <h2 id="g-search">검색</h2>
+      <div class="field"><label for="f4">빠른 검색</label><input id="f4" type="search" placeholder="노트 제목·본문 검색…"></div>
+      <div class="empty" role="status"><strong>찾는 페이지가 없어요</strong><span>다른 단어로 찾아보세요.</span></div>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-side">
+      <h2 id="g-side">사이드바</h2>
+      <nav class="gal-side" aria-label="사이드바 견본">
+        <a href="#g-side">홈</a>
+        <a href="#g-side" class="on" aria-current="page">선택된 페이지</a>
+        <a href="#g-side">모든 페이지</a>
+        <a href="#g-side">휴지통</a>
+      </nav>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-menu">
+      <h2 id="g-menu">메뉴</h2>
+      <div class="menu" role="menu" aria-label="페이지 메뉴 견본">
+        <button type="button" class="menuitem" role="menuitem">링크 복사</button>
+        <button type="button" class="menuitem" role="menuitem">복제</button>
+        <button type="button" class="menuitem" role="menuitem">이동</button>
+        <button type="button" class="menuitem danger" role="menuitem">휴지통으로 이동</button>
+      </div>
+      <p class="gal-note">되돌리기 어려운 항목은 맨 아래, 빨간색이에요. Esc나 바깥을 누르면 닫혀요.</p>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-dialog">
+      <h2 id="g-dialog">확인 창</h2>
+      <div class="gal-dialog" role="group" aria-label="확인 창 견본">
+        <h3>페이지를 휴지통으로 옮길까요?</h3>
+        <p>휴지통에서 언제든 되살릴 수 있어요.</p>
+        <div class="acts"><button type="button" class="btn-s">취소</button><button type="button" class="btn-d">휴지통으로 이동</button></div>
+      </div>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-sheet">
+      <h2 id="g-sheet">바텀 시트 (휴대폰)</h2>
+      <div class="gal-sheet" role="group" aria-label="바텀 시트 견본">
+        <div class="grip" aria-hidden="true"></div>
+        <a href="#g-sheet">사진에서 글자 가져오기</a>
+        <a href="#g-sheet">템플릿으로 시작</a>
+        <a href="#g-sheet">빠른 메모</a>
+        <button type="button" class="btn-s" style="width:100%">닫기</button>
+      </div>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-toast">
+      <h2 id="g-toast">알림과 진행</h2>
+      <div class="toast" role="status">페이지를 휴지통으로 옮겼어요.<button type="button">되돌리기</button></div>
+      <div class="blocks"><div class="progress"><div class="phead"><span>이번 주 진행</span><span class="pval">70%</span></div><div class="pbar" role="progressbar" aria-label="이번 주 진행" aria-valuenow="70" aria-valuemin="0" aria-valuemax="100"><span style="width:70%"></span></div></div></div>
+      <p class="gal-note">알림은 저절로 사라지지 않아요. 사용자가 닫거나 다음 동작을 할 때까지 남아요.</p>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-tag">
+      <h2 id="g-tag">태그</h2>
+      <div class="gal-row"><span class="tag green">완료</span><span class="tag blue">진행 중</span><span class="tag decide">결정 필요</span><span class="tag red">높음</span><span class="tag yellow">중간</span><span class="tag gray">보류</span></div>
+      <p class="gal-note">모든 태그 글자 대비 4.5:1 이상. 결정 필요는 색 말고 ! 표시로도 구분해요.</p>
+    </section>
+
+    <section class="gal-card wide" aria-labelledby="g-blocks">
+      <h2 id="g-blocks">편집기 블록</h2>
+      <div class="blocks">
+        <h3>제목 블록</h3>
+        <p>문단 블록이에요. 본문은 17px, 줄 간격 1.85로 읽기 편하게 맞췄어요.</p>
+        <div class="callout"><span aria-hidden="true">💡</span><div>콜아웃 블록. 중요한 메모를 눈에 띄게 둬요.</div></div>
+        <details class="toggle"><summary>토글 블록</summary><p>펼치면 보이는 내용이에요.</p></details>
+        <div class="codebox">const acard = "좋은 생각";</div>
+      </div>
+    </section>
+
+    <section class="gal-card" aria-labelledby="g-target">
+      <h2 id="g-target">터치 영역</h2>
+      <div class="gal-row"><span class="target" aria-hidden="true">+</span><span class="gal-note">휴대폰에서 누르는 모든 요소는 44×44px 이상이에요.</span></div>
+    </section>
+    <section class="gal-card wide" aria-labelledby="g-motion" id="motion">
+      <h2 id="g-motion">움직임 (누르면 다시 재생)</h2>
+      <p class="gal-note">짧은 동작 120ms, 메뉴·알림 180ms, 시트·서랍 240ms. 움직임 줄이기를 켜면 모두 멈춰요.</p>
+      <div class="mx-grid">
+        <div class="mx"><h3>버튼 누름</h3><button class="btn-p" data-mx="press">눌러 보기</button> <button class="btn-s" disabled>사용 불가</button> <button class="btn-s" aria-busy="true"><span class="spin" aria-hidden="true"></span>저장 중</button></div>
+        <div class="mx"><h3>메뉴 열기</h3><button class="btn-s" data-mx="menu" aria-expanded="false">더보기</button><div class="menu mx-menu" hidden role="menu"><button class="menuitem" role="menuitem">이름 바꾸기</button><button class="menuitem" role="menuitem">복제</button><button class="menuitem danger" role="menuitem">휴지통으로</button></div></div>
+        <div class="mx"><h3>슬래시 메뉴</h3><input class="mx-input" data-mx="slash" placeholder="/ 를 입력하고 걸러 보세요" aria-label="슬래시 메뉴 데모"><div class="slash mx-slash" hidden role="listbox"><button role="option" class="sel">글</button><button role="option">제목 1</button><button role="option">할 일</button><button role="option">토글</button></div></div>
+        <div class="mx"><h3>블록 끌기</h3><div class="mx-blocks"><div class="blk mx-b" draggable="true"><span class="gutter"><button aria-label="끌어 옮기기">⋮⋮</button></span><div class="body">첫 번째 블록</div></div><div class="blk mx-b" draggable="true"><span class="gutter"><button aria-label="끌어 옮기기">⋮⋮</button></span><div class="body">두 번째 블록</div></div><div class="blk mx-b" draggable="true"><span class="gutter"><button aria-label="끌어 옮기기">⋮⋮</button></span><div class="body">세 번째 블록</div></div></div><button class="btn-s" data-mx="drag">끌기 재생</button></div>
+        <div class="mx"><h3>알림과 되돌리기</h3><button class="btn-s" data-mx="toast">블록 지우기</button><div class="undo-toast mx-toast" hidden role="status">블록을 지웠어요 <button>되돌리기</button></div></div>
+        <div class="mx"><h3>사이드바 펼침 · 토글</h3><div class="blocks"><details class="toggle" open><summary>프로젝트</summary><p>회의록</p><p>할 일 목록</p></details></div></div>
+        <div class="mx"><h3>확인 창 · 시트</h3><button class="btn-s" data-mx="sheet">열기</button><div class="overlay mx-overlay" hidden><div class="sheet" role="dialog" aria-label="데모 시트"><h2>휴지통으로 옮길까요?</h2><p class="hint">30일 동안 되살릴 수 있어요.</p><button class="close" data-mx="close">취소</button> <button class="primary" data-mx="close">옮기기</button></div></div></div>
+        <div class="mx"><h3>불러오는 중</h3><div class="skel" aria-hidden="true"><i></i><i></i><i style="width:60%"></i></div><p class="gal-note">저장 표시: <span class="save-state on">저장 중…</span></p></div>
+        <div class="mx"><h3>보드 카드 끌기</h3><div class="mx-board"><div class="dbv-col over">진행 중<div class="dbv-card dragging">디자인 검토</div></div></div></div>
+      </div>
+    </section>
+  </div>
+</main>
+<script>
+document.querySelectorAll("[data-theme-set]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    var v = b.getAttribute("data-theme-set"), h = document.documentElement;
+    if (v === "auto") { delete h.dataset.theme; try { localStorage.removeItem("theme"); } catch (e) {} }
+    else { h.dataset.theme = v; try { localStorage.setItem("theme", v); } catch (e) {} }
+    document.querySelectorAll("[data-theme-set]").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+  });
+});
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && document.activeElement) document.activeElement.blur(); });
+(function(){
+  function q(s,r){return (r||document).querySelector(s)}
+  function replay(el){el.style.animation="none";void el.offsetWidth;el.style.animation=""}
+  document.addEventListener("click",function(e){var b=e.target.closest("[data-mx]");if(!b)return;var k=b.dataset.mx,box=b.closest(".mx");
+    if(k==="menu"){var m=q(".mx-menu",box);m.hidden=!m.hidden;b.setAttribute("aria-expanded",String(!m.hidden));if(!m.hidden)replay(m)}
+    if(k==="toast"){var t=q(".mx-toast",box);t.hidden=false;replay(t);clearTimeout(t._t);t._t=setTimeout(function(){t.hidden=true},5000)}
+    if(k==="sheet"){var o=q(".mx-overlay",box);o.hidden=false;replay(o);replay(q(".sheet",o))}
+    if(k==="close"){b.closest(".mx-overlay").hidden=true}
+    if(k==="drag"){var bs=box.querySelectorAll(".mx-b");bs[0].classList.add("dragging");bs[2].classList.add("drop-before");setTimeout(function(){bs[0].classList.remove("dragging");bs[2].classList.remove("drop-before")},1200)}
+  });
+  var inp=q(".mx-input");if(inp){var sl=q(".mx-slash");inp.addEventListener("input",function(){var v=inp.value;if(v.charAt(0)!=="/"){sl.hidden=true;return}var f=v.slice(1),first=null;
+    sl.querySelectorAll("button").forEach(function(o){var ok=o.textContent.indexOf(f)>=0;o.hidden=!ok;o.classList.remove("sel");if(ok&&!first)first=o});if(first)first.classList.add("sel");if(sl.hidden){sl.hidden=false;replay(sl)}});
+    inp.addEventListener("keydown",function(e){var vis=[].filter.call(sl.querySelectorAll("button"),function(o){return !o.hidden});var i=vis.findIndex(function(o){return o.classList.contains("sel")});
+      if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();if(!vis.length)return;vis[i]&&vis[i].classList.remove("sel");vis[(i+(e.key==="ArrowDown"?1:vis.length-1))%vis.length].classList.add("sel")}
+      if(e.key==="Escape"){sl.hidden=true}if(e.key==="Enter"&&vis[i]){inp.value=vis[i].textContent;sl.hidden=true}})}
+  document.querySelectorAll(".mx-b").forEach(function(b){b.addEventListener("dragstart",function(){b.classList.add("dragging")});b.addEventListener("dragend",function(){b.classList.remove("dragging")})});
+})();
+</script>
+</body>
+</html>

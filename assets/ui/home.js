@@ -1,0 +1,172 @@
+(() => {
+  const ORDER = ["board", "progress", "blog", "notes"];
+  const NAMES = { board: "작업 보드", blog: "블로그", notes: "작업 노트", progress: "진행 현황" };
+  const ICONS = {
+    board: '<rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="11" rx="1.5"/><rect x="17" y="4" width="4" height="7" rx="1.5"/>',
+    progress: '<path d="M5 20V12M10 20V8M15 20v-5M20 20V5"/>',
+    blog: '<path d="M6 3h8l5 5v13H6Z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
+    notes: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    doc: '<path d="M6 3h8l5 5v13H6Z"/><path d="M14 3v5h5"/>',
+    spark: '<path d="M12 3c.6 4.2 2.3 5.9 6.5 6.5-4.2.6-5.9 2.3-6.5 6.5-.6-4.2-2.3-5.9-6.5-6.5C9.7 8.9 11.4 7.2 12 3Z"/>',
+  };
+  const icon = (name) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + "</svg>";
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const href = (slug) => "/" + encodeURIComponent(slug) + "/";
+  const TONES = { red: "tone-red", blue: "tone-blue", green: "tone-green", purple: "tone-purple", pink: "tone-pink", yellow: "tone-yellow" };
+  const colTone = (i, n) => (i === n - 1 ? "tone-done" : i === 0 ? "" : "tone-doing");
+  const shortDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return (d.getMonth() + 1) + "월 " + d.getDate() + "일"; };
+  const ago = (ms) => {
+    const m = Math.max(1, Math.round((Date.now() - ms) / 60000));
+    if (m < 60) return m + "분 전";
+    if (m < 1440) return Math.round(m / 60) + "시간 전";
+    return Math.round(m / 1440) + "일 전";
+  };
+  const post = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => (r.ok ? r.json() : Promise.reject(r)));
+
+  function boardHtml(board) {
+    if (!board) return "";
+    const cols = board.columns;
+    const kanban = '<div class="ui-kanban">' + cols.map((c, i) => {
+      const items = board.rows.filter((r) => r.status === c.id);
+      return '<section class="ui-col ' + colTone(i, cols.length) + '"><div class="ui-col-head"><span class="ui-count">' + items.length + "</span>" + esc(c.name) + "</div>" +
+        items.map((r) => '<a class="ui-item" href="' + href(r.page) + '"><span class="t">' + esc(r.title) + '</span><span class="m">' +
+          (r.priority ? '<span class="ui-badge ' + (TONES[r.priorityColor] || "") + '">' + esc(r.priority) + "</span>" : "") +
+          (r.date ? "<span>" + shortDate(r.date) + "</span>" : "") + "</span></a>").join("") + "</section>";
+    }).join("") + "</div>";
+    const table = '<table class="ui-table" hidden><thead><tr><th>이름</th><th>상태</th><th>우선순위</th><th>마감일</th><th>태그</th></tr></thead><tbody>' +
+      board.rows.map((r) => '<tr><td><a href="' + href(r.page) + '">' + esc(r.title) + "</a></td><td>" + esc(r.statusName || "") + "</td><td>" +
+        (r.priority ? '<span class="ui-badge ' + (TONES[r.priorityColor] || "") + '">' + esc(r.priority) + "</span>" : "") + "</td><td>" + shortDate(r.date) + "</td><td>" + esc(r.tags.join(", ")) + "</td></tr>").join("") + "</tbody></table>";
+    return '<section class="ui-card home-w" data-w="board"><div class="ui-card-head"><h2>' + icon("board") + '<a href="' + href(board.slug) + '">' + esc(board.title) + '</a></h2><div class="ui-seg" role="group"><button type="button" data-view="board" aria-pressed="true">보드</button><button type="button" data-view="table" aria-pressed="false">표</button></div></div>' + kanban + table + "</section>";
+  }
+
+  function progressHtml(data) {
+    const board = data.board;
+    const total = board ? board.rows.length : 0;
+    const stats = board ? [{ name: "전체 작업", n: total, pct: total ? Math.round(board.rows.filter((r) => r.status === board.columns[board.columns.length - 1].id).length / total * 100) : 0 }]
+      .concat(board.columns.map((c) => { const n = board.rows.filter((r) => r.status === c.id).length; return { name: c.name, n, pct: total ? Math.round(n / total * 100) : 0 }; })) : [];
+    const statHtml = stats.length ? '<div class="home-stats">' + stats.map((s) => '<div class="ui-stat"><div class="label">' + esc(s.name) + '</div><div class="value">' + s.n + '</div><div class="bar"><div class="ui-progress"><i style="width:' + s.pct + '%"></i></div>' + s.pct + "%</div></div>").join("") + "</div>" : "";
+    const recent = '<div class="ui-card home-recent"><div class="ui-card-head"><h2>' + icon("clock") + "최근 수정</h2></div>" +
+      (data.recent.length ? '<ul class="ui-list">' + data.recent.slice(0, 4).map((p) => "<li>" + icon("doc") + '<a href="' + href(p.slug) + '">' + esc(p.title) + '</a><span class="when">' + ago(p.updated) + "</span></li>").join("") + "</ul>" : '<p class="home-empty">아직 수정한 페이지가 없어요.</p>') + "</div>";
+    const agent = data.sessions.length
+      ? '<div class="ui-card home-agent"><div class="ui-card-head"><h2>' + icon("spark") + "에이전트 작업</h2></div><ul class=\"ui-list\">" + data.sessions.map((s) => '<li><span class="ui-badge ' + (s.status === "open" ? "tone-purple" : "tone-green") + '">' + (s.status === "open" ? "진행 중" : "완료") + "</span><span class=\"t\">" + esc(s.title) + '</span><span class="when">' + ago(s.updated) + "</span></li>").join("") + "</ul></div>"
+      : '<div class="ui-soft home-agent-hint"><span class="home-hint-icon">' + icon("spark") + '</span><b>에이전트 연결하면 여기 작업이 보여요</b><span>에이전트를 연결하고 자동으로 작업을 불러와 보세요.</span><a class="ui-btn ui-btn-sm" href="/settings/agents">에이전트 연결</a></div>';
+    return '<section class="ui-card home-w" data-w="progress"><div class="ui-card-head"><h2>' + icon("progress") + "진행 현황</h2></div>" + statHtml + '<div class="home-split">' + recent + agent + "</div></section>";
+  }
+
+  function blogHtml(blog) {
+    if (!blog) return "";
+    return '<section class="ui-card home-w" data-w="blog"><div class="ui-card-head"><h2>' + icon("blog") + '<a href="' + href(blog.slug) + '">' + esc(blog.title) + '</a></h2><button type="button" class="ui-btn ui-btn-primary ui-btn-sm" data-new-post="' + esc(blog.slug) + '">새 글</button></div><ul class="ui-list">' +
+      blog.rows.map((r) => "<li>" + icon("doc") + '<a href="' + href(r.page) + '">' + esc(r.title) + '</a><span class="ui-badge ' + (r.status === "published" ? "tone-green" : "") + '">' + esc(r.statusName || "초안") + '</span><span class="when">' + shortDate(r.date) + "</span></li>").join("") + "</ul></section>";
+  }
+
+  function notesHtml(data) {
+    const pinned = data.pinned.length ? '<ul class="ui-list">' + data.pinned.map((p) => "<li>" + icon(p.kind === "folder" ? "notes" : "doc") + '<a href="' + href(p.slug) + '">' + esc(p.title) + "</a></li>").join("") + "</ul>" : '<p class="home-empty">즐겨찾기한 페이지가 여기 모여요.</p>';
+    return '<section class="ui-card home-w" data-w="notes"><div class="ui-card-head"><h2>' + icon("notes") + "작업 노트</h2></div>" +
+      '<form class="home-capture"><input class="home-capture-in" name="text" maxlength="2000" placeholder="빠르게 메모하기" aria-label="빠르게 메모하기"><button class="ui-btn ui-btn-primary ui-btn-sm" type="submit">저장</button></form><p class="home-capture-msg" role="status"></p>' +
+      '<div class="home-split"><div><h3 class="home-sub">즐겨찾기</h3>' + pinned + '</div><div><h3 class="home-sub">최근 페이지</h3><ul class="ui-list">' + data.recent.slice(0, 5).map((p) => "<li>" + icon("doc") + '<a href="' + href(p.slug) + '">' + esc(p.title) + '</a><span class="when">' + ago(p.updated) + "</span></li>").join("") + "</ul></div></div></section>";
+  }
+
+  function offerHtml() {
+    return '<section class="ui-card home-offer" data-w="offer"><div class="ui-card-head"><h2>' + icon("spark") + '홈을 내 방식으로 꾸며 보세요</h2><button type="button" class="ui-btn ui-btn-sm" data-offer-close>닫기</button></div><p class="home-offer-sub">고른 항목의 예시 보드와 글이 바로 만들어져요. 언제든 지울 수 있어요.</p><div class="home-offer-picks">' +
+      ORDER.map((k) => '<label class="home-pick"><input type="checkbox" value="' + k + '">' + icon(k) + "<b>" + NAMES[k] + "</b></label>").join("") + '</div><button type="button" class="ui-btn ui-btn-primary" data-offer-apply>홈에 추가</button><p class="home-capture-msg" role="status"></p></section>';
+  }
+
+  function firstRunHtml(fr) {
+    if (!fr) return "";
+    if (fr.tasks && fr.tasks.length) {
+      return '<section class="ui-card home-next" data-w="next"><div class="ui-card-head"><h2>' + icon("board") + '다음 할 일</h2>' + (fr.tasksSlug ? '<a class="ui-btn ui-btn-sm" href="' + href(fr.tasksSlug) + '">' + "목록 열기" + "</a>" : "") + '</div><ul class="ui-list">' +
+        fr.tasks.map((t) => '<li><span class="home-box" aria-hidden="true"></span><span class="t">' + esc(t) + "</span></li>").join("") + '</ul><p class="home-offer-sub">에이전트가 세션을 시작할 때 이 목록을 먼저 읽고, 끝날 때 고쳐 둬요.</p></section>';
+    }
+    if (!fr.connectedAt && fr.state !== "dismissed") {
+      return '<section class="ui-card home-connect" data-w="connect"><div class="ui-card-head"><h2>' + icon("spark") + '에이전트 연결하기</h2><button type="button" class="ui-btn ui-btn-sm" data-connect-close>닫기</button></div><p class="home-offer-sub">Claude Code 같은 에이전트를 연결하면 프로젝트 문서와 할 일을 여기에 정리해 줘요.</p><a class="ui-btn ui-btn-primary" href="/onboarding?step=connect">연결하러 가기</a></section>';
+    }
+    return "";
+  }
+
+  async function saveLayout(widgets) {
+    return post("/api/profile", { home_layout: widgets === null ? null : { widgets } });
+  }
+
+  async function render(root, layout) {
+    const widgets = layout ? layout.widgets : null;
+    const fr = await fetch("/api/first-run").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    const top = firstRunHtml(fr);
+    if (widgets && !widgets.length) { root.innerHTML = top; root.hidden = !top; return; }
+    if (!widgets) { root.innerHTML = top + offerHtml(); root.hidden = false; return; }
+    const data = await fetch("/api/home/summary").then((r) => r.json());
+    const parts = ORDER.filter((k) => widgets.includes(k)).sort((a, b) => widgets.indexOf(a) - widgets.indexOf(b)).map((k) => (k === "board" ? boardHtml(data.board) : k === "progress" ? progressHtml(data) : k === "blog" ? blogHtml(data.blog) : notesHtml(data)));
+    root.innerHTML = '<div class="home-top"><h1 class="home-title">홈</h1><a class="ui-btn ui-btn-primary" href="/settings#home">' + icon("spark") + "홈 꾸미기</a></div>" + top + parts.join("");
+    root.hidden = false;
+    document.body.classList.add("home-custom");
+  }
+
+  function wire(root, state) {
+    root.addEventListener("click", async (e) => {
+      const view = e.target.closest("[data-view]");
+      if (view) {
+        const card = view.closest(".home-w");
+        card.querySelectorAll("[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b === view)));
+        card.querySelector(".ui-kanban").hidden = view.dataset.view !== "board";
+        card.querySelector(".ui-table").hidden = view.dataset.view !== "table";
+        return;
+      }
+      const np = e.target.closest("[data-new-post]");
+      if (np) {
+        np.disabled = true;
+        try { const made = await post("/api/db/" + encodeURIComponent(np.dataset.newPost) + "/rows", { props: { "제목": "새 글", "상태": "draft" } }); location.assign("/edit/" + encodeURIComponent(made.row.page) + "/"); }
+        catch { np.disabled = false; }
+        return;
+      }
+      if (e.target.closest("[data-connect-close]")) { e.target.closest(".home-connect").remove(); post("/api/first-run", { state: "dismissed" }).catch(() => {}); return; }
+      if (e.target.closest("[data-offer-close]")) { await saveLayout([]).catch(() => {}); root.hidden = true; return; }
+      const apply = e.target.closest("[data-offer-apply]");
+      if (apply) {
+        const picks = [...root.querySelectorAll(".home-pick input:checked")].map((i) => i.value);
+        const msg = root.querySelector(".home-offer .home-capture-msg");
+        if (!picks.length) { msg.textContent = "하나 이상 골라 주세요."; return; }
+        apply.disabled = true;
+        try {
+          await post("/api/home/starter", { presets: picks.filter((p) => p !== "progress") });
+          await saveLayout(ORDER.filter((k) => picks.includes(k)));
+          state.layout = { widgets: ORDER.filter((k) => picks.includes(k)) };
+          await render(root, state.layout);
+        } catch { msg.textContent = "저장하지 못했어요. 다시 시도해 주세요."; apply.disabled = false; }
+      }
+    });
+    root.addEventListener("submit", async (e) => {
+      const form = e.target.closest(".home-capture");
+      if (!form) return;
+      e.preventDefault();
+      const input = form.querySelector("input");
+      const msg = form.nextElementSibling;
+      if (!input.value.trim()) return;
+      try { await post("/api/quick-note", { clientId: "home-" + Date.now().toString(36), text: input.value }); input.value = ""; msg.textContent = "빠른 메모에 저장했어요."; }
+      catch { msg.textContent = "저장하지 못했어요. 다시 시도해 주세요."; }
+    });
+  }
+
+  async function start() {
+    const article = document.getElementById("article");
+    if (!article || document.getElementById("acard-home")) return;
+    const res = await fetch("/api/profile").catch(() => null);
+    if (!res || !res.ok) return;
+    const { profile } = await res.json();
+    if (!profile) return;
+    const root = document.createElement("div");
+    root.id = "acard-home";
+    root.hidden = true;
+    article.before(root);
+    const state = { layout: profile.home_layout === undefined ? { widgets: [] } : profile.home_layout };
+    wire(root, state);
+    await render(root, state.layout);
+    let again = null;
+    document.addEventListener("acard:page-fresh", () => {
+      const fresh = document.getElementById("article");
+      if (fresh && !root.isConnected) fresh.before(root);
+    });
+    document.addEventListener("acard:live-home", () => { clearTimeout(again); again = setTimeout(() => render(root, state.layout).catch(() => {}), 250); });
+  }
+
+  start();
+})();

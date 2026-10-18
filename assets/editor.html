@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<meta name="application-name" content="__SITE_NAME__">
+<meta property="og:site_name" content="__SITE_NAME__">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:image" content="/og.png">
+<title>고치기 · __SITE_NAME__</title>
+<link rel="preload" href="/fonts/pretendard-core.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/editor.css">
+<link rel="stylesheet" href="/db.css">
+</head>
+<body class="editing">
+<a class="skip" href="#doc">본문으로</a>
+<header class="topbar">
+  <button class="icon" id="menu" aria-label="메뉴" aria-expanded="false"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="18" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/></svg></button>
+  <a class="brand" href="/"><svg class="wordmark" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="OpenNotion" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+  <span class="save-state on" id="save-state">불러오는 중…</span>
+  <div class="grow"></div>
+  <div class="menuwrap">
+    <button class="icon" id="more" aria-label="더보기" aria-expanded="false" title="더보기"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
+    <div class="menu" id="more-menu" hidden>
+      <button type="button" class="menuitem" id="import-open">노션 내보내기 가져오기 (zip)</button>
+      <a href="/api/export?slug=home&format=md" download="home.md">이 페이지 마크다운으로 내보내기</a>
+      <a href="/api/export?slug=home&format=html" download="home.html">이 페이지 HTML로 내보내기</a>
+      <a href="/api/export?scope=all&format=zip" download="acard.zip">전체 노트 내보내기 (zip)</a>
+      <a href="/print/home/" target="_blank" rel="noopener">인쇄 · PDF로 저장</a>
+      <button type="button" class="menuitem" id="shortcuts-open">키보드 단축키</button>
+      <button type="button" class="menuitem" id="quick-note-open">빠른 메모</button>
+    </div>
+  </div>
+  <a class="icon" id="viewlink" href="/" aria-label="읽기 화면으로" title="읽기"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></a>
+  <button class="icon" id="theme" aria-label="테마 바꾸기" title="테마 바꾸기"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg></button>
+</header>
+<div class="shell">
+  <nav class="sidebar" id="sidebar" aria-label="문서 목록">
+    <div class="navhead"><h2>페이지</h2><button class="mini" id="new-page" title="새 페이지">+ 새 페이지</button></div>
+    <div id="tree" class="treewrap"></div>
+  </nav>
+  <main id="doc">
+    <div class="page-tools" id="page-tools"></div>
+    <div class="docbar">
+      <input id="title" class="title-input" aria-label="페이지 제목" placeholder="불러오는 중…" aria-busy="true">
+      <span class="meta" id="meta"></span>
+    </div>
+    <button type="button" class="mini" id="ask-notes-btn" aria-haspopup="dialog" disabled>노트에 묻기</button>
+    <div class="fd-headtags" id="fd-headtags"></div>
+    <div id="blocks" class="blocks" aria-label="본문"></div>
+    <button class="addblock" id="add-block">+ 블록 추가</button>
+    <div class="backlinks" id="backlinks" hidden></div>
+  </main>
+</div>
+<div id="slash" class="slash" hidden role="menu" aria-label="블록 종류"></div>
+<div id="ctx" class="ctxmenu" hidden role="menu" aria-label="블록 메뉴"></div>
+<div class="overlay" id="import-dialog" hidden role="dialog" aria-modal="true" aria-label="노션 내보내기 가져오기">
+  <div class="sheet">
+    <h2>노션 내보내기 가져오기</h2>
+    <p class="hint">노션에서 <strong>Markdown &amp; CSV</strong>로 내보낸 zip 을 올려 주세요. 파일 안의 .md 는 페이지로, .csv 는 표(데이터베이스)로 만들어요.</p>
+    <input id="import-file" type="file" accept=".zip,application/zip" aria-label="zip 파일">
+    <input id="import-md-file" type="file" accept=".md,.markdown,.txt" multiple aria-label="마크다운 파일">
+    <button type="button" id="import-go" class="primary">zip 가져오기</button>
+    <button type="button" id="import-md-go" class="primary">마크다운 가져오기</button>
+    <p class="import-status" id="import-status" role="status"></p>
+    <button type="button" class="close" id="import-close" aria-label="닫기">닫기</button>
+  </div>
+</div>
+<div class="overlay" id="shortcuts" hidden role="dialog" aria-modal="true" aria-label="키보드 단축키">
+  <div class="sheet">
+    <h2>키보드 단축키</h2>
+    <dl class="keys">
+      <dt>/ · K</dt><dd>빠른 검색 (입력 중 제외)</dd>
+      <dt>N · Q · ?</dt><dd>새 페이지 · 빠른 메모 · 도움말 (입력 중 제외)</dd>
+      <dt>G → H / T</dt><dd>홈 / 휴지통 (입력 중 제외)</dd>
+      <dt>Ctrl/Cmd + Enter</dt><dd>빠른 메모 저장</dd>
+      <dt>Ctrl/Cmd + K</dt><dd>빠른 검색</dd>
+      <dt>Ctrl/Cmd + /</dt><dd>이 단축키 목록</dd>
+      <dt>Ctrl/Cmd + B</dt><dd>사이드바 접기·펴기</dd>
+      <dt>Esc</dt><dd>열려 있는 창 닫기</dd>
+      <dt>/</dt><dd>블록 종류 메뉴</dd>
+      <dt>Tab / Shift+Tab</dt><dd>들여쓰기·내어쓰기</dd>
+      <dt>Ctrl/Cmd + B/I/U/E</dt><dd>굵게·기울임·밑줄·코드</dd>
+      <dt>Enter</dt><dd>블록 아래에 새 블록</dd>
+    </dl>
+    <button type="button" class="close" id="shortcuts-close" aria-label="닫기">닫기</button>
+  </div>
+</div>
+<div class="overlay" id="palette" hidden role="dialog" aria-modal="true" aria-label="빠른 검색">
+  <div class="sheet">
+    <input id="palette-q" type="search" placeholder="노트 제목·본문 검색…" aria-label="빠른 검색" autocomplete="off">
+    <div id="palette-list" class="palette-list" role="listbox"></div>
+    <div class="palette-hint">↑↓ 고르기 · Enter 열기 · Esc 닫기</div>
+  </div>
+</div>
+<script src="/site-config.js"></script>
+<script src="/equation-html.js"></script>
+<script src="/db-model.js"></script>
+<script src="/db-formula.js"></script>
+<script src="/db-views.js"></script>
+<script src="/db.js"></script>
+<script src="/editor-model.js"></script>
+<script src="/editor-pages-ui.js"></script>
+<script src="/editor-format.js"></script>
+<script src="/editor.js"></script>
+<link rel="stylesheet" href="/features.css">
+<script src="/features.js"></script>
+</body>
+</html>

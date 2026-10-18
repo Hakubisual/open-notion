@@ -1,0 +1,9 @@
+.trashrow { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 4px 8px; padding: 8px 12px; border-radius: 10px; }
+.trashrow .pt { grid-row: 1; }
+.trashrow .ps { grid-column: 1; margin: 0; }
+.trashrow .mini { grid-row: 1 / span 2; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-13); cursor: pointer; }
+.trashrow .mini.danger { color: var(--tag-red-fg); }
+@media (pointer: coarse) { .trashrow .mini { min-height: 44px; min-width: 44px; } }
+.trashbar { display: flex; justify-content: flex-end; padding: 4px 12px 8px; }
+.trashbar .mini { min-height: 36px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--tag-red-fg); font: inherit; font-size: var(--fs-13); cursor: pointer; }
+.trashrow .tcount { color: var(--muted, inherit); font-size: var(--fs-12, 12px); }

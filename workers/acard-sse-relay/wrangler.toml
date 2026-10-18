@@ -1,0 +1,12 @@
+name = "acard-sse-relay"
+main = "index.js"
+compatibility_date = "2026-10-15"
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "SSE_RELAY"
+class_name = "SseRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SseRelay"]

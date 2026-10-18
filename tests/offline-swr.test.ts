@@ -1,0 +1,118 @@
+import { expect, test } from "bun:test";
+import { createOfflineWorker } from "../offline-sw.js";
+
+const origin = "https://notes.test";
+const req = (path: string, method = "GET") => new Request(origin + path, { method });
+
+class MemoryCache {
+  entries = new Map<string, Response>();
+  key(input: Request | string) { return typeof input === "string" ? input : input.url; }
+  async put(input: Request | string, response: Response) { this.entries.set(this.key(input), response.clone()); }
+  async match(input: Request | string) { return this.entries.get(this.key(input))?.clone(); }
+  async delete(input: Request | string) { return this.entries.delete(this.key(input)); }
+  async keys() { return [...this.entries.keys()].map(url => new Request(url)); }
+}
+class MemoryCaches {
+  stores = new Map<string, MemoryCache>();
+  async open(name: string) { let c = this.stores.get(name); if (!c) { c = new MemoryCache(); this.stores.set(name, c); } return c; }
+  async keys() { return [...this.stores.keys()]; }
+  async has(name: string) { return this.stores.has(name); }
+  async delete(name: string) { return this.stores.delete(name); }
+}
+
+function fixture() {
+  let body = "v1";
+  let status = 200;
+  const messages: any[] = [];
+  const pending: Promise<unknown>[] = [];
+  const sw = createOfflineWorker({
+    caches: new MemoryCaches(), origin, report: () => {}, notify: (m: unknown) => messages.push(m),
+    fetch: async () => new Response(body, { status, headers: { "content-type": "text/html" } }),
+  }, { version: "t", shell: [] });
+  const handle = (r: Request) => sw.handle(r, (p: Promise<unknown>) => pending.push(p));
+  const settle = () => Promise.all(pending.splice(0));
+  return { handle, settle, messages, set(b: string, s = 200) { body = b; status = s; } };
+}
+
+test("a cached page answers from cache and the refresh announces only a changed body", async () => {
+  const f = fixture();
+  expect(await (await f.handle(req("/one/"))).text()).toBe("v1");
+  const again = await f.handle(req("/one/"));
+  expect(again.headers.get("x-acard-swr")).toBe("1");
+  await f.settle();
+  expect(f.messages.some(m => m.type === "acard-fresh")).toBe(false);
+  f.set("v2");
+  expect(await (await f.handle(req("/one/"))).text()).toBe("v1");
+  await f.settle();
+  expect(f.messages.filter(m => m.type === "acard-fresh")).toEqual([{ type: "acard-fresh", kind: "html", url: origin + "/one/" }]);
+  expect(await (await f.handle(req("/one/"))).text()).toBe("v2");
+});
+
+test("page JSON (the editor's base version) is never served stale", async () => {
+  const f = fixture();
+  await f.handle(req("/api/page/one"));
+  f.set("newer");
+  const r = await f.handle(req("/api/page/one"));
+  expect(r.headers.get("x-acard-swr")).toBeNull();
+  expect(await r.text()).toBe("newer");
+});
+
+test("a write drops the cached tree so the next read is fresh", async () => {
+  const f = fixture();
+  await f.handle(req("/api/folders/tree"));
+  f.set("after-move");
+  await f.handle(req("/api/page/one/move", "POST"));
+  const r = await f.handle(req("/api/folders/tree"));
+  expect(r.headers.get("x-acard-swr")).toBeNull();
+  expect(await r.text()).toBe("after-move");
+});
+
+test("telemetry posts on every load keep the cache", async () => {
+  const f = fixture();
+  await f.handle(req("/one/"));
+  await f.handle(req("/cdn-cgi/rum", "POST"));
+  await f.handle(req("/api/beta/event", "POST"));
+  expect((await f.handle(req("/one/"))).headers.get("x-acard-swr")).toBe("1");
+});
+
+test("a 401 during refresh wipes the cache and tells the page", async () => {
+  const f = fixture();
+  await f.handle(req("/one/"));
+  f.set("expired", 401);
+  await f.handle(req("/one/"));
+  await f.settle();
+  expect(f.messages.some(m => m.type === "acard-auth")).toBe(true);
+  f.set("other account");
+  expect(await (await f.handle(req("/one/"))).text()).toBe("other account");
+});
+
+test("signing in as someone else clears the previous account's cache", async () => {
+  const f = fixture();
+  await f.handle(req("/one/"));
+  f.set("second user");
+  await f.handle(req("/api/auth/login", "POST"));
+  const r = await f.handle(req("/one/"));
+  expect(r.headers.get("x-acard-swr")).toBeNull();
+  expect(await r.text()).toBe("second user");
+});
+
+test("a tree refresh that started before a write does not put the old tree back (#14)", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  let body = "old", slow = false;
+  const pending: Promise<unknown>[] = [];
+  const sw = createOfflineWorker({
+    caches: new MemoryCaches(), origin, report: () => {}, notify: () => {},
+    fetch: async (r: Request) => { const b = body; if (slow && r.method === "GET") await gate; return new Response(b, { status: 200 }); },
+  }, { version: "t", shell: [] });
+  const handle = (r: Request) => sw.handle(r, (p: Promise<unknown>) => pending.push(p));
+  await handle(req("/api/folders/tree"));
+  slow = true;
+  await handle(req("/api/folders/tree"));
+  body = "new";
+  await handle(req("/api/folders/prefs", "PUT"));
+  release();
+  await Promise.all(pending.splice(0));
+  slow = false;
+  expect(await (await handle(req("/api/folders/tree"))).text()).toBe("new");
+});

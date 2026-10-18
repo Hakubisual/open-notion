@@ -1,0 +1,152 @@
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createAcardMcpServer, OperationFailure } from "../agents/mcp-tools";
+import { createAgentToken } from "../agent-api.js";
+import { assembleWorkerSource } from "./assemble-worker";
+
+const source = assembleWorkerSource();
+const writer = { name: "Block agent", via: "token" as const, scopes: ["read", "write"] };
+let sqlite: Database, env: any, worker: any, writeToken: string, readToken: string;
+let client: Client, server: ReturnType<typeof createAcardMcpServer>;
+
+beforeEach(async () => {
+  sqlite = new Database(":memory:");
+  const statement = (sql: string, params: any[] = []) => ({
+    bind: (...next: any[]) => statement(sql, next),
+    run: async () => ({ success: true, meta: { changes: sqlite.query(sql).run(...params).changes } }),
+    all: async () => ({ results: sqlite.query(sql).all(...params) }),
+    first: async () => sqlite.query(sql).get(...params) ?? null,
+  });
+  env = { GATE_PASSWORD: "test-pw", GATE_SECRET: "test-secret", ASSETS: { fetch: async () => new Response("missing", { status: 404 }) },
+    DB: { prepare: statement, batch: async (statements: ReturnType<typeof statement>[]) => {
+      sqlite.exec("BEGIN");
+      try { const out = []; for (const item of statements) out.push(await item.run()); sqlite.exec("COMMIT"); return out; }
+      catch (error) { sqlite.exec("ROLLBACK"); throw error; }
+    } } };
+  worker = new Function(source)();
+  await worker.acardHost.run(env, writer, "whoami", {});
+  writeToken = (await createAgentToken(env.DB, { name: writer.name, scopes: writer.scopes })).token;
+  readToken = (await createAgentToken(env.DB, { name: "Reader", scopes: ["read"] })).token;
+  await worker.acardHost.run(env, writer, "createPage", { slug: "blocks", title: "Blocks", markdown: "first\n\nsecond\n\nthird" });
+  server = createAcardMcpServer(async (operation, input) => {
+    try { return await worker.acardHost.run(env, writer, operation, input); }
+    catch (error: any) { throw new OperationFailure(error.message, error.status); }
+  }, "test", worker.acardHost.mcpTools);
+  client = new Client({ name: "blocks-test", version: "test" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(b);
+  await client.connect(a);
+});
+
+afterEach(async () => { await client.close(); await server.close(); sqlite.close(); });
+
+async function mcp(name: string, args: Record<string, unknown> = {}) {
+  const response = await client.callTool({ name, arguments: args });
+  expect(response.isError).not.toBe(true);
+  return JSON.parse((response.content as any)[0].text);
+}
+
+async function rest(path: string, method = "GET", body?: unknown, token = writeToken) {
+  return worker.fetch(new Request("https://notes.test/api/v1" + path, { method,
+    headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body) }), env) as Promise<Response>;
+}
+
+test("MCP update preserves every other block and records history and attribution", async () => {
+  const before = await mcp("read_blocks", { page: "blocks" });
+  const middle = before.blocks[1].id;
+  const untouched = () => sqlite.query("SELECT * FROM blocks WHERE page = 'blocks' AND id != ? ORDER BY ord").all(middle);
+  const rows = untouched();
+  const updated = await mcp("update_block", { page: "blocks", block_id: middle, markdown: "## changed", expected_version: before.version });
+  const after = await mcp("read_blocks", { page: "blocks" });
+  expect(after.blocks).toEqual([before.blocks[0], { id: middle, type: "heading2", text: "changed", markdown: "## changed" }, before.blocks[2]]);
+  expect(untouched()).toEqual(rows);
+  expect(updated.version).toBeGreaterThan(before.version);
+  expect(after.version).toBe(updated.version);
+  expect(sqlite.query("SELECT agent, action FROM agent_activity WHERE action = 'block-update'").all()).toEqual([{ agent: writer.name, action: "block-update" }]);
+  const history = sqlite.query("SELECT snapshot FROM editor_history WHERE page = 'blocks'").all() as any[];
+  expect(history).toHaveLength(1);
+  expect(JSON.parse(history[0].snapshot).blocks.map((b: any) => b.text)).toEqual(["first", "second", "third"]);
+});
+
+test("stale writes return HTTP and MCP 409 without history or content changes", async () => {
+  const before = await mcp("read_blocks", { page: "blocks" });
+  const input = { page: "blocks", block_id: before.blocks[0].id, markdown: "new", expected_version: before.version };
+  await mcp("update_block", input);
+  expect((await rest("/pages/blocks/blocks/" + input.block_id, "PATCH", input)).status).toBe(409);
+  const failed = await client.callTool({ name: "update_block", arguments: input });
+  expect(failed.isError).toBe(true);
+  expect(failed.structuredContent).toMatchObject({ status: 409 });
+  expect(sqlite.query("SELECT COUNT(*) AS n FROM editor_history").get()).toEqual({ n: 1 });
+  expect((await mcp("read_blocks", { page: "blocks" })).blocks[0].text).toBe("new");
+});
+
+test("read token cannot update, insert or delete through REST or the shared runner", async () => {
+  const before = await mcp("read_blocks", { page: "blocks" });
+  const base = { page: "blocks", block_id: before.blocks[0].id, after_block_id: null, markdown: "denied", expected_version: before.version };
+  for (const [method, path, operation] of [
+    ["PATCH", "/pages/blocks/blocks/" + base.block_id, "updateBlock"],
+    ["DELETE", "/pages/blocks/blocks/" + base.block_id, "deleteBlock"],
+    ["POST", "/pages/blocks/blocks", "insertBlocks"],
+  ]) {
+    expect((await rest(path, method, base, readToken)).status).toBe(403);
+    await expect(worker.acardHost.run(env, { ...writer, scopes: ["read"] }, operation, base)).rejects.toMatchObject({ status: 403 });
+  }
+  expect((await rest("/pages/blocks/blocks", "GET", undefined, readToken)).status).toBe(200);
+  expect((await rest("/pages/blocks/blocks", "GET", undefined, "")).status).toBe(401);
+  expect(await mcp("read_blocks", { page: "blocks" })).toEqual(before);
+});
+
+test("insert after ID and null anchor preserve old IDs in order", async () => {
+  const before = await mcp("read_blocks", { page: "blocks" });
+  const inserted = await mcp("insert_blocks", { page: "blocks", after_block_id: before.blocks[0].id, markdown: "alpha\n\nbeta", expected_version: before.version });
+  const after = await mcp("read_blocks", { page: "blocks" });
+  expect(after.blocks.map((b: any) => b.text)).toEqual(["first", "alpha", "beta", "second", "third"]);
+  expect(after.blocks.filter((b: any) => !inserted.block_ids.includes(b.id))).toEqual(before.blocks);
+  const prepended = await rest("/pages/blocks/blocks", "POST", { after_block_id: null, markdown: "start", expected_version: after.version });
+  expect(prepended.status).toBe(200);
+  expect((await mcp("read_blocks", { page: "blocks" })).blocks[0].text).toBe("start");
+});
+
+test("delete removes only the requested block and saves its prior version", async () => {
+  const before = await mcp("read_blocks", { page: "blocks" });
+  const result = await rest("/pages/blocks/blocks/" + before.blocks[1].id, "DELETE", { expected_version: before.version });
+  expect(result.status).toBe(200);
+  expect((await mcp("read_blocks", { page: "blocks" })).blocks).toEqual([before.blocks[0], before.blocks[2]]);
+  expect(sqlite.query("SELECT action FROM agent_activity WHERE action = 'block-delete'").all()).toHaveLength(1);
+  expect(sqlite.query("SELECT id FROM editor_history").all()).toHaveLength(1);
+});
+
+test("invalid edits never claim the version or create history", async () => {
+  const before = await mcp("read_blocks", { page: "blocks" });
+  for (const [name, input, status] of [
+    ["updateBlock", { block_id: before.blocks[0].id, markdown: "one\n\ntwo", expected_version: before.version }, 400],
+    ["updateBlock", { block_id: before.blocks[0].id, markdown: "" , expected_version: before.version }, 400],
+    ["updateBlock", { block_id: before.blocks[0].id, markdown: "one" }, 400],
+    ["insertBlocks", { after_block_id: "absent", markdown: "one", expected_version: before.version }, 404],
+    ["deleteBlock", { block_id: "absent", expected_version: before.version }, 404],
+    ["deleteBlock", { block_id: before.blocks[0].id, expected_version: before.version + 1 }, 409],
+  ] as const) {
+    await expect(worker.acardHost.run(env, writer, name, { page: "blocks", ...input })).rejects.toMatchObject({ status });
+  }
+  expect(await mcp("read_blocks", { page: "blocks" })).toEqual(before);
+  expect(sqlite.query("SELECT id FROM editor_history").all()).toHaveLength(0);
+});
+
+test("skills discovery creates one editable page, preserves owner changes and respects trash", async () => {
+  const seeded = await mcp("get_agent_skills");
+  expect(seeded.slug).toBe("agent-skills");
+  expect((await rest("/agent-skills", "GET", undefined, readToken)).status).toBe(200);
+  expect(sqlite.query("SELECT slug FROM pages WHERE slug = 'agent-skills'").all()).toHaveLength(1);
+  expect(sqlite.query("SELECT id FROM blocks WHERE page = 'agent-skills' AND type = 'callout'").all()).toHaveLength(0);
+  const before = await mcp("read_blocks", { page: "agent-skills" });
+  await mcp("update_block", { page: "agent-skills", block_id: before.blocks[0].id, markdown: "# Owner rules", expected_version: before.version });
+  expect((await mcp("get_agent_skills")).markdown).toContain("# Owner rules");
+  sqlite.exec("INSERT INTO editor_trash (page, deleted) VALUES ('agent-skills', 1)");
+  expect((await rest("/agent-skills")).status).toBe(404);
+  sqlite.exec("DELETE FROM pages WHERE slug = 'agent-skills'");
+  expect((await rest("/agent-skills")).status).toBe(404);
+  expect(sqlite.query("SELECT slug FROM pages WHERE slug = 'agent-skills'").all()).toHaveLength(0);
+});

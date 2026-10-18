@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>에이전트 연결 · __SITE_NAME__</title>
+<link rel="preload" href="/fonts/pretendard-core.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/agents.css">
+</head>
+<body class="agents-page">
+<a class="skip" href="#doc">본문으로</a>
+<header class="topbar">
+  <button class="icon" id="menu" aria-label="메뉴" aria-expanded="false" aria-controls="sidebar">☰</button>
+  <a class="brand" href="/"><svg class="wordmark" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="OpenNotion" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+  <span class="ag-crumb" aria-hidden="true">설정</span>
+  <div class="ag-grow"></div>
+  <a class="icon" id="viewlink" href="/" aria-label="읽기 화면으로" title="읽기 화면으로">↩</a>
+  <button class="icon" id="theme" aria-label="테마 바꾸기" title="테마 바꾸기">◐</button>
+</header>
+<div class="shell">
+  <nav class="sidebar" id="sidebar" aria-label="설정 메뉴">
+    <div class="navgroup">
+      <h2>설정</h2>
+      <ul><li><a href="/settings/agents/" class="on" aria-current="page">에이전트 연결</a></li><li><a href="#auto-notes">자동 메모</a></li></ul>
+    </div>
+    <div class="navgroup">
+      <h2>노트</h2>
+      <ul>
+        <li><a href="/">읽기 화면</a></li>
+        <li><a href="/settings">계정 설정 (이름·주소)</a></li>
+        <li><a href="/edit/home/">고치기</a></li>
+      </ul>
+    </div>
+  </nav>
+  <main id="doc" class="ag">
+    <h1 class="ag-h1">에이전트 연결</h1>
+    <p class="ag-lede">Claude Code, Codex, 가재(OpenClaw) 같은 AI 에이전트가 이 노트를 읽고 쓸 수 있게 연결해요.</p>
+
+    <section class="ag-section" aria-labelledby="h-tokens">
+      <h2 id="h-tokens" class="ag-h2">에이전트 토큰</h2>
+      <p class="ag-help">토큰은 에이전트가 노트에 들어올 때 쓰는 열쇠예요. 에이전트마다 하나씩 만들어 주세요.</p>
+      <div class="ag-card">
+        <ul class="ag-list" id="token-list" aria-label="에이전트 토큰 목록"></ul>
+        <form class="ag-form" id="token-form" novalidate aria-label="새 토큰 만들기">
+          <div class="ag-field">
+            <label for="token-name">이름</label>
+            <input id="token-name" name="name" type="text" maxlength="60" autocomplete="off" placeholder="예: 내 Claude Code">
+          </div>
+          <div class="ag-field" role="radiogroup" aria-labelledby="scope-label">
+            <span class="ag-legend" id="scope-label">권한</span>
+            <div class="ag-radios">
+              <label class="ag-radio"><input type="radio" name="scope" value="read"><span>읽기만</span></label>
+              <label class="ag-radio"><input type="radio" name="scope" value="write" checked><span>읽기·쓰기</span></label>
+            </div>
+          </div>
+          <button type="submit" class="ag-btn ag-primary" id="token-create">만들기</button>
+          <p class="ag-error" id="token-form-error" role="alert" hidden></p>
+        </form>
+      </div>
+      <div class="ag-token-box" id="token-box" hidden role="region" aria-labelledby="token-box-title">
+        <h3 id="token-box-title">새 토큰이 만들어졌어요</h3>
+        <div class="ag-token-row">
+          <input id="token-raw" class="ag-token" type="text" readonly aria-label="새 토큰" spellcheck="false">
+          <button type="button" class="ag-btn" id="token-copy">복사</button>
+        </div>
+        <p class="ag-warn">이 창을 닫으면 다시 볼 수 없어요. 지금 복사해서 에이전트 설정에 붙여 넣으세요.</p>
+      </div>
+    </section>
+
+    <section class="ag-section" id="auto-notes" aria-labelledby="h-auto">
+      <h2 id="h-auto" class="ag-h2">자동 메모</h2>
+      <p class="ag-help">Claude Code와 Codex가 대화가 끝날 때마다 프로젝트(저장소)별 메모를 남겨요. 켜려면 터미널에서 <code>npx https://notes.example.com/acard-cli.tgz hooks install</code></p>
+      <div id="auto-notes-panel"><p class="ag-help">불러오는 중…</p></div>
+    </section>
+
+    <section class="ag-section" aria-labelledby="h-grants">
+      <h2 id="h-grants" class="ag-h2">로그인으로 연결된 앱</h2>
+      <p class="ag-help">토큰 대신 로그인 창으로 연결한 앱이에요. 끊으면 그 앱은 다시 로그인해야 들어올 수 있어요.</p>
+      <div class="ag-card">
+        <ul class="ag-list" id="grant-list" aria-label="로그인으로 연결된 앱 목록"></ul>
+      </div>
+    </section>
+
+    <section class="ag-section" aria-labelledby="h-connect">
+      <h2 id="h-connect" class="ag-h2">연결 방법</h2>
+      <p class="ag-help">쓰는 앱을 고르면 설정 방법이 나와요. 설정 속 &lt;TOKEN&gt; 자리에 위에서 만든 토큰을 넣어요.</p>
+      <div class="ag-chips" id="client-picker" role="tablist" aria-label="앱 고르기"></div>
+      <div class="ag-detail" id="client-detail" role="tabpanel" tabindex="0"></div>
+    </section>
+
+    <section class="ag-section" aria-labelledby="h-other">
+      <h2 id="h-other" class="ag-h2">다른 방법</h2>
+      <p class="ag-help">위 목록에 없는 앱이라면 이 주소를 직접 넣어요.</p>
+      <div class="ag-grid" id="endpoint-cards"></div>
+      <p class="ag-docs" id="endpoint-docs" hidden></p>
+    </section>
+  </main>
+</div>
+<div class="ag-toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/agents.js"></script>
+<link rel="stylesheet" href="/lazy/projects.css?v=__PROJECTS_CSS__"><script src="/lazy/projects.js?v=__PROJECTS_JS__" defer></script>
+</body>
+</html>

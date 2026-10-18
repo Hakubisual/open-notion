@@ -1,0 +1,420 @@
+// Public agent-discovery documents for Acard.
+// Text-inlined into the Cloudflare worker: no imports, pure functions only.
+
+export function openapiSpec(origin) {
+  const err = { $ref: '#/components/responses/Error' };
+  const errors = { 401: err, 403: err, 404: err, 409: err, 413: err };
+  const json = (schema) => ({ content: { 'application/json': { schema } } });
+  const ok = (description, schema) => ({ description, ...json(schema) });
+  const ref = (name) => ({ $ref: '#/components/schemas/' + name });
+  const str = { type: 'string' };
+  const num = { type: 'number' };
+  const slugParam = { name: 'slug', in: 'path', required: true, schema: str };
+  const dbParam = { name: 'slug', in: 'path', required: true, schema: str, description: 'Database slug' };
+  const blockParam = { name: 'blockId', in: 'path', required: true, schema: str };
+  const blockWrite = { type: 'object', properties: { page: str, version: num, updated: num, block_ids: { type: 'array', items: str } } };
+  const op = (operationId, summary, extra, responses) => ({
+    operationId,
+    summary,
+    ...extra,
+    responses: { ...responses, ...errors },
+  });
+  const markdownBody = (props, required) => ({
+    required: true,
+    content: {
+      'application/json': {
+        schema: { type: 'object', required, properties: { markdown: str, ...props } },
+      },
+      'text/markdown': { schema: str },
+    },
+  });
+
+  return {
+    openapi: '3.1.0',
+    info: {
+      title: 'Acard API',
+      version: '1.0.0',
+      description:
+        'Acard is a Notion-like notes app. Agents write markdown pages; the human owner reads and edits them. ' +
+        'Conventions: ' + origin + '/AGENTS.md. MCP: ' + origin + '/mcp.',
+    },
+    servers: [{ url: origin + '/api/v1' }],
+    security: [{ bearer: [] }, { oauth2: ['read', 'write'] }],
+    components: {
+      securitySchemes: {
+        bearer: {
+          type: 'http',
+          scheme: 'bearer',
+          description: 'Acard agent token `acard_...` created in 설정 > 에이전트 연결.',
+        },
+        oauth2: {
+          type: 'oauth2',
+          description:
+            'OAuth 2.1 authorization code with PKCE (S256). Clients can register dynamically at ' +
+            origin + '/oauth/register.',
+          flows: {
+            authorizationCode: {
+              authorizationUrl: origin + '/oauth/authorize',
+              tokenUrl: origin + '/oauth/token',
+              scopes: { read: 'Read pages, databases and decisions', write: 'Create and change pages and rows' },
+            },
+          },
+        },
+      },
+      responses: {
+        Error: { description: 'Error', ...json(ref('Error')) },
+      },
+      schemas: {
+        Error: { type: 'object', required: ['error'], properties: { error: str } },
+        Author: {
+          type: 'object',
+          properties: { agent: str, via: str, action: str, created: num },
+        },
+        PageSummary: {
+          type: 'object',
+          properties: {
+            slug: str, title: str, parent: { type: ['string', 'null'] }, kind: str,
+            icon: { type: ['string', 'null'] }, updated: num, hit: str,
+          },
+        },
+        Page: {
+          type: 'object',
+          properties: {
+            slug: str, title: str, parent: { type: ['string', 'null'] }, icon: { type: ['string', 'null'] },
+            tags: { type: 'array', items: str }, updated: num,
+            authors: { type: 'array', items: ref('Author') }, markdown: str,
+          },
+        },
+        Props: { type: 'object', additionalProperties: true, description: 'Keyed by property id or name' },
+      },
+    },
+    paths: {
+      '/agent-skills': {
+        get: op('getAgentSkills', 'Read the editable agent-skills page, seeding Korean defaults only if missing', {}, { 200: ok('Rules', ref('Page')) }),
+      },
+      '/pages/{slug}/blocks': {
+        get: op('readBlocks', 'Read ordered blocks and their page version', { parameters: [slugParam] }, {
+          200: ok('Blocks', { type: 'object', properties: { page: str, version: num, updated: num,
+            blocks: { type: 'array', items: { type: 'object', properties: { id: str, type: str, text: str, markdown: str } } } } }),
+        }),
+        post: op('insertBlocks', 'Insert immediately after an ID, or at the start for a null anchor', {
+          parameters: [slugParam], requestBody: { required: true, ...json({ type: 'object', required: ['markdown', 'after_block_id', 'expected_version'],
+            properties: { markdown: str, after_block_id: { type: ['string', 'null'] }, expected_version: num } }) },
+        }, { 200: ok('Inserted', blockWrite) }),
+      },
+      '/pages/{slug}/blocks/{blockId}': {
+        patch: op('updateBlock', 'Replace exactly one block, retaining its ID and indentation', {
+          parameters: [slugParam, blockParam], requestBody: { required: true, ...json({ type: 'object', required: ['markdown', 'expected_version'], properties: { markdown: str, expected_version: num } }) },
+        }, { 200: ok('Updated', blockWrite) }),
+        delete: op('deleteBlock', 'Delete only the named block, not its descendants', {
+          parameters: [slugParam, blockParam], requestBody: { required: true, ...json({ type: 'object', required: ['expected_version'], properties: { expected_version: num } }) },
+        }, { 200: ok('Deleted', blockWrite) }),
+      },
+      '/me': {
+        get: op('whoami', 'Who am I', {}, {
+          200: ok('Current agent', {
+            type: 'object',
+            properties: { agent: str, via: { type: 'string', enum: ['token', 'oauth'] }, scopes: { type: 'array', items: str } },
+          }),
+        }),
+      },
+      '/pages': {
+        get: op('listPages', 'List pages, or search title and body with q', {
+          parameters: [{ name: 'q', in: 'query', required: false, schema: str }],
+        }, {
+          200: ok('Pages', { type: 'object', properties: { pages: { type: 'array', items: ref('PageSummary') } } }),
+        }),
+        post: op('createPage', 'Create a page from markdown (frontmatter title/parent/icon/tags)', {
+          requestBody: markdownBody({
+            title: str, parent: str, icon: str, tags: { type: 'array', items: str }, slug: str,
+          }, ['markdown']),
+        }, {
+          201: ok('Created', {
+            type: 'object',
+            properties: { slug: str, title: str, parent: { type: ['string', 'null'] }, url: str, created: num },
+          }),
+        }),
+      },
+      '/pages/{slug}': {
+        get: op('readPage', 'Read a page. Accept: text/markdown or ?format=markdown returns raw markdown with frontmatter', {
+          parameters: [slugParam, { name: 'format', in: 'query', required: false, schema: { type: 'string', enum: ['markdown'] } }],
+        }, {
+          200: {
+            description: 'Page',
+            content: { 'application/json': { schema: ref('Page') }, 'text/markdown': { schema: str } },
+          },
+        }),
+        put: op('updatePage', 'Replace a page. 409 if expectedUpdated is older than the page', {
+          parameters: [slugParam],
+          requestBody: { required: true, ...json({ type: 'object', required: ['markdown'], properties: { markdown: str, expectedUpdated: num } }) },
+        }, {
+          200: ok('Updated', {
+            type: 'object',
+            properties: { slug: str, title: str, parent: { type: ['string', 'null'] }, updated: { type: 'boolean' } },
+          }),
+        }),
+      },
+      '/pages/{slug}/append': {
+        post: op('appendToPage', 'Append markdown to the end of a page', {
+          parameters: [slugParam],
+          requestBody: markdownBody({}, ['markdown']),
+        }, {
+          200: ok('Appended', { type: 'object', properties: { slug: str, appended: num } }),
+        }),
+      },
+      '/databases': {
+        get: op('listDatabases', 'List databases', {}, {
+          200: ok('Databases', {
+            type: 'object',
+            properties: { databases: { type: 'array', items: { type: 'object', properties: { slug: str, title: str, icon: { type: ['string', 'null'] } } } } },
+          }),
+        }),
+      },
+      '/databases/{slug}/rows': {
+        get: op('readDatabase', 'Read database properties and rows', { parameters: [dbParam] }, {
+          200: ok('Rows', {
+            type: 'object',
+            properties: {
+              database: { type: 'object', properties: { slug: str, title: str } },
+              properties: { type: 'array', items: { type: 'object', properties: { id: str, name: str, type: str } } },
+              rows: { type: 'array', items: { type: 'object', properties: { id: str, page: str, title: str, props: ref('Props') } } },
+            },
+          }),
+        }),
+        post: op('addDatabaseRow', 'Add a database row', {
+          parameters: [dbParam],
+          requestBody: { required: true, ...json({ type: 'object', required: ['props'], properties: { props: ref('Props') } }) },
+        }, {
+          201: ok('Created', {
+            type: 'object',
+            properties: {
+              row: { type: 'object', properties: { id: str, page: str, ord: num, props: ref('Props'), created: num, updated: num } },
+            },
+          }),
+        }),
+      },
+      '/databases/{slug}/rows/{rowId}': {
+        patch: op('updateDatabaseRow', 'Update database row properties', {
+          parameters: [dbParam, { name: 'rowId', in: 'path', required: true, schema: str }],
+          requestBody: { required: true, ...json({ type: 'object', required: ['props'], properties: { props: ref('Props') } }) },
+        }, {
+          200: ok('Updated', { type: 'object', properties: { ok: { type: 'boolean' } } }),
+        }),
+      },
+      '/decisions': {
+        get: op('listDecisions', 'List open `> [!decision]` callouts waiting for the owner', {}, {
+          200: ok('Decisions', {
+            type: 'object',
+            properties: {
+              decisions: { type: 'array', items: { type: 'object', properties: { slug: str, title: str, block: str, text: str, updated: num } } },
+            },
+          }),
+        }),
+      },
+    },
+  };
+}
+
+export function llmsTxt(origin) {
+  return `# Acard
+
+> Acard is a private Notion-like notes app. AI agents write markdown pages and work logs; the human owner (주인님) reads and edits them. Connect over MCP or the HTTP API with an agent token or OAuth.
+
+## Connect
+
+- [MCP (Streamable HTTP)](${origin}/mcp): main endpoint for MCP clients
+- [MCP (legacy SSE)](${origin}/sse): for clients that only speak SSE
+- [OpenAPI 3.1 spec](${origin}/api/v1/openapi.json): HTTP API under ${origin}/api/v1
+- Auth: header \`Authorization: Bearer acard_...\` (token made by the owner in 설정 > 에이전트 연결), or OAuth 2.1 with PKCE S256 and dynamic client registration at ${origin}/oauth/register
+- Local stdio: \`npx -y --package=${origin}/acard-cli.tgz acard mcp\` with env ACARD_TOKEN and ACARD_URL=${origin}
+
+## Conventions
+
+- [AGENTS.md](${origin}/AGENTS.md): full rules. Read it before writing.
+- [Agent skills](${origin}/api/v1/agent-skills): call get_agent_skills first. The owner edits the agent-skills page; missing rules are seeded in Korean.
+- Prefer read_blocks and update_block/insert_blocks/delete_block with expected_version from the read. On 409 re-read and merge.
+- One work-log page per project; add to existing logs with append, don't rewrite them.
+- Flag owner decisions with a callout \`> [!decision] 주인님 결정 필요: <question>\`. They show up in GET /api/v1/decisions.
+- Never put secrets, tokens or passwords in pages.
+- Write for the owner in Korean.
+
+## Optional
+
+- [MCP tools](${origin}/AGENTS.md): whoami, get_agent_skills, read_blocks, update_block, insert_blocks, delete_block, list_pages, read_page, create_page, update_page, append_to_page, list_databases, read_database, add_database_row, update_database_row, list_decisions, upload_media
+`;
+}
+
+export function agentsMd(origin) {
+  return `# AGENTS.md (Acard)
+
+Acard (${origin}) is a Notion-like notes app. Agents write markdown. The human owner, called 주인님, reads and edits the same pages in a block editor on phone and PC. Your pages are their window into your work, so keep them tidy and readable.
+
+## Authenticate
+
+- MCP Streamable HTTP: ${origin}/mcp (legacy SSE: ${origin}/sse)
+- HTTP API: ${origin}/api/v1 (spec: ${origin}/api/v1/openapi.json)
+- Send \`Authorization: Bearer acard_...\`. The owner creates tokens in "설정 > 에이전트 연결". Or use OAuth 2.1 (PKCE S256, dynamic registration at ${origin}/oauth/register).
+- Command-only clients: \`npx -y --package=${origin}/acard-cli.tgz acard mcp\` with env ACARD_TOKEN and ACARD_URL=${origin}.
+- Call \`whoami\` (GET /api/v1/me) first to check your identity and scopes.
+- Call \`get_agent_skills\` (GET /api/v1/agent-skills) before writing. It reads the editable \`agent-skills\` page and seeds Korean defaults only if missing. Preserve the owner's changes to these rules.
+
+## Edit individual blocks
+
+- \`read_blocks\` takes \`page\` (slug), returning ordered \`{id,type,text,markdown}\` blocks and \`version\`/\`updated\` stamps. HTTP: GET /api/v1/pages/{slug}/blocks.
+- \`update_block\` takes \`page, block_id, markdown, expected_version\`. Markdown must describe exactly one block; its ID and indentation stay unchanged. HTTP: PATCH /api/v1/pages/{slug}/blocks/{id}.
+- \`insert_blocks\` takes \`page, after_block_id, markdown, expected_version\`. A null anchor inserts at the start; an ID inserts immediately after that block. HTTP: POST /api/v1/pages/{slug}/blocks.
+- Visuals: write \`\`\`mermaid (flowchart, sequenceDiagram, timeline, gantt, mindmap), \`\`\`acard-chart (JSON {type,labels,series}) or \`\`\`acard-visual (sandboxed HTML/SVG, no network, 64 KB) fences, or \`\`\`html-embed for an HTML block (HTML/CSS/JS charts, interactive demos, styled layouts; runs in a sandboxed iframe with scripts but no network, cookies or parent access, 64 KB) with {"caption":...,"alt":...} after the language. Images: \`upload_media\` takes \`page, data\` (base64 png/jpeg/webp/gif, 4 MB; SVG is refused) and returns a markdown image line. HTTP: POST /api/v1/media (multipart file, page, mime).
+- \`delete_block\` takes \`page, block_id, expected_version\`. It deletes only that block, leaving descendants untouched. HTTP: DELETE /api/v1/pages/{slug}/blocks/{id} with a JSON body.
+- Prefer these tools over replacing a whole page. Send the exact \`version\` you read as \`expected_version\`; each successful write returns a new version. A stale version is HTTP 409, or MCP \`isError: true\` with \`structuredContent.status: 409\`. Re-read and merge instead of forcing a write.
+
+## Where to write work logs
+
+- You'll be told a parent page. Create one page per project under it (create_page with \`parent\`).
+- If a log page already exists, add to it with \`append_to_page\` (POST /api/v1/pages/{slug}/append). Don't rewrite the whole page to add an entry.
+- Search first with \`list_pages\` (GET /api/v1/pages?q=) so you don't make duplicates.
+
+## Frontmatter
+
+\`\`\`yaml
+---
+title: Page title
+parent: parent-slug
+icon: "📒"
+tags: [log, project]
+---
+\`\`\`
+
+\`title\`, \`parent\`, \`icon\` and \`tags\` are writable. \`slug\` is read-only once the page exists.
+
+## Markdown blocks
+
+| Markdown | Block |
+| --- | --- |
+| \`# H1\` to \`### H3\` | headings |
+| \`- item\` / \`1. item\` | bulleted / numbered list |
+| \`- [ ] task\` / \`- [x] task\` | to-do |
+| \`- [toggle] Title\` | toggle |
+| \`> [!tip] text\` | callout |
+| \`> quote\` | quote |
+| fenced \`\`\` code \`\`\` | code |
+| \`---\` | divider |
+| \`| a | b |\` table | database (table/board) |
+| \`![caption](url "60")\` | image (last number is width %) |
+| \`[[slug]]\` | page link (shows in backlinks) |
+
+## Asking the owner to decide
+
+When you need 주인님 to choose something, add a callout:
+
+\`\`\`
+> [!decision] 주인님 결정 필요: <one-sentence question>
+\`\`\`
+
+It shows up in GET /api/v1/decisions and the \`list_decisions\` tool. The owner answers by editing the page and removing the callout. Check \`list_decisions\` before you act on something you flagged; if the callout is gone, read the page for the answer.
+
+## Rules
+
+- Never put secrets, tokens, passwords or private keys in a page.
+- Read before you overwrite. Prefer append over replace.
+- Pass \`expectedUpdated\` (the \`updated\` value you read) to update_page. A 409 means the page changed since you read it: re-read, merge your change with theirs, then write again. Never drop the owner's edits.
+- Write in Korean when the text is for the owner.
+- Keep pages short. Lead with what changed and what's next.
+`;
+}
+
+export function connectClients(origin) {
+  const mcp = origin + '/mcp';
+  const pkg = '--package=' + origin + '/acard-cli.tgz';
+  const stdioJson = (key) =>
+    JSON.stringify({
+      [key]: {
+        acard: {
+          command: 'npx',
+          args: ['-y', pkg, 'acard', 'mcp'],
+          env: { ACARD_TOKEN: '<TOKEN>', ACARD_URL: origin },
+        },
+      },
+    }, null, 2);
+  const headerJson = (outer, inner) =>
+    JSON.stringify({ [outer]: { acard: { ...inner, headers: { Authorization: 'Bearer <TOKEN>' } } } }, null, 2);
+  const c = (id, name, docUrl, note, methods) => ({ id, name, status: 'unverified', docUrl, note, methods });
+  const verified = (client) => ({ ...client, status: 'verified' });
+
+  return [
+    verified(c('omo', 'OMO', origin + '/AGENTS.md',
+      '이 PC 의 OMO 로 실제 페이지를 만들고 덧붙여 확인했어요. 토큰은 ACARD_TOKEN 환경변수에 넣어 둡니다. 프로젝트 파일(.omo/mcp.json)은 OMO 를 --approve 로 켜야 읽혀요.',
+      [
+        { label: '설정 파일에 추가', kind: 'file', path: '~/.omo/agent/mcp.json', code: JSON.stringify({ mcpServers: { acard: { type: 'http', url: mcp, auth: 'bearer', bearerTokenEnv: 'ACARD_TOKEN' } } }, null, 2) },
+        { label: '명령 방식(주소가 안 될 때)', kind: 'file', path: '~/.omo/agent/mcp.json', code: stdioJson('mcpServers') },
+      ])),
+    verified(c('claude-code', 'Claude Code', 'https://code.claude.com/docs/en/mcp',
+      '이 PC 의 Claude Code 로 실제 페이지를 만들고 고쳐서 확인했어요. 토큰 줄을 빼고 추가한 뒤 Claude Code 안에서 /mcp 를 실행하면 로그인으로 연결할 수도 있어요.',
+      [
+        { label: '명령 한 줄', kind: 'command', code: `claude mcp add --transport http acard ${mcp} --header "Authorization: Bearer <TOKEN>"` },
+        { label: '프로젝트 설정 파일', kind: 'file', path: '.mcp.json', code: headerJson('mcpServers', { type: 'http', url: mcp }) },
+      ])),
+    c('claude-desktop', 'Claude Desktop', 'https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp',
+      '설정 > 커넥터 > 사용자 지정 커넥터 추가에 주소를 넣으면 로그인 창이 뜹니다. 안 되면 아래 설정 파일 방식을 씁니다.',
+      [
+        { label: '커넥터 주소', kind: 'command', code: mcp },
+        { label: '설정 파일(명령 방식)', kind: 'file', path: '%APPDATA%\\Claude\\claude_desktop_config.json', code: stdioJson('mcpServers') },
+      ]),
+    c('codex', 'Codex CLI', 'https://developers.openai.com/codex/mcp',
+      '토큰은 ACARD_TOKEN 환경변수에 넣어 둡니다. 로그인 방식은 두 번째 명령을 씁니다.',
+      [
+        { label: '설정 파일에 추가', kind: 'file', path: '~/.codex/config.toml', code: `[mcp_servers.acard]\nurl = "${mcp}"\nbearer_token_env_var = "ACARD_TOKEN"` },
+        { label: '로그인으로 연결', kind: 'command', code: `codex mcp add acard --url ${mcp}` },
+      ]),
+    c('amp', 'Amp', 'https://ampcode.com/docs/customize/mcp',
+      '명령으로 추가하면 로그인 창이 뜹니다. 토큰을 쓰려면 설정 파일 방식을 씁니다.',
+      [
+        { label: '명령 한 줄', kind: 'command', code: `amp mcp add acard ${mcp}` },
+        { label: '설정에 추가', kind: 'file', path: 'settings.json', code: JSON.stringify({ 'amp.mcpServers': { acard: { url: mcp, headers: { Authorization: 'Bearer <TOKEN>' } } } }, null, 2) },
+      ]),
+    c('openclaw', 'OpenClaw (가재)', 'https://docs.openclaw.ai/cli/mcp',
+      '전송 방식을 빼면 기본값이 SSE 라서, streamable-http 를 꼭 적어야 합니다.',
+      [
+        { label: '로그인으로 연결', kind: 'command', code: `openclaw mcp add acard --url ${mcp} --transport streamable-http --auth oauth\nopenclaw mcp login acard` },
+        { label: '토큰으로 연결', kind: 'command', code: `openclaw mcp set acard '${JSON.stringify({ url: mcp, transport: 'streamable-http', headers: { Authorization: 'Bearer <TOKEN>' } })}'` },
+      ]),
+    c('cursor', 'Cursor', 'https://cursor.com/docs/context/mcp',
+      'headers 를 빼면 Cursor 가 로그인 창을 띄웁니다.',
+      [{ label: '설정 파일에 추가', kind: 'file', path: '~/.cursor/mcp.json', code: headerJson('mcpServers', { url: mcp }) }]),
+    c('windsurf', 'Windsurf', 'https://docs.windsurf.com/windsurf/cascade/mcp',
+      '윈도우에서는 %APPDATA%\\devin\\mcp_config.json 에 있습니다(현재 문서 기준).',
+      [{ label: '설정 파일에 추가', kind: 'file', path: '%APPDATA%\\devin\\mcp_config.json', code: headerJson('mcpServers', { serverUrl: mcp }) }]),
+    c('cline', 'Cline', 'https://docs.cline.bot/mcp/configuring-mcp-servers',
+      'type 을 빼면 SSE 로 연결되니 streamableHttp 를 꼭 적습니다.',
+      [{ label: '설정 파일에 추가', kind: 'file', path: 'cline_mcp_settings.json', code: headerJson('mcpServers', { type: 'streamableHttp', url: mcp }) }]),
+    c('continue', 'Continue', 'https://docs.continue.dev/customize/deep-dives/mcp',
+      '공식 문서에 토큰 넣는 방법이 없어서, 명령을 실행하는 방식을 권합니다.',
+      [{
+        label: '설정 파일 만들기', kind: 'file', path: '.continue/mcpServers/acard.yaml',
+        code: `name: Acard\nversion: 0.0.1\nschema: v1\nmcpServers:\n  - name: acard\n    command: npx\n    args:\n      - "-y"\n      - "${pkg}"\n      - acard\n      - mcp\n    env:\n      ACARD_TOKEN: <TOKEN>\n      ACARD_URL: ${origin}`,
+      }]),
+    c('gemini-cli', 'Gemini CLI', 'https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md',
+      'headers 를 빼면 처음 연결할 때 로그인 창이 뜹니다. SSE 를 쓰려면 "url": "' + origin + '/sse" 로 바꿉니다.',
+      [{ label: '설정 파일에 추가', kind: 'file', path: '~/.gemini/settings.json', code: headerJson('mcpServers', { httpUrl: mcp }) }]),
+    c('opencode', 'opencode', 'https://opencode.ai/docs/mcp-servers/',
+      '로그인 방식은 headers 를 빼고 opencode mcp auth acard 를 실행합니다.',
+      [{ label: '설정 파일에 추가', kind: 'file', path: 'opencode.json', code: JSON.stringify({ mcp: { acard: { type: 'remote', url: mcp, headers: { Authorization: 'Bearer <TOKEN>' } } } }, null, 2) }]),
+    c('goose', 'Goose', 'https://goose-docs.ai/docs/getting-started/using-extensions',
+      '처음 연결할 때 로그인 창이 뜹니다. 토큰을 직접 넣는 방법은 공식 문서에 없습니다.',
+      [{
+        label: '설정 파일에 추가', kind: 'file', path: '~/.config/goose/config.yaml',
+        code: `extensions:\n  acard:\n    name: Acard\n    type: streamable_http\n    uri: ${mcp}\n    enabled: true\n    timeout: 300`,
+      }]),
+    c('zed', 'Zed', 'https://zed.dev/docs/ai/mcp',
+      'headers 를 빼면 Zed 가 로그인 창을 띄웁니다.',
+      [{ label: '설정 파일에 추가', kind: 'file', path: 'settings.json', code: headerJson('context_servers', { url: mcp }) }]),
+    c('vscode-copilot', 'VS Code (Copilot 에이전트)', 'https://code.visualstudio.com/docs/copilot/customization/mcp-servers',
+      '처음 쓸 때 VS Code 가 토큰을 물어봅니다. 파일에 토큰을 직접 적지 않아도 됩니다.',
+      [{
+        label: '설정 파일에 추가', kind: 'file', path: '.vscode/mcp.json',
+        code: JSON.stringify({
+          servers: { acard: { type: 'http', url: mcp, headers: { Authorization: 'Bearer ${input:acard-token}' } } },
+          inputs: [{ type: 'promptString', id: 'acard-token', description: 'Acard token', password: true }],
+        }, null, 2),
+      }]),
+  ];
+}

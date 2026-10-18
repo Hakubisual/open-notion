@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="meta.onb">Get started - Acard</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+
+<link rel="preload" href="/fonts/pretendard-core.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/_site/styles.css">
+<link rel="stylesheet" href="/_site/auth.css">
+<link rel="stylesheet" href="/_site/onboarding.css">
+</head>
+<body>
+<main class="auth onb">
+  <button class="onb-back" id="back" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg><span data-i18n="onb.back">Back</span></button>
+  <div class="auth-box" id="box">
+    <div class="auth-logo"><svg class="wordmark" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="OpenNotion" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></div>
+    <div class="steps"><span id="step-no">1 / 3</span><div class="bars"><i class="on"></i><i id="bar2"></i><i id="bar3"></i></div></div>
+
+    <form class="onb-step" id="step1" novalidate>
+      <h1 data-i18n="onb.s1.title">Set up your profile</h1>
+      <p class="sub" data-i18n="onb.s1.sub">You can change this later in settings</p>
+      <div class="avatar-wrap">
+        <div class="avatar" id="avatar"></div>
+        <p class="avatar-cap" id="avatar-cap">Using the first letter of your name</p>
+      </div>
+      <div class="field">
+        <label for="display_name" data-i18n="onb.name">Name</label>
+        <input class="input" id="display_name" name="display_name" maxlength="40" autocomplete="name" required>
+      </div>
+      <div class="field">
+        <label for="handle" data-i18n="onb.handle">Public address</label>
+        <div class="handle-box"><input class="input" id="handle" name="handle" maxlength="30" autocapitalize="off" spellcheck="false" required><span class="suffix">.notes.example.com</span></div>
+        <p class="handle-state" id="handle-state" aria-live="polite"></p>
+        <p class="hint" data-i18n="onb.handleHint">Reserved as your public blog address (opening soon)</p>
+      </div>
+      <button class="btn btn-primary btn-wide" type="submit" data-i18n="onb.next">Next</button>
+      <div class="msg" role="status"></div>
+    </form>
+
+    <form class="onb-step" id="step2" hidden novalidate>
+      <h1 data-i18n="onb.s2.title">What will you use Acard for?</h1>
+      <p class="sub" data-i18n="onb.s2.sub">We'll prepare your first page to match</p>
+      <div class="uses" role="group" aria-label="Home" data-i18n-attr="aria-label:onb.uses">
+        <label class="use"><input type="checkbox" name="preset" value="board"><span class="use-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="11" rx="1.5"/><rect x="17" y="4" width="4" height="7" rx="1.5"/></svg></span><b data-i18n="onb.p.board">x</b><span data-i18n="onb.p.boardSub">x</span><em class="tick"></em></label>
+        <label class="use"><input type="checkbox" name="preset" value="blog"><span class="use-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4 20 4-1L19 8a2.1 2.1 0 0 0-3-3L5 16Z"/><path d="M4 20h16"/></svg></span><b data-i18n="onb.p.blog">x</b><span data-i18n="onb.p.blogSub">x</span><em class="tick"></em></label>
+        <label class="use"><input type="checkbox" name="preset" value="notes"><span class="use-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span><b data-i18n="onb.p.notes">x</b><span data-i18n="onb.p.notesSub">x</span><em class="tick"></em></label>
+        <label class="use"><input type="checkbox" name="preset" value="progress"><span class="use-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V12M10 20V8M15 20v-5M20 20V5"/></svg></span><b data-i18n="onb.p.progress">x</b><span data-i18n="onb.p.progressSub">x</span><em class="tick"></em></label>
+      </div>
+      <button class="btn btn-primary btn-wide" type="submit" data-i18n="onb.start">Get started</button>
+      <button class="skip" id="skip" type="button" data-i18n="onb.skip">Skip</button>
+      <div class="msg" role="status"></div>
+    </form>
+
+    <section class="onb-step" id="step3" hidden>
+      <h1 data-i18n="onb.s3.title">Connect your agent</h1>
+      <p class="sub" data-i18n="onb.s3.sub">Pick the AI agent you use</p>
+      <div class="agents" id="agents" role="radiogroup" aria-label="Agent" data-i18n-attr="aria-label:onb.s3.pick"></div>
+      <div class="term"><div class="term-bar"><i></i><i></i><i></i><span id="term-file"></span></div><div class="term-body"><pre id="cmd"></pre><button class="btn btn-primary" id="copy" type="button" ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg><span data-i18n="onb.s3.copy">Copy</span></button></div></div>
+      <ol class="how" id="how"></ol>
+      <p class="unverified" id="unverified" hidden data-i18n="onb.s3.unverified">Not tested yet</p>
+      <div class="wait" id="wait" aria-live="polite"><span class="pulse"></span><span id="wait-text" data-i18n="onb.s3.waiting">Waiting for connection</span></div>
+      <p class="stuck" id="stuck" hidden data-i18n="onb.s3.stuck">x</p>
+      <a class="btn btn-skip" id="skip3" href="/?welcome=1" data-i18n="onb.s3.skipStart">Skip</a>
+      <div class="done" id="done" hidden aria-live="polite"><svg class="check" viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"/><path d="m15 27 7 7 15-16"/></svg><b id="done-text"></b><p id="done-sub" data-i18n="onb.s3.doneSub">Your agent will ask you something</p><ul class="made" id="made"></ul><a class="btn btn-primary btn-wide" href="/?welcome=1" data-i18n="onb.s3.go">Go to home</a></div>
+      <div class="tips" id="tips" hidden><b data-i18n="onb.s3.tipsTitle">Not connecting?</b><ul><li data-i18n="onb.s3.tip1">x</li><li data-i18n="onb.s3.tip2">x</li><li data-i18n="onb.s3.tip3">x</li></ul></div>
+      <div class="lockline" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+      <p class="privacy" data-i18n="onb.s3.privacy">x</p>
+      <a class="skip" id="later" href="/?welcome=1" data-i18n="onb.s3.later">Later</a>
+    </section>
+  </div>
+<nav class="lang-switch" aria-label="Language" data-i18n-attr="aria-label:lang.label"><a href="?lang=en" data-lang="en" lang="en">EN</a><a href="?lang=ko" data-lang="ko" lang="ko">한국어</a><a href="?lang=zh" data-lang="zh" lang="zh-CN">中文</a></nav>
+</main>
+<script src="/_site/onboarding.js" defer></script>
+</body>
+</html>

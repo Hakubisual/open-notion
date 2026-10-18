@@ -1,0 +1,151 @@
+.editing .shell:has(#db-root), .shell:has(.dbbrowser) { max-width: 1680px; }
+#doc:has(#db-root), article:has(.dbbrowser), .blocks:has(.dbrefblock) { max-width: none; }
+#db-root, .dbbrowser, .dbrefhost { min-width: 0; font-size: var(--fs-14); line-height: 1.5; }
+.dbbar, .dbtools, .dbtabs, .dbrow2, .dbviewbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dbbar { justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.dbtabs { gap: 2px; }
+.dbtab, .dbtool, .dbprimary, .dbthname, .dbcalcbtn, .dbaddrow, .dbgrip, .dbtagbutton, .dbaddfile {
+  font: inherit; color: var(--fg); background: transparent; border: 0; border-radius: 5px; padding: 6px 9px; cursor: pointer;
+}
+.dbtab.on { color: var(--accent); box-shadow: inset 0 -2px var(--accent); border-radius: 0; }
+.dbtool { color: var(--fg-dim); }
+.dbtool.on { color: var(--accent); background: var(--accent-soft); }
+.dbprimary { background: var(--accent); color: var(--bg); font-weight: 600; }
+.dbtab:hover, .dbtool:hover, .dbthname:hover, .dbcalcbtn:hover, .dbaddrow:hover, .dbgrip:hover { background: var(--bg-soft); }
+.dbsearch, .dbselect, .dburl, .dbname, .dbrename, .dboptsearch, .dboptnew {
+  font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 7px 9px; min-width: 0;
+}
+.dbsearch { width: 140px; }
+.dbstatus, .dbmeta, .dbhint { font-size: var(--fs-12); color: var(--fg-dim); margin: 8px 0; }
+.dbstatus:empty { display: none; }
+.dbhint.bad, .dbstatus.bad { color: #dc6d67; }
+.dbtablewrap { overflow-x: auto; overscroll-behavior-x: contain; max-width: 100%; }
+.dbtablewrap .dbtable, .dbproptable, .dbrefhost .dbtable { display: table; table-layout: fixed; width: max-content; min-width: 100%; border-collapse: collapse; margin: 0; font-size: var(--fs-14); overflow: visible; }
+.dbtable th, .dbtable td { padding: 0; height: 42px; vertical-align: middle; border: 1px solid var(--line); background: transparent; }
+.dbtable th { font-size: var(--fs-12); font-weight: 500; color: var(--fg-dim); }
+.dbtable tbody tr:hover { background: var(--bg-soft); }
+.dbtable .dbgutter { width: 30px; min-width: 30px; border-left: 0; border-right: 0; }
+.dbcol { position: relative; }
+.dbth { display: flex; align-items: center; gap: 3px; padding-left: 8px; }
+.dbtype { font-size: var(--fs-11); opacity: .75; }
+.dbthname { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dbresize { position: absolute; right: -3px; top: 0; width: 7px; height: 100%; cursor: col-resize; z-index: 2; }
+.dbresize:hover { background: var(--accent); }
+.dbcell { display: flex; align-items: center; gap: 5px; min-height: 40px; padding: 3px 8px; overflow: hidden; }
+.dbinput { font: inherit; width: 100%; min-width: 0; border: 0; background: transparent; color: var(--fg); outline: none; padding: 5px 0; }
+.dbinput:focus { box-shadow: 0 1px var(--accent); }
+.dbtitle { font-weight: 500; }
+.dbro { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; }
+.dbtagbutton { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0; text-align: left; }
+.tag, .relchip { display: inline-flex; align-items: center; border-radius: 4px; padding: 2px 6px; font-size: var(--fs-12); line-height: 1.4; background: var(--bg-soft); color: var(--fg); white-space: nowrap; }
+.tag.green { background: #2c654e; color: #e4f4e9; }
+.tag.blue { background: #305b82; color: #e1efff; }
+.tag.red { background: #824741; color: #ffe8e3; }
+.tag.gray, .tag.default { background: #575650; color: #f3f1ed; }
+.tag.purple { background: #655078; color: #f1e8ff; }
+.tag.orange, .tag.brown { background: #805d38; color: #ffecd4; }
+.tag.yellow { background: #74662d; color: #fff6ca; }
+.tag.pink { background: #7b4c6b; color: #ffe9f8; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--fg-dim); }
+.dot.green { background: #68ad8a; } .dot.blue { background: #68a4d5; } .dot.red { background: #d47870; }
+.dbempty2 { font-size: var(--fs-12); opacity: .45; }
+.dbfile { position: relative; display: inline-flex; }
+.dbfile img, .filethumb img { width: 64px; height: 38px; object-fit: cover; border-radius: 3px; }
+.dbfiledel { position: absolute; right: 0; top: 0; border: 0; background: var(--bg); color: var(--fg); cursor: pointer; }
+.dbcalc { position: relative; padding: 6px 8px !important; font-size: var(--fs-12); color: var(--fg-dim); }
+.dbcalcbtn { float: right; font-size: var(--fs-12); }
+.dbaddrow { display: block; width: 100%; text-align: left; padding: 10px 12px; color: var(--fg-dim); }
+.dbmenu, .dbpop { position: fixed; z-index: 80; width: 280px; max-width: calc(100vw - 16px); max-height: min(560px, 85vh); overflow: auto; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); box-shadow: 0 8px 30px #0004; font-size: var(--fs-14); line-height: 1.5; }
+.dbmenu h4, .dbpop h4 { margin: 5px 8px; font-size: var(--fs-12); color: var(--fg-dim); }
+.dbmenu button, .dbopt { display: flex; gap: 8px; width: 100%; padding: 8px; text-align: left; border: 0; border-radius: 4px; background: transparent; color: var(--fg); font: inherit; cursor: pointer; }
+.dbmenu button:hover, .dbopt:hover, .dbopt.on, .dbmenu button.on { background: var(--accent-soft); }
+.dbmenu .ico, .dbtools .ico { width: auto; height: auto; min-width: 16px; border: 0; }
+.dbmenu hr { margin: 5px 0; }
+.dbaddbox, .dboptbox { display: flex; flex-direction: column; gap: 8px; }
+.dboptlist { max-height: 220px; overflow-y: auto; }
+.dblabel { font-size: var(--fs-12); color: var(--fg-dim); }
+.dbgrouphead { display: flex; gap: 8px; align-items: center; padding: 14px 0 8px; }
+.dbcount, .dbcount-badge { color: var(--fg-dim); font-size: var(--fs-12); margin-left: 8px; }
+.dbgroup { overflow-x: auto; }
+.dbprops { margin: 16px 0 28px; overflow-x: auto; }
+.dbproptable { width: 100%; }
+.dbproptable .dbpropname { width: 160px; padding: 8px; }
+.dbrefblock { padding: 12px 0; }
+.dbrefname { font-weight: 600; margin: 6px 0; }
+.dbrefhost { overflow: hidden; }
+.dbempty { padding: 28px 10px; color: var(--fg-dim); }
+.numwrap { display: flex; align-items: center; gap: 8px; }
+.numtext { white-space: nowrap; }
+.c-number .dbinput { width: 54px; flex: 0 0 54px; }
+.c-number .numwrap { min-width: 70px; }
+.c-number .numwrap .numtext { font-size: var(--fs-12); min-width: 38px; color: var(--fg-dim); }
+.c-number:has(.numwrap) { flex-wrap: wrap; }
+.numbartrack { flex-shrink: 0; }
+.dbopen, .dbcolmove { background: transparent; border: 0; color: var(--fg-dim); cursor: pointer; padding: 3px; }
+.dbcolmove { font-size: var(--fs-11); opacity: .35; }
+.dbcol:hover .dbcolmove { opacity: 1; }
+.numbartrack { width: 70px; height: 6px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.numbar { display: block; height: 100%; background: var(--accent); }
+.numring { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; }
+.numringhole { display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--bg); }
+.rowtitle { display: inline-flex; gap: 6px; align-items: center; padding: 8px; color: var(--fg); }
+.dbtable .check { width: 17px; height: 17px; border: 1px solid var(--fg-dim); border-radius: 3px; background: transparent; color: var(--bg); cursor: pointer; }
+.dbtable .check.on { background: var(--accent); border-color: var(--accent); }
+.dbbreadcrumb { font-size: var(--fs-13); margin-bottom: 12px; }
+.dbv .dbv-tl-tick { white-space: nowrap; width: 64px; }
+.dbv select, .dbv-cal-nav button { font: inherit; background: var(--bg-soft); color: var(--fg); border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; }
+@media (max-width: 899px) {
+  .dbbar { align-items: stretch; gap: 12px; }
+  .dbtabs { flex-wrap: nowrap; overflow-x: auto; width: 100%; }
+  .dbtab { flex-shrink: 0; min-height: 40px; }
+  .dbtools { gap: 4px; }
+  .dbsearch { width: 120px; }
+  .dbtool, .dbprimary { min-height: 40px; }
+  .dbinput { font-size: var(--fs-16); }
+}
+
+/* Liquid Glass database: opaque cells, glass only on fixed popovers. */
+.editing .shell:has(#db-root), .shell:has(.dbbrowser) { max-width: var(--shell-width); }
+.dbbar { padding: 12px 0 16px; }
+.dbtab, .dbtool, .dbprimary { border-radius: 10px; min-height: 36px; }
+.dbtab.on { background: var(--accent-soft); box-shadow: none; border-radius: 10px; }
+.dbprimary { color: var(--on-accent); }
+.dbsearch, .dbselect, .dburl, .dbname, .dbrename, .dboptsearch, .dboptnew { background: var(--surface); border-radius: 10px; }
+.dbtablewrap { border-radius: var(--radius-sm); border: 1px solid var(--line); margin-top: 12px; }
+.dbtablewrap .dbtable th { background: var(--surface); }
+.dbtable th, .dbtable td { border-left: 0; border-right: 0; }
+.dbtablewrap { border-radius: var(--radius-md); }
+.tag, .relchip { border-radius: 999px; padding: 3px 10px; font-weight: 600; }
+.tag.green { background: var(--tag-green-bg); color: var(--tag-green-fg); }
+.tag.blue { background: var(--tag-blue-bg); color: var(--tag-blue-fg); }
+.tag.red { background: var(--tag-red-bg); color: var(--tag-red-fg); }
+.tag.gray, .tag.default { background: var(--tag-gray-bg); color: var(--tag-gray-fg); }
+.tag.purple { background: var(--tag-purple-bg); color: var(--tag-purple-fg); }
+.tag.decide { background: var(--tag-purple-bg); color: var(--tag-purple-fg); box-shadow: inset 0 0 0 1.5px var(--tag-purple-fg); }
+.tag.decide::before { content: "!"; display: inline-grid; place-items: center; width: 14px; height: 14px; margin-right: 5px; border-radius: 50%; background: var(--tag-purple-fg); color: var(--surface); font-size: var(--fs-11); font-weight: 800; }
+.tag.orange, .tag.brown { background: var(--tag-orange-bg); color: var(--tag-orange-fg); }
+.tag.yellow { background: var(--tag-yellow-bg); color: var(--tag-yellow-fg); }
+.tag.pink { background: var(--tag-pink-bg); color: var(--tag-pink-fg); }
+.dbtable tbody tr:has(.tag.decide) { background: color-mix(in srgb, var(--tag-purple-bg) 55%, transparent); }
+.dbtable tbody tr:has(.tag.decide) td:first-child { box-shadow: inset 3px 0 0 var(--tag-purple-fg); }
+.numbar { background: #6aa8f0; }
+.c-number:has(.numtext) .numbar { background: var(--accent); }
+.dbmenu, .dbpop { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-menu); }
+.dbmenu button, .dbopt { min-height: 40px; border-radius: 10px; }
+.numbartrack { border-radius: 8px; height: 7px; }
+.numbar { border-radius: inherit; }
+.dbmove { appearance: none; border: 0; background: transparent; color: var(--fg-dim); border-radius: 6px; padding: 4px; cursor: pointer; }
+.dbmove:hover { background: var(--accent-soft); color: var(--accent); }
+@media (max-width: 899px) {
+  .dbmenu, .dbpop { max-width: calc(100vw - 16px); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .dbmenu, .dbpop { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+/* Phone touch targets (F4): every table control gets a 44px hit area without changing the drawn size. */
+@media (pointer: coarse) {
+  .reader .dbbrowser .dbtabs :is(.dbtab), .reader .dbbrowser .table-new-tail, .reader .dbbrowser .dbinput, .reader .dbbrowser :is(.dbtab, .dbnew-main, .table-new-tail, .dbthname, .dbopen, .dbtagbutton, .dbnumberbutton, .dbdatebutton, .dbcheck, .dbcell) { min-height: 44px; min-width: 44px; }
+  .reader .dbbrowser .dbtable td, .reader .dbbrowser .dbtable th { height: 48px; }
+  .reader .dbbrowser input.table-check { width: 44px; height: 44px; margin: 0; background-clip: content-box; padding: 14px; box-sizing: border-box; }
+  .reader .table-tab { min-height: 44px; }
+}

@@ -1,0 +1,38 @@
+# Self-host config: fill in your own Cloudflare resources (wrangler d1 create / kv namespace create / hyperdrive create).
+name = "my-notes"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-10-15"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "my-notes"
+database_id = "REPLACE_WITH_D1_ID"
+
+[[kv_namespaces]]
+binding = "MEDIA"
+id = "REPLACE_WITH_KV_ID"
+
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "REPLACE_WITH_KV_ID"
+
+[vars]
+SITE_URL = "https://notes.example.com"
+# Supabase (or any GoTrue-compatible auth) for accounts. Postgres via Hyperdrive is optional; without it data lives in D1.
+SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"
+DATA_BACKEND = "d1"
+
+[[durable_objects.bindings]]
+name = "WORKSPACE"
+class_name = "WorkspaceStore"
+script_name = "acard-workspace"
+
+[[durable_objects.bindings]]
+name = "SSE_RELAY"
+class_name = "SseRelay"
+script_name = "acard-sse-relay"
+
+[[durable_objects.bindings]]
+name = "LIVE"
+class_name = "LiveFeed"
+script_name = "acard-live"

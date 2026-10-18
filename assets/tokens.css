@@ -1,0 +1,147 @@
+/* Acard pastel tokens; contract in DESIGN.md. */
+@font-face{font-family:"Pretendard Core";font-display:optional;font-weight:45 920;src:url(/fonts/pretendard-core.woff2)format("woff2")}
+@font-face{font-family:"Pretendard Fallback";src:local("Malgun Gothic"),local("Apple SD Gothic Neo"),local("Noto Sans KR"),local("Arial");size-adjust:94.2%;ascent-override:98%;descent-override:25%;line-gap-override:0%}
+@font-face{font-family:"JetBrains Mono";font-display:optional;font-weight:100 800;src:url(/fonts/jetbrains-mono.woff2)format("woff2");unicode-range:U+0000-00FF,U+2000-206F,U+2190-2193,U+2212}
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-soft: #f6f6f8;
+  --surface: #ffffff;
+  --sidebar: #f8f8fa;
+  --fg: #26252c;
+  --fg-dim: #5f5d69;
+  --line: #ececf0;
+  --accent: #6450dc;
+  --accent-strong: #5b47d6;
+  --accent-soft: #efecfd;
+  --on-accent: #ffffff;
+  --code-bg: #f5f5f7;
+  --topbar: #ffffff;
+  --mint: #eaf7f2;
+  --mint-line: #d3efe4;
+  --tag-green-bg: #e3f5ec; --tag-green-fg: #1d7550;
+  --tag-blue-bg: #e5f0fd;  --tag-blue-fg: #2563b8;
+  --tag-purple-bg: #efe9fd; --tag-purple-fg: #7048d6;
+  --tag-red-bg: #fdeaec;   --tag-red-fg: #b13443;
+  --tag-yellow-bg: #fdf3d8; --tag-yellow-fg: #7f590b;
+  --tag-orange-bg: #fdeedd; --tag-orange-fg: #9a5112;
+  --tag-pink-bg: #fce9f3;  --tag-pink-fg: #b13f7c;
+  --tag-gray-bg: #efeff2;  --tag-gray-fg: #5d5b66;
+  --bar-track: #ececf2;
+  --cover: linear-gradient(120deg, #e9e4fd 0%, #e5f0fd 48%, #e3f5ec 100%);
+  --shadow: 0 1px 2px rgba(30, 28, 50, .04);
+  --shadow-menu: 0 12px 32px rgba(30, 28, 50, .14);
+  --font-body: "Pretendard Core", "Pretendard Variable", "Pretendard Fallback", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-serif: "Acard Serif", "Noto Serif KR", "Nanum Myeongjo", Batang, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "D2Coding", monospace;
+  --font: var(--font-body);
+  /* Type scale: the only place raw px font sizes live (tests/type-tokens.test.ts). */
+  --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-15: 15px; --fs-16: 16px; --fs-17: 17px;
+  --fs-19: 19px; --fs-21: 21px; --fs-24: 24px; --fs-28: 28px; --fs-32: 32px; --fs-38: 38px; --fs-44: 44px;
+  --fs-56: 56px; --fs-72: 72px; --fs-112: 112px;
+  --lh-tight: 1.25; --lh-ui: 1.5; --lh-body: 1.75;
+  --ls-heading: -0.03em;
+  --text-body: var(--fs-17);
+  --text-ui: var(--fs-14);
+  --text-small: var(--fs-12);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --content-width: 760px;
+  --shell-width: 1440px;
+  --sidebar-width: 260px;
+  --motion-fast: 120ms;
+  --dur-1: 120ms; --dur-2: 180ms; --dur-3: 240ms;
+  --ease-out: cubic-bezier(.2,.8,.2,1); --ease-spring: cubic-bezier(.34,1.4,.64,1);
+  --raised: #fff;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1b1b20;
+  --bg-soft: #26262d;
+  --surface: #1b1b20;
+  --sidebar: #212127;
+  --fg: #ecebf2;
+  --fg-dim: #a3a1ad;
+  --line: #31313a;
+  --accent: #a597ff;
+  --accent-strong: #b6abff;
+  --accent-soft: #312c4f;
+  --on-accent: #16131f;
+  --code-bg: #26262d;
+  --topbar: #1b1b20;
+  --mint: #1f3029;
+  --mint-line: #2b4339;
+  --tag-green-bg: #1f3a2e; --tag-green-fg: #8ee0b5;
+  --tag-blue-bg: #1e3149;  --tag-blue-fg: #9cc6fb;
+  --tag-purple-bg: #322a52; --tag-purple-fg: #c7b6ff;
+  --tag-red-bg: #45252b;   --tag-red-fg: #ffadb6;
+  --tag-yellow-bg: #3f3520; --tag-yellow-fg: #f2d38a;
+  --tag-orange-bg: #432f1e; --tag-orange-fg: #f8c08c;
+  --tag-pink-bg: #43263a;  --tag-pink-fg: #f6b2d6;
+  --tag-gray-bg: #2e2e36;  --tag-gray-fg: #c4c2cc;
+  --bar-track: #33333c;
+  --cover: linear-gradient(120deg, #2e2950 0%, #1f3149 48%, #1f3a2e 100%);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-menu: 0 14px 36px rgba(0, 0, 0, .5);
+  --raised: #26262d;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    color-scheme: dark;
+    --bg: #1b1b20; --bg-soft: #26262d; --surface: #1b1b20; --sidebar: #212127;
+    --fg: #ecebf2; --fg-dim: #a3a1ad; --line: #31313a;
+    --accent: #a597ff; --accent-strong: #b6abff; --accent-soft: #312c4f; --on-accent: #16131f;
+    --code-bg: #26262d; --topbar: #1b1b20; --mint: #1f3029; --mint-line: #2b4339;
+    --tag-green-bg: #1f3a2e; --tag-green-fg: #8ee0b5; --tag-blue-bg: #1e3149; --tag-blue-fg: #9cc6fb;
+    --tag-purple-bg: #322a52; --tag-purple-fg: #c7b6ff; --tag-red-bg: #45252b; --tag-red-fg: #ffadb6;
+    --tag-yellow-bg: #3f3520; --tag-yellow-fg: #f2d38a; --tag-orange-bg: #432f1e; --tag-orange-fg: #f8c08c;
+    --tag-pink-bg: #43263a; --tag-pink-fg: #f6b2d6; --tag-gray-bg: #2e2e36; --tag-gray-fg: #c4c2cc;
+    --bar-track: #33333c;
+    --cover: linear-gradient(120deg, #2e2950 0%, #1f3149 48%, #1f3a2e 100%);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-menu: 0 14px 36px rgba(0, 0, 0, .5); --raised: #26262d;
+  }
+}
+
+:root {
+  --grad-1: linear-gradient(115deg, #e6defb 0%, #dfe9fb 46%, #dcf1e8 100%);
+  --grad-2: linear-gradient(120deg, #ece4fc 0%, #e2ecfc 40%, #e0f3ec 78%, #f1f7df 100%);
+  --grad-3: linear-gradient(110deg, #f3e3f3 0%, #e7e2fb 45%, #dde9fa 100%);
+  --grad-4: linear-gradient(125deg, #dceffa 0%, #dff3ec 50%, #ebe6fb 100%);
+  --grad-5: linear-gradient(105deg, #e9e2fb 0%, #f1e6f4 38%, #e2eefb 72%, #ddf2ea 100%);
+  --grad-6: linear-gradient(118deg, #e1f2ea 0%, #e3ecfb 50%, #eee4fa 100%);
+  --grad-glow: radial-gradient(60% 120% at 82% 20%, rgba(255, 255, 255, .7), transparent 60%), radial-gradient(45% 90% at 14% 100%, rgba(255, 255, 255, .45), transparent 70%);
+}
+html[data-theme="dark"] {
+  --grad-1: linear-gradient(115deg, #2c2748 0%, #23304a 46%, #1f3a33 100%);
+  --grad-2: linear-gradient(120deg, #2f2a4d 0%, #24324c 40%, #20392f 78%, #2e3527 100%);
+  --grad-3: linear-gradient(110deg, #3a2741 0%, #2d2a4c 45%, #22304a 100%);
+  --grad-4: linear-gradient(125deg, #1f3447 0%, #213a32 50%, #2c2849 100%);
+  --grad-5: linear-gradient(105deg, #2c2749 0%, #362a41 38%, #24324a 72%, #203a32 100%);
+  --grad-6: linear-gradient(118deg, #20392f 0%, #24324b 50%, #31294a 100%);
+  --grad-glow: radial-gradient(60% 120% at 82% 20%, rgba(255, 255, 255, .07), transparent 60%), radial-gradient(45% 90% at 14% 100%, rgba(255, 255, 255, .05), transparent 70%);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+  --grad-1: linear-gradient(115deg, #2c2748 0%, #23304a 46%, #1f3a33 100%);
+  --grad-2: linear-gradient(120deg, #2f2a4d 0%, #24324c 40%, #20392f 78%, #2e3527 100%);
+  --grad-3: linear-gradient(110deg, #3a2741 0%, #2d2a4c 45%, #22304a 100%);
+  --grad-4: linear-gradient(125deg, #1f3447 0%, #213a32 50%, #2c2849 100%);
+  --grad-5: linear-gradient(105deg, #2c2749 0%, #362a41 38%, #24324a 72%, #203a32 100%);
+  --grad-6: linear-gradient(118deg, #20392f 0%, #24324b 50%, #31294a 100%);
+  --grad-glow: radial-gradient(60% 120% at 82% 20%, rgba(255, 255, 255, .07), transparent 60%), radial-gradient(45% 90% at 14% 100%, rgba(255, 255, 255, .05), transparent 70%);
+  }
+}
+/* HIG G08 G19 G24 */
+.menu,.overlay .sheet{--surface:var(--raised)}
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent)!important;outline-offset:1px}
+@media (forced-colors:active){:focus-visible{outline:2px solid Highlight!important}.menu,.overlay .sheet,.tag{border:1px solid CanvasText}}

@@ -1,0 +1,85 @@
+.auth { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 20px 80px; }
+.auth-box { width: 100%; max-width: 470px; text-align: center; }
+.auth-logo { display: inline-flex; align-items: center; gap: 14px; font-size: var(--fs-44); font-weight: 700; letter-spacing: -0.02em; margin-bottom: 26px; }
+.auth-logo img { width: 62px; height: 62px; }
+.auth h1 { margin: 0; font-size: var(--fs-44); line-height: 1.25; letter-spacing: -0.035em; font-weight: 800; }
+.auth .sub { margin: 12px 0 0; color: var(--muted); font-size: var(--fs-19); }
+.auth-form { margin-top: 34px; text-align: left; }
+.btn-google { width: 100%; height: 56px; font-size: var(--fs-19); font-weight: 500; gap: 14px; }
+.btn-google svg { width: 24px; height: 24px; }
+.or { display: flex; align-items: center; gap: 18px; margin: 28px 0; color: var(--muted); font-size: var(--fs-16); }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.field { margin-bottom: 26px; }
+.field label { display: block; font-size: var(--fs-17); margin-bottom: 14px; color: var(--ink-2); }
+.input {
+  width: 100%; height: 54px; padding: 0 16px;
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  background: #fff; font-size: var(--fs-16); outline: none;
+}
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(107, 91, 214, .15); }
+.auth-form .input ~ .input { margin-top: 16px; }
+.auth-form .btn-primary { width: 100%; height: 54px; font-size: var(--fs-19); margin-top: 4px; }
+.forgot { display: block; text-align: right; color: var(--accent); font-size: var(--fs-16); margin: 12px 0 22px; }
+.fine { margin-top: 26px; text-align: center; color: var(--muted); font-size: var(--fs-17); }
+.fine a, .switch a, .corner a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.switch { margin-top: 36px; text-align: center; color: var(--muted); font-size: var(--fs-17); }
+.corner { position: fixed; left: 44px; bottom: 44px; color: var(--muted); font-size: var(--fs-17); }
+.msg { margin-top: 18px; padding: 12px 14px; border-radius: var(--radius); font-size: var(--fs-15); text-align: left; display: none; }
+.msg.err { display: block; background: #fdf0ef; color: #b42318; }
+.msg.ok { display: block; background: var(--accent-soft); color: var(--accent-ink); }
+.code-input { font-family: var(--mono); font-size: var(--fs-24) !important; letter-spacing: .18em; text-align: center; text-transform: uppercase; height: 62px !important; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 760px) {
+  .auth { justify-content: flex-start; padding-top: 56px; }
+  .auth-logo { font-size: var(--fs-28); }
+  .auth-logo img { width: 44px; height: 44px; }
+  .auth h1 { font-size: var(--fs-28); }
+  .corner { position: static; margin-top: 40px; }
+}
+
+.app { display: grid; grid-template-columns: 322px 1fr; min-height: 100vh; }
+.side { background: #f7f7f5; border-right: 1px solid var(--line); padding: 30px 20px 30px; display: flex; flex-direction: column; }
+.side .brand { font-size: var(--fs-32); margin: 0 0 38px 22px; }
+.side .brand img { width: 44px; height: 44px; }
+.ws { display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: var(--fs-21); margin-bottom: 36px; }
+.nav-item { display: flex; align-items: center; gap: 16px; padding: 12px 22px; border-radius: 8px; font-size: var(--fs-21); color: var(--ink-2); width: 100%; background: none; border: 0; cursor: pointer; text-align: left; }
+.nav-item svg { width: 26px; height: 26px; flex: none; }
+.nav-item.on { background: var(--accent-soft); color: var(--accent-ink); }
+.side-label { padding: 0 22px; margin: 40px 0 12px; color: var(--muted); font-size: var(--fs-17); }
+.side-empty { padding: 0 22px; color: var(--faint); font-size: var(--fs-17); }
+.side-bottom { margin-top: auto; }
+.main { position: relative; padding: 196px 80px 60px 102px; }
+.main .share { position: absolute; top: 76px; right: 36px; height: 50px; padding: 0 24px; font-size: var(--fs-19); }
+.main h1 { margin: 0; font-size: var(--fs-72); letter-spacing: -0.04em; line-height: 1.2; font-weight: 800; }
+.main .intro { margin: 20px 0 40px; font-size: var(--fs-24); color: var(--ink-2); }
+.todo { list-style: none; margin: 0; padding: 0; font-size: var(--fs-24); }
+.todo li { display: flex; align-items: center; gap: 18px; height: 62px; }
+.todo input { width: 30px; height: 30px; margin: 0; accent-color: var(--accent); }
+.drop { margin-top: 60px; max-width: 1030px; border: 2px dashed var(--line-2); border-radius: 10px; height: 194px; display: flex; align-items: center; justify-content: center; color: var(--faint); font-size: var(--fs-19); }
+.account { margin-top: 48px; padding-top: 28px; border-top: 1px solid var(--line); display: none; }
+.account.open { display: block; }
+.account h2 { margin: 0 0 8px; font-size: var(--fs-24); }
+.account p { margin: 0 0 18px; color: var(--muted); font-size: var(--fs-16); }
+.account .row { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn-danger { color: #b42318; border-color: #f0c8c4; }
+.btn-danger:hover { background: #fdf0ef; }
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; }
+  .side { padding: 18px 12px; }
+  .side .brand { margin: 0 0 12px 10px; }
+  .main { padding: 80px 20px 40px; }
+  .main h1 { font-size: var(--fs-38); }
+}
+
+.banner { margin: 0 0 28px; max-width: 1030px; padding: 14px 18px; border-radius: var(--radius); background: #fff7e6; color: #8a5a00; font-size: var(--fs-17); }
+.banner[hidden], .ai-card[hidden] { display: none; }
+.banner a { text-decoration: underline; }
+.ai-card { position: relative; max-width: 1030px; margin: 0 0 34px; padding: 20px 56px 20px 24px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg-soft); }
+.ai-card b { font-size: var(--fs-19); }
+.ai-card p { margin: 6px 0 0; color: var(--muted); font-size: var(--fs-17); }
+.ai-close { position: absolute; top: 10px; right: 12px; width: 34px; height: 34px; border: 0; background: none; font-size: var(--fs-24); color: var(--muted); cursor: pointer; }
+.account .me-handle { color: var(--ink-2); }
+/* Phone touch targets (F24): text links get a 44px tall hit area. */
+@media (pointer: coarse) {
+  .forgot, .switch a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; }
+}

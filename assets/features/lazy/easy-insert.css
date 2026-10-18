@@ -1,0 +1,5 @@
+#blocks figure.img{position:relative;margin-left:auto;margin-right:auto}
+.img-resize{position:absolute;top:50%;width:10px;height:44px;margin-top:-22px;border-radius:6px;background:var(--bg);border:1.5px solid var(--accent,#7b68ee);box-shadow:0 1px 6px rgba(0,0,0,.18);cursor:ew-resize;opacity:0;transition:opacity .15s;touch-action:none}
+.img-resize-l{left:-5px}.img-resize-r{right:-5px}
+.blk:hover .img-resize,.img-resize:active{opacity:1}
+@media (pointer:coarse){.img-resize{opacity:1;width:14px}}
