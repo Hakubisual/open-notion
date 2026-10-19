@@ -65,3 +65,23 @@ Reader/editor first-screen caps stay fixed as the total feature collection grows
 with the reader API after DOMContentLoaded (or immediately if already loaded),
 including late subscribers, and returns an unsubscribe function. `slug` is
 decoded and `/` and `/home/` resolve to `index`.
+
+## Editor provider
+
+All editor network calls (`editor.js`, `db.js`, `editor-next`) go through
+`window.AcardEditorProvider.fetch(url, init)` when it is installed before the
+editor scripts load; the default is the browser `fetch` to the same origin.
+A host embeds the editor against a different backend by installing a provider
+first:
+
+```html
+<script>
+  window.AcardEditorProvider = {
+    fetch: function (url, init) { return fetch("https://api.example.com" + url, init); }
+  };
+</script>
+<script src="/editor.js"></script>
+```
+
+The save path still flows through the wrappable `transport()` chain, so
+save-queue, changed-blocks and conflict policy are unaffected.

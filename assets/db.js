@@ -3,6 +3,7 @@
 (function () {
   "use strict";
 
+  var net = window.AcardEditorProvider && window.AcardEditorProvider.fetch ? window.AcardEditorProvider.fetch : fetch;
   var MODEL = window.DoriDBModel || {};
   var VIEWS = window.DoriDBViews || {};
   var NUMBER_FORMATS = MODEL.NUMBER_FORMATS || [{ id: "number", label: "숫자" }, { id: "percent", label: "퍼센트" }];
@@ -11,7 +12,7 @@
   var lastMount = null;
 
   function api(path, options) {
-    return fetch("/api" + path, Object.assign({ headers: { "content-type": "application/json" } }, options || {})).then(function (res) {
+    return net("/api" + path, Object.assign({ headers: { "content-type": "application/json" } }, options || {})).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) throw new Error(body.error || String(res.status));
         return body;

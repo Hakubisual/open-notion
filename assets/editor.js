@@ -1,5 +1,6 @@
 (function () {
   "use strict";
+  var net = window.AcardEditorProvider && window.AcardEditorProvider.fetch ? window.AcardEditorProvider.fetch : fetch;
   var model = window.EditorModel;
   var pageContext;
   var formatContext;
@@ -96,7 +97,7 @@
   };
 
   function api(path, options) {
-    return fetch("/api" + path, Object.assign({ headers: { "content-type": "application/json" } }, options || {})).then(apiResponse);
+    return net("/api" + path, Object.assign({ headers: { "content-type": "application/json" } }, options || {})).then(apiResponse);
   }
 
   function apiResponse(res) {
@@ -146,7 +147,7 @@
     get state() { return state; },
     api: api, slug: slug, loadTree: function () { return loadTree(); }, scheduleSave: scheduleSave, render: render, setSave: setSave, save: save,
     transport: function (pageSlug, payload) {
-      return fetch("/api/page/" + encodeURIComponent(pageSlug), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      return net("/api/page/" + encodeURIComponent(pageSlug), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     },
     insertBlocksAfter: function (id, blocks) {
       var index = state.blocks.findIndex(function (block) { return block.id === id; });
@@ -233,7 +234,7 @@
     var payload = { title: state.title, blocks: state.blocks };
     emitFeature("beforeSave", payload);
     var dbTitle = state.kind === "db" && window.DoriDB
-      ? fetch("/api/db/" + encodeURIComponent(slug), { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: state.title }) }).catch(function () {})
+      ? net("/api/db/" + encodeURIComponent(slug), { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: state.title }) }).catch(function () {})
       : Promise.resolve();
     activeSave = dbTitle.then(function () {
       return window.AcardEditor.transport(slug, payload).then(apiResponse);
@@ -776,7 +777,7 @@
   function uploadFile(file) {
     var form = new FormData();
     form.append("file", file, file.name);
-    return fetch("/api/upload", { method: "POST", body: form }).then(function (res) {
+    return net("/api/upload", { method: "POST", body: form }).then(function (res) {
       return res.json().then(function (body) {
         if (!res.ok) throw new Error(body.error || String(res.status));
         return body;
@@ -941,7 +942,7 @@
         var url = meta.url;
         if (!/^https?:\/\//.test(url)) return;
         note.textContent = "미리보기를 가져오는 중…";
-        fetch("/api/link-preview?url=" + encodeURIComponent(url))
+        net("/api/link-preview?url=" + encodeURIComponent(url))
           .then(function (r) { return r.json(); })
           .then(function (body) {
             meta.title = body.title || "";
@@ -1532,7 +1533,7 @@
     setImportStatus("가져오는 중… (" + Math.round(file.size / 1024) + " KB)", true);
     if (importGo) importGo.disabled = true;
     file.arrayBuffer().then(function (buffer) {
-      return fetch("/api/import", {
+      return net("/api/import", {
         method: "POST",
         headers: { "content-type": "application/zip" },
         body: buffer,
@@ -1593,7 +1594,7 @@
     }
     setImportStatus("가져오는 중… (" + names.length + "개 파일)", true);
     if (importMdGo) importMdGo.disabled = true;
-    fetch("/api/import/md", { method: "POST", body: form })
+    net("/api/import/md", { method: "POST", body: form })
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (body) { if (!res.ok) throw new Error(body.error || String(res.status)); return body; }); })
       .then(function (body) {
         var lines = [];
@@ -1658,7 +1659,7 @@
       renderPalette();
       return;
     }
-    fetch("/api/search?q=" + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { results: [] }; }).catch(Object).then(function (data) {
+    net("/api/search?q=" + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { results: [] }; }).catch(Object).then(function (data) {
       if (asked != pSeq) return;
       pWait = 0;
       paletteItems = (data.results || []).map(function (hit) {

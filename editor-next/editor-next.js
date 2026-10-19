@@ -1,5 +1,6 @@
 (function () {
   "use strict";
+  var net = window.AcardEditorProvider && window.AcardEditorProvider.fetch ? window.AcardEditorProvider.fetch : fetch;
   var editor = window.AcardEditor, model = window.EditorModel;
   var blocksEl = document.getElementById("blocks");
   var started = false;
@@ -644,7 +645,7 @@
       shrink(item.file).then(function (file) {
         if (file.size > MAX) throw new Error("4MB를 넘어요");
         var form = new FormData(); form.append("file", file, file.name);
-        return fetch("/api/upload", { method: "POST", body: form }).then(function (res) {
+        return net("/api/upload", { method: "POST", body: form }).then(function (res) {
           return res.json().catch(function () { return {}; }).then(function (body) { if (!res.ok) throw new Error(body.error || String(res.status)); return body; });
         });
       }).then(function (res) {
