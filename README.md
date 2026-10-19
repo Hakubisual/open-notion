@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://acard.dev"><img src="https://img.shields.io/badge/Try%20Acard-acard.dev%20%E2%86%92-7C3AED?style=for-the-badge&labelColor=111827" alt="Try Acard at acard.dev" height="64"></a><br>
+  <a href="https://acard.dev"><img src="https://img.shields.io/badge/Try%20Acard-acard.dev%20%E2%86%92-7C3AED?style=for-the-badge&labelColor=111827" alt="Try Acard at acard.dev" width="560"></a><br>
   <b>Acard is built on OpenNotion.</b> Try the hosted version at <a href="https://acard.dev"><b>acard.dev</b></a> - no server needed.
 </p>
 
