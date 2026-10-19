@@ -3,6 +3,11 @@
 </p>
 
 <p align="center">
+  <a href="https://acard.dev"><img src="https://img.shields.io/badge/Try%20Acard-acard.dev%20%E2%86%92-7C3AED?style=for-the-badge&labelColor=111827" alt="Try Acard at acard.dev" height="64"></a><br>
+  <b>Acard is built on OpenNotion.</b> Try the hosted version at <a href="https://acard.dev"><b>acard.dev</b></a> - no server needed.
+</p>
+
+<p align="center">
   <b>A fast, self-hosted Notion-style workspace for teams that run their own server on an internal network.</b><br>
   Pages, blocks and databases in the browser or a desktop app. Your data stays in one folder on your machine.
 </p>
