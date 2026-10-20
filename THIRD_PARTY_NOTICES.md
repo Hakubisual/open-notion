@@ -36,15 +36,25 @@ SOFTWARE.
 
 ## Fonts (SIL Open Font License 1.1)
 
-Bundled in `assets/fonts/` and used unmodified (subset into woff2 files):
+The font files in `assets/fonts/` are woff2 subsets of the fonts below. Glyphs are not changed; each file keeps its
+copyright notice and the OFL 1.1 license description and URL in its `name` table (name IDs 0, 13, 14). The font
+software stays under the SIL Open Font License 1.1, not the MIT License of this repository. The full license text,
+with each font's copyright lines, is in `LICENSES/`.
 
-- **Pretendard** - Copyright (c) 2021 Kil Hyung-jin, with Reserved Font Name Pretendard. https://github.com/orioncactus/pretendard
-- **JetBrains Mono** - Copyright 2020 The JetBrains Mono Project Authors. https://github.com/JetBrains/JetBrainsMono
+| Font | Files | Copyright | Source | License text |
+| --- | --- | --- | --- | --- |
+| Pretendard (Variable, font version 1.309) | `assets/fonts/pretendard-core.woff2`, `assets/fonts/pretendard/*.woff2` | Copyright (c) 2021, Kil Hyung-jin, with Reserved Font Name 'Pretendard'; includes Source (Adobe), Inter and M PLUS 1 glyphs under their copyright lines | https://github.com/orioncactus/pretendard | [`LICENSES/OFL-Pretendard.txt`](LICENSES/OFL-Pretendard.txt) |
+| Noto Serif KR (weight 400) | `assets/fonts/serif/*.woff2` | (c) 2017-2024 Adobe (http://www.adobe.com/); Copyright 2012 Google Inc. | https://github.com/notofonts/noto-cjk (packaged by https://github.com/fontsource/font-files) | [`LICENSES/OFL-NotoSerifKR.txt`](LICENSES/OFL-NotoSerifKR.txt) |
+| JetBrains Mono (2.211) | `assets/fonts/jetbrains-mono.woff2` | Copyright 2020 The JetBrains Mono Project Authors | https://github.com/JetBrains/JetBrainsMono | [`LICENSES/OFL-JetBrainsMono.txt`](LICENSES/OFL-JetBrainsMono.txt) |
+
+OFL 1.1 in short: the fonts may be used, embedded, subset and redistributed, including commercially, as long as the
+copyright notice and this license go with them, the font files are not sold on their own, and a modified version is
+not published under a Reserved Font Name.
 
 The OpenNotion wordmark in `assets/brand/` is drawn from outlines of **Nunito** (Copyright 2014 The Nunito Project Authors,
 https://github.com/googlefonts/nunito), also under the SIL Open Font License 1.1. The font files themselves are not redistributed.
 
-The full OFL 1.1 text: https://openfontlicense.org/open-font-license-official-text/
+The OFL 1.1 text online: https://openfontlicense.org/open-font-license-official-text/
 
 ## Runtime dependencies (installed by `bun install`, not vendored)
 
