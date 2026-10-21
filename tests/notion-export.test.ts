@@ -47,6 +47,7 @@ describe("notionBlocksToMarkdown", () => {
       b("heading1", "하나"),
       b("heading2", "둘"),
       b("heading3", "셋"),
+      b("heading4", "넷"),
       b("paragraph", "본문"),
       b("bulleted", "항목"),
       b("numbered", "순서"),
@@ -64,6 +65,7 @@ describe("notionBlocksToMarkdown", () => {
       "# 하나",
       "## 둘",
       "### 셋",
+      "#### 넷",
       "본문",
       "- 항목",
       "1. 순서",
@@ -178,5 +180,22 @@ describe("workspaceToZip", () => {
 
   test("같은 입력이면 같은 바이트가 나온다", () => {
     expect(workspaceToZip(pages)).toEqual(workspaceToZip(pages));
+  });
+});
+
+
+describe("columns in the Notion export (notion-parity C13)", () => {
+  test("columns are laid out one after another without the column levels; nothing is lost but the layout", () => {
+    const md = notionBlocksToMarkdown("t", [
+      b("columns", "", { indent: 0, meta: { widths: [0.5, 0.5] } }),
+      b("column", "", { indent: 1 }), b("heading2", "왼쪽", { indent: 2 }), b("bulleted", "항목", { indent: 2 }), b("bulleted", "안쪽", { indent: 3 }),
+      b("column", "", { indent: 1 }), b("paragraph", "오른쪽", { indent: 2 }),
+      b("paragraph", "밖"),
+    ]);
+    expect(md).toBe("# t\n\n## 왼쪽\n\n- 항목\n  - 안쪽\n오른쪽\n\n밖\n");
+  });
+  test("old text-only columns export their text", () => {
+    const md = notionBlocksToMarkdown("t", [b("columns", "", { meta: { columns: [{ text: "가" }, { text: "나" }] } })]);
+    expect(md).toBe("# t\n\n가\n\n나\n");
   });
 });

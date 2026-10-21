@@ -10,7 +10,16 @@
     "CREATE INDEX IF NOT EXISTS memo_items_hash ON memo_items(project, hash)",
     "CREATE TABLE IF NOT EXISTS auto_notes_settings (id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1, scope TEXT NOT NULL DEFAULT 'memo+journal', updated INTEGER NOT NULL DEFAULT 0)",
     "CREATE TABLE IF NOT EXISTS project_backfill (id TEXT PRIMARY KEY, batch TEXT NOT NULL, session TEXT NOT NULL, page TEXT NOT NULL, prev_parent TEXT, project TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS memo_drafts (id TEXT PRIMARY KEY, project TEXT NOT NULL, kind TEXT NOT NULL, text TEXT NOT NULL, hash TEXT NOT NULL, client TEXT NOT NULL DEFAULT '', state TEXT NOT NULL DEFAULT 'pending', batch TEXT, created INTEGER NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS memo_drafts_project ON memo_drafts(project, state)",
+    "CREATE TABLE IF NOT EXISTS memo_apply_batches (id TEXT PRIMARY KEY, project TEXT NOT NULL, page TEXT NOT NULL, before_blocks TEXT NOT NULL, page_updated INTEGER NOT NULL, hashes TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS organize_settings (id INTEGER PRIMARY KEY, json TEXT NOT NULL, updated INTEGER NOT NULL DEFAULT 0)",
   ];
+  // Organize mode (owner choice 2026-10-19): agent notes become drafts; the user confirms them from the project home card.
+  const ORG_KINDS = ["decision", "todo", "fact", "files"];
+  const PLACES = ["home", "sidebar", "both"];
+  const ORG_DEFAULT = { kinds: { decision: true, todo: true, fact: true, files: true }, place: "home", notifyAt: 5, direct: { decision: false, todo: false, fact: false, files: false } };
+  const orgKind = (kind) => (kind === "summary" ? "fact" : kind);
   const KINDS = { decision: "결정", fact: "알게 된 것", todo: "할 일", files: "파일", summary: "요약" };
   const SCOPES = ["memo", "memo+journal"];
   const LIMITS = { items: 12, text: 400, files: 12, perHour: 400, blocks: 1800 };
@@ -22,12 +31,16 @@
   const clip = (s, n) => { const t = String(s == null ? "" : s).replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
   let seqId = 0;
   const rid = (p) => p + Date.now().toString(36) + (seqId++ % 46656).toString(36).padStart(3, "0") + Math.random().toString(36).slice(2, 6);
-  const ready = new WeakSet();
+  // A member workspace gets a new D1-shaped adapter on every request, so the schema is remembered by its store key
+  // (as gate/_worker.js ensureSchema does); otherwise every request re-ran the CREATE ... IF NOT EXISTS list as
+  // round trips to the workspace Durable Object before its first read (#17).
+  const ready = new WeakSet(), readyKeys = new Set();
   async function schema(db) {
-    if (ready.has(db)) return;
+    if (ready.has(db) || (db.acardKey && readyKeys.has(db.acardKey))) return;
     for (const sql of SCHEMA) await db.prepare(sql).run();
     if (ACARD_FEATURES.services.journalSchema) await ACARD_FEATURES.services.journalSchema(db);
     ready.add(db);
+    if (db.acardKey) readyKeys.add(db.acardKey);
   }
   const redactOf = (helpers) => (helpers.services && helpers.services.journalRedact) || ACARD_FEATURES.services.journalRedact || ((t) => String(t));
 
@@ -41,14 +54,37 @@
   async function settings(db) {
     await schema(db);
     const row = await db.prepare("SELECT enabled, scope, updated FROM auto_notes_settings WHERE id = 1").first();
-    return { enabled: row ? Number(row.enabled) === 1 : true, scope: row && SCOPES.includes(row.scope) ? row.scope : "memo+journal" };
+    return { enabled: row ? Number(row.enabled) === 1 : true, scope: row && SCOPES.includes(row.scope) ? row.scope : "memo+journal", organize: await organizeSettings(db) };
+  }
+  async function organizeSettings(db) {
+    const row = await db.prepare("SELECT json FROM organize_settings WHERE id = 1").first();
+    let saved = {};
+    try { saved = row ? JSON.parse(row.json) : {}; } catch { saved = {}; }
+    return mergeOrganize(ORG_DEFAULT, saved);
+  }
+  function mergeOrganize(cur, patch) {
+    const p = patch && typeof patch === "object" ? patch : {};
+    const flags = (base, over) => Object.fromEntries(ORG_KINDS.map((k) => [k, over && typeof over[k] === "boolean" ? over[k] : base[k]]));
+    const n = Number(p.notifyAt);
+    return {
+      kinds: flags(cur.kinds, p.kinds),
+      place: PLACES.includes(p.place) ? p.place : cur.place,
+      notifyAt: Number.isInteger(n) && n >= 1 && n <= 99 ? n : cur.notifyAt,
+      direct: flags(cur.direct, p.direct),
+    };
   }
   async function saveSettings(db, patch) {
     const cur = await settings(db);
     const next = { enabled: typeof patch.enabled === "boolean" ? patch.enabled : cur.enabled, scope: SCOPES.includes(patch.scope) ? patch.scope : cur.scope };
     await db.prepare("INSERT INTO auto_notes_settings (id, enabled, scope, updated) VALUES (1, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET enabled = excluded.enabled, scope = excluded.scope, updated = excluded.updated")
       .bind(next.enabled ? 1 : 0, next.scope, Date.now()).run();
-    return next;
+    let organize = cur.organize;
+    if (patch.organize && typeof patch.organize === "object") {
+      organize = mergeOrganize(cur.organize, patch.organize);
+      await db.prepare("INSERT INTO organize_settings (id, json, updated) VALUES (1, ?, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json, updated = excluded.updated")
+        .bind(JSON.stringify(organize), Date.now()).run();
+    }
+    return { ...next, organize };
   }
 
   async function makePage(db, helpers, slug, title, parent, blocks) {
@@ -76,7 +112,8 @@
       if (tagged) page = tagged.slug;
     }
     if (!page) {
-      page = await makePage(db, helpers, "pj-" + key, name, null, [{ type: "paragraph", text: name + " 프로젝트 공간이에요. Claude Code·Codex 가 대화마다 남긴 메모와 작업 기록이 여기 모여요." }]);
+      page = await makePage(db, helpers, "pj-" + key, name, null, []);
+      await markFolder(db, page, "Claude Code·Codex 가 대화마다 남긴 메모와 작업 기록이 모여요.", "agent");
       if (helpers.services && helpers.services.folderTags) await helpers.services.folderTags(db, page, [tag]).catch(() => null);
     }
     const memo = row && await live(db, row.memo_page) ? row.memo_page : await makePage(db, helpers, "pj-" + key + "-memo", "메모", page, [
@@ -137,6 +174,32 @@
     return { added: fresh.length, page };
   }
 
+  // #33: images an agent attached to a page also land on the project 메모 page as one row of small (30%) thumbnails with a link back.
+  // They are explicit attachments, so they skip the draft queue; auto memo off or a muted project adds nothing.
+  async function memoImages(db, helpers, key, input) {
+    await schema(db);
+    const conf = await settings(db);
+    const project = await db.prepare("SELECT * FROM projects WHERE key = ?").bind(String(key)).first();
+    if (!project || !conf.enabled || Number(project.muted) === 1) return null;
+    const images = (input.images || []).filter((i) => /^\/media\/[0-9a-f]{16}$/.test(String(i.src))).slice(0, 8);
+    if (!images.length) return null;
+    const at = Date.now(), today = day(at);
+    const found = await helpers.readPage(db, project.memo_page);
+    const blocks = found ? found.blocks.slice() : [];
+    const lastHeading = [...blocks].reverse().find((b) => b.type === "heading2");
+    const lines = [];
+    if (!lastHeading || lastHeading.text !== today) lines.push("## " + today, "");
+    lines.push("**" + hm(at) + "** · " + md(clip(input.client || "agent", 40)) + " · 이미지 " + images.length + "장 → [" + md(clip(input.title || input.page, 60)).replace(/[\[\]]/g, " ") + "](/" + encodeURIComponent(String(input.page)) + "/)", "");
+    const group = "m" + at.toString(36).slice(-6);
+    for (const i of images) lines.push("![" + clip(i.caption, 200).replace(/[\]\n]/g, " ") + "](" + i.src + ' "' + ["30", i.time ? "t=" + i.time : "", images.length > 1 ? "g=" + group : "", "agent"].filter(Boolean).join(" ") + '")');
+    const added = helpers.normaliseBlocks(helpers.markdownToBlocks(lines.join("\n")));
+    if (blocks.length + added.length > 2000) return null;
+    await helpers.saveBlocks(db, project.memo_page, helpers.normaliseBlocks(blocks.concat(added)));
+    await db.prepare("UPDATE pages SET updated = ? WHERE slug = ?").bind(at, project.memo_page).run();
+    await db.prepare("UPDATE projects SET last = ? WHERE key = ?").bind(at, project.key).run();
+    return { page: project.memo_page, added: images.length };
+  }
+
   function itemsOf(input) {
     const out = [];
     for (const raw of Array.isArray(input.items) ? input.items.slice(0, LIMITS.items) : []) {
@@ -163,16 +226,96 @@
     const recent = await db.prepare("SELECT COUNT(*) AS n FROM memo_items WHERE created > ?").bind(Date.now() - HOUR).first();
     if (Number(recent?.n ?? 0) >= LIMITS.perHour) throw fail("메모가 너무 많아요. 잠시 뒤에 다시 보내 주세요.", 429);
     const project = await ensureProject(db, helpers, name);
-    const items = itemsOf(input);
+    const org = conf.organize;
+    const items = itemsOf(input).filter((it) => org.kinds[orgKind(it.kind)] !== false);
     const client = clip(input.client || principal.name || "agent", 40);
-    const done = items.length ? await appendMemo(db, helpers, project, items, client, env) : { added: 0, page: project.memo_page };
-    return { ok: true, added: done.added, muted: false, enabled: true, scope: conf.scope, project: key, page: done.page, url: "/" + encodeURIComponent(done.page) + "/" };
+    const direct = items.filter((it) => org.direct[orgKind(it.kind)] === true);
+    const later = items.filter((it) => org.direct[orgKind(it.kind)] !== true);
+    const done = direct.length ? await appendMemo(db, helpers, project, direct, client, env) : { added: 0, page: project.memo_page };
+    const drafted = later.length ? await addDrafts(db, helpers, project, later, client, env) : 0;
+    const pending = await pendingCount(db, project.key);
+    return { ok: true, added: done.added, drafted, pending, notify: pending >= org.notifyAt, muted: false, enabled: true, scope: conf.scope, project: key, page: done.page, url: "/" + encodeURIComponent(project.page) + "/" };
+  }
+
+  async function addDrafts(db, helpers, project, items, client, env) {
+    const redact = redactOf(helpers);
+    const at = Date.now();
+    const seen = new Set();
+    let n = 0;
+    for (const item of items) {
+      const text = clip(redact(item.text, env), LIMITS.text);
+      if (!text) continue;
+      const hash = hashOf(item.kind, text);
+      if (seen.has(hash)) continue;
+      seen.add(hash);
+      if (await db.prepare("SELECT id FROM memo_items WHERE project = ? AND hash = ?").bind(project.key, hash).first()) continue;
+      if (await db.prepare("SELECT id FROM memo_drafts WHERE project = ? AND hash = ? AND state = 'pending'").bind(project.key, hash).first()) continue;
+      await db.prepare("INSERT INTO memo_drafts (id, project, kind, text, hash, client, state, created) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)")
+        .bind(rid("md"), project.key, item.kind, text, hash, client, at).run();
+      n++;
+    }
+    if (n) await db.prepare("UPDATE projects SET last = ? WHERE key = ?").bind(at, project.key).run();
+    return n;
+  }
+  async function pendingCount(db, key) {
+    const r = await db.prepare("SELECT COUNT(*) AS n FROM memo_drafts WHERE project = ? AND state = 'pending'").bind(key).first();
+    return Number(r?.n ?? 0);
+  }
+  async function listDrafts(db, key) {
+    const rows = await db.prepare("SELECT id, kind, text, client, created FROM memo_drafts WHERE project = ? AND state = 'pending' ORDER BY created DESC LIMIT 200").bind(key).all();
+    return (rows.results ?? []).map((r) => ({ id: r.id, kind: r.kind, label: KINDS[r.kind] || r.kind, text: r.text, client: r.client, created: Number(r.created) }));
+  }
+  // Writes the chosen drafts to the memo page as one batch and keeps the page's previous blocks so 되돌리기 restores it exactly.
+  async function applyDrafts(db, helpers, key, ids, env) {
+    const project = await db.prepare("SELECT * FROM projects WHERE key = ?").bind(key).first();
+    if (!project) throw fail("없는 프로젝트예요.", 404);
+    const want = (Array.isArray(ids) ? ids : []).map(String).slice(0, 200);
+    if (!want.length) throw fail("정리할 항목을 골라 주세요.");
+    const rows = (await db.prepare(`SELECT id, kind, text, client FROM memo_drafts WHERE project = ? AND state = 'pending' AND id IN (${want.map(() => "?").join(",")})`).bind(key, ...want).all()).results ?? [];
+    if (!rows.length) return { applied: 0, batch: null };
+    const before = await helpers.readPage(db, project.memo_page);
+    const beforeUpdated = Number((await db.prepare("SELECT updated FROM pages WHERE slug = ?").bind(project.memo_page).first())?.updated ?? 0);
+    const done = await appendMemo(db, helpers, project, rows.map((r) => ({ kind: r.kind, text: r.text })), rows[0].client || "정리", env);
+    const batch = rid("mb");
+    const hashes = rows.map((r) => hashOf(r.kind, r.text));
+    await db.batch([
+      db.prepare("INSERT INTO memo_apply_batches (id, project, page, before_blocks, page_updated, hashes, undone, created) VALUES (?, ?, ?, ?, ?, ?, 0, ?)")
+        .bind(batch, key, done.page, JSON.stringify(before && done.page === project.memo_page ? before.blocks : null), beforeUpdated, JSON.stringify(hashes), Date.now()),
+      ...rows.map((r) => db.prepare("UPDATE memo_drafts SET state = 'applied', batch = ? WHERE id = ?").bind(batch, r.id)),
+    ]);
+    return { applied: rows.length, added: done.added, batch, page: done.page, url: "/" + encodeURIComponent(done.page) + "/" };
+  }
+  async function dismissDrafts(db, key, ids) {
+    const want = (Array.isArray(ids) ? ids : []).map(String).slice(0, 200);
+    if (!want.length) return { dismissed: 0 };
+    const r = await db.prepare(`UPDATE memo_drafts SET state = 'dismissed' WHERE project = ? AND state = 'pending' AND id IN (${want.map(() => "?").join(",")})`).bind(key, ...want).run();
+    return { dismissed: Number(r?.meta?.changes ?? r?.changes ?? want.length) };
+  }
+  async function undoApply(db, helpers, key, batch) {
+    const b = await db.prepare("SELECT * FROM memo_apply_batches WHERE id = ? AND project = ?").bind(String(batch || ""), key).first();
+    if (!b) throw fail("되돌릴 정리를 찾지 못했어요.", 404);
+    if (Number(b.undone) === 1) return { restored: 0 };
+    const hashes = JSON.parse(b.hashes);
+    const blocks = JSON.parse(b.before_blocks);
+    if (Array.isArray(blocks)) {
+      await helpers.saveBlocks(db, b.page, helpers.normaliseBlocks(blocks));
+      await db.prepare("UPDATE pages SET updated = ? WHERE slug = ?").bind(Date.now(), b.page).run();
+    }
+    await db.batch([
+      ...hashes.map((h) => db.prepare("DELETE FROM memo_items WHERE project = ? AND hash = ?").bind(key, h)),
+      db.prepare("UPDATE projects SET memos = MAX(0, memos - ?) WHERE key = ?").bind(hashes.length, key),
+      db.prepare("UPDATE memo_drafts SET state = 'pending', batch = NULL WHERE batch = ?").bind(b.id),
+      db.prepare("UPDATE memo_apply_batches SET undone = 1 WHERE id = ?").bind(b.id),
+    ]);
+    return { restored: hashes.length };
   }
 
   async function listProjects(db) {
     await schema(db);
     const rows = await db.prepare("SELECT p.key, p.name, p.page, p.memo_page, p.journal_page, p.muted, p.memos, p.last, (SELECT COUNT(*) FROM journal_sessions s WHERE s.project = p.key) AS sessions, (SELECT MAX(s.updated) FROM journal_sessions s WHERE s.project = p.key) AS jlast FROM projects p WHERE EXISTS (SELECT 1 FROM pages x WHERE x.slug = p.page) ORDER BY p.last DESC LIMIT 100").all();
-    return (rows.results ?? []).map((r) => ({ key: r.key, name: r.name, page: r.page, memoPage: r.memo_page, journalPage: r.journal_page, muted: Number(r.muted) === 1, memos: Number(r.memos), sessions: Number(r.sessions), last: Math.max(Number(r.last), Number(r.jlast || 0)) })).sort((a, b) => b.last - a.last);
+    const pend = (await db.prepare("SELECT project, COUNT(*) AS n FROM memo_drafts WHERE state = 'pending' GROUP BY project").all()).results ?? [];
+    const pendOf = Object.fromEntries(pend.map((r) => [r.project, Number(r.n)]));
+    return (rows.results ?? []).map((r) => ({ key: r.key, name: r.name, page: r.page, memoPage: r.memo_page, journalPage: r.journal_page, muted: Number(r.muted) === 1, memos: Number(r.memos), sessions: Number(r.sessions), pending: pendOf[r.key] || 0, last: Math.max(Number(r.last), Number(r.jlast || 0)) })).sort((a, b) => b.last - a.last);
   }
 
   // Backfill: old sessions without a project get one from their 프로젝트: tag or the "(name)" the hook put in the goal.
@@ -233,6 +376,16 @@
         const dry = await backfillPlan(db);
         return json({ dryRun: true, count: dry.plan.length, plan: dry.plan.slice(0, 200), skipped: dry.skipped.length, projects: [...new Set(dry.plan.map((p) => p.project))] });
       }
+      const dr = /^\/api\/projects\/([^/]+)\/drafts(?:\/(apply|dismiss|undo))?$/.exec(path);
+      if (dr) {
+        const key = decodeURIComponent(dr[1]);
+        if (!await db.prepare("SELECT key FROM projects WHERE key = ?").bind(key).first()) return json({ error: "없는 프로젝트예요." }, 404);
+        if (!dr[2] && method === "GET") return json({ drafts: await listDrafts(db, key), settings: (await settings(db)).organize });
+        if (dr[2] === "apply" && method === "POST") return json(await applyDrafts(db, h, key, body.ids, env));
+        if (dr[2] === "dismiss" && method === "POST") return json(await dismissDrafts(db, key, body.ids));
+        if (dr[2] === "undo" && method === "POST") return json(await undoApply(db, h, key, body.batch));
+        return json({ error: "없는 API예요." }, 404);
+      }
       const one = /^\/api\/projects\/([^/]+)$/.exec(path);
       if (one && (method === "PATCH" || method === "PUT")) {
         const key = decodeURIComponent(one[1]);
@@ -262,11 +415,12 @@
     agentOps: { memoAdd: async (db, principal, helpers, input) => memoAdd(db, principal, helpers, input) },
     services: {
       projectEnsure: ensureProject,
+      projectMemoImages: memoImages,
       projectKey: keyOf,
       projectSettings: settings,
       mcpTools: [
         { name: "memo_add", scope: "write", operation: "memoAdd",
-          description: "At the end of every turn, without asking: add 1-5 short distilled notes to the CURRENT project's 메모 page (decisions, facts learned, TODOs found, files touched). project = the git repo name (remote origin) or the working folder name. Not the transcript; one sentence each; never secrets. Duplicates are skipped.",
+          description: "At the end of every turn, without asking: send 1-5 short distilled notes for the CURRENT project (decisions, facts learned, TODOs found, files touched). They are collected as drafts on the project home ('정리할 것') and the user confirms them; kinds the user set to '바로 넣기' go straight to the 메모 page. project = the git repo name (remote origin) or the working folder name. Not the transcript; one sentence each; never secrets. Duplicates are skipped.",
           inputSchema: (z) => ({
             project: z.string().describe("Git repo name (origin remote) or working folder name."),
             items: z.array(z.object({ kind: z.enum(["decision", "fact", "todo", "summary"]), text: z.string() })).describe("1-5 one-sentence notes in the user's language."),

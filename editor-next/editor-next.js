@@ -353,7 +353,7 @@
 
   // --- Markdown shortcuts and typography while typing ---
   var BLOCK_RULES = [
-    [/^###\s$/, "heading3"], [/^##\s$/, "heading2"], [/^#\s$/, "heading1"],
+    [/^####\s$/, "heading4"], [/^###\s$/, "heading3"], [/^##\s$/, "heading2"], [/^#\s$/, "heading1"],
     [/^[-*+]\s$/, "bulleted"], [/^1[.)]\s$/, "numbered"], [/^\[( |x)?\]\s$/, "to_do"], [/^>\s$/, "quote"]
   ];
   var TYPO = [["->", "→"], ["<-", "←"], ["=>", "⇒"], ["!=", "≠"], ["<=", "≤"], [">=", "≥"], ["...", "…"], ["(c)", "©"], ["(r)", "®"], ["(tm)", "™"], ["1/2", "½"], ["+/-", "±"]];

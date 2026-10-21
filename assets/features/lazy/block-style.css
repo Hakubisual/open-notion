@@ -1,0 +1,12 @@
+/* Editor rows reuse the reader class names (block-html.js BLOCK_COLOR_CSS); brown has no tag token in tokens.css. */
+:root{--tag-brown-bg:#f3ece5;--tag-brown-fg:#7a5230}html[data-theme="dark"]{--tag-brown-bg:#3a2e24;--tag-brown-fg:#e3bf98}@media (prefers-color-scheme:dark){html:not([data-theme="light"]):not([data-theme="dark"]){--tag-brown-bg:#3a2e24;--tag-brown-fg:#e3bf98}}
+.bc-gray{color:var(--tag-gray-fg)}.bc-brown{color:var(--tag-brown-fg)}.bc-orange{color:var(--tag-orange-fg)}.bc-yellow{color:var(--tag-yellow-fg)}.bc-green{color:var(--tag-green-fg)}.bc-blue{color:var(--tag-blue-fg)}.bc-purple{color:var(--tag-purple-fg)}.bc-pink{color:var(--tag-pink-fg)}.bc-red{color:var(--tag-red-fg)}
+.blk.bc-gray_background{background:var(--tag-gray-bg)}.blk.bc-brown_background{background:var(--tag-brown-bg)}.blk.bc-orange_background{background:var(--tag-orange-bg)}.blk.bc-yellow_background{background:var(--tag-yellow-bg)}.blk.bc-green_background{background:var(--tag-green-bg)}.blk.bc-blue_background{background:var(--tag-blue-bg)}.blk.bc-purple_background{background:var(--tag-purple-bg)}.blk.bc-pink_background{background:var(--tag-pink-bg)}.blk.bc-red_background{background:var(--tag-red-bg)}
+.blk[class*="_background"]{border-radius:8px}
+.bc-menu{position:fixed;z-index:45;width:236px;padding:6px;background:var(--raised);color:var(--fg);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-menu)}
+.bc-menu h3{margin:6px 6px 4px;font-size:var(--fs-11);color:var(--fg-dim);font-weight:600}
+.bc-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;padding:2px 4px 6px}
+.bc-swatch{appearance:none;height:36px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font:inherit;font-size:var(--fs-15);font-weight:700;cursor:pointer}
+.bc-swatch.bg{color:var(--fg)}
+.bc-swatch[aria-checked="true"]{outline:2px solid var(--accent);outline-offset:1px}
+.bc-swatch:focus-visible{outline:2px solid var(--accent);outline-offset:1px}

@@ -1,5 +1,10 @@
 // 데이터베이스 화면과 인라인 셀 편집. db-model.js · db-formula.js 를 먼저 읽어야 한다.
 // 마운트 하나당 인스턴스 하나: 모든 상태는 createInstance 클로저 안에만 있다.
+// DoriDB.load(slug, { initial, mountId, titleInput }) -> Promise<database payload>.
+// initial is GET /api/db/<slug>'s object (or GET /api/page/<slug>.database).
+// A valid initial wins; otherwise use a matching .acard-db-boot, then GET.
+// DoriDB.loadRow(slug, rowId, mountId, { initial }) uses the same contract.
+// DoriDB.reload(mountId) always GETs; mountAll() mounts newly replaced reader nodes.
 (function () {
   "use strict";
 
@@ -69,10 +74,28 @@
     return String(slug).split("/").map(encodeURIComponent).join("/");
   }
 
+  function validInitial(data, slug) {
+    return data && data.database && data.database.slug === slug &&
+      ["properties", "rows", "views", "templates"].every(function (key) { return Array.isArray(data[key]); });
+  }
+
+  function bootData(slug) {
+    var tags = document.querySelectorAll('script.acard-db-boot[type="application/json"]');
+    for (var i = 0; i < tags.length; i += 1) {
+      if (tags[i].dataset.slug !== slug) continue;
+      try {
+        var data = JSON.parse(tags[i].textContent);
+        if (validInitial(data, slug)) return data;
+      } catch (_) { /* An invalid bootstrap falls back to the API. */ }
+    }
+    return null;
+  }
+
   function createInstance(slug, opts) {
     var mountNode = document.getElementById(opts.mountId || "db-root");
     var reader = !!(mountNode && mountNode.matches(".reader .dbbrowser"));
-    var readerAssets = reader && mountNode.querySelector(".db-reader-assets").content.cloneNode(true);
+    var readerTemplate = reader && mountNode.querySelector(".db-reader-assets").cloneNode(true);
+    var readerAssets = reader && readerTemplate.content;
     function readerIcon(name) {
       var source = readerAssets && readerAssets.querySelector('[data-table-icon="' + name + '"]');
       return source ? source.firstChild.cloneNode(true) : el("span", { text: icon(name) });
@@ -97,6 +120,7 @@
       viewId: null,
       query: "",
       relationTitles: {},
+      collapsed: null,
     };
     var base = "/db/" + encodeURIComponent(slug);
 
@@ -149,6 +173,54 @@
       return MODEL.sortRows(state.properties, rows, view.config.sorts, values);
     }
 
+    function subitems() {
+      var sub = state.database && state.database.config && state.database.config.subitems;
+      if (!sub) return null;
+      var parent = state.properties.find(function (prop) { return prop.id === sub.parent; });
+      var children = state.properties.find(function (prop) { return prop.id === sub.children; });
+      return parent && children ? { parent: parent, children: children } : null;
+    }
+
+    function collapsedSet() {
+      if (state.collapsed) return state.collapsed;
+      var saved = [];
+      try { saved = JSON.parse(localStorage.getItem("acard-subitems-" + slug + "-" + (currentView().id || "")) || "[]"); } catch (error) { saved = []; }
+      state.collapsed = new Set(Array.isArray(saved) ? saved : []);
+      return state.collapsed;
+    }
+
+    function toggleCollapsed(rowId) {
+      var set = collapsedSet();
+      if (set.has(rowId)) set.delete(rowId); else set.add(rowId);
+      try { localStorage.setItem("acard-subitems-" + slug + "-" + (currentView().id || ""), JSON.stringify(Array.from(set))); } catch (error) { /* 저장 공간이 없으면 이 탭에서만 유지 */ }
+      paintBody();
+    }
+
+    // 표 뷰가 중첩일 때 [{row, depth, dim, hasChildren, collapsed}], 아니면 null.
+    function nestedRows(rows) {
+      var sub = subitems();
+      var view = currentView();
+      if (!sub || view.type !== "table" || view.config.subitems === "flat" || view.config.group_by) return null;
+      var parentOf = function (row) { var ids = (row.props || {})[sub.parent.id]; return Array.isArray(ids) && ids.length ? ids[0] : null; };
+      return MODEL.nestRows(state.rows, rows, parentOf, collapsedSet());
+    }
+
+    function addSubitem(parentRow) {
+      var sub = subitems();
+      if (!sub) return Promise.resolve();
+      var props = {}; props[sub.parent.id] = [parentRow.id];
+      collapsedSet().delete(parentRow.id);
+      return api(base + "/rows", { method: "POST", body: JSON.stringify({ props: props }) })
+        .then(function () { return reloadWithStatus("하위 항목 추가됨"); })
+        .catch(function (error) { setStatus("하위 항목 추가 실패: " + error.message, true); });
+    }
+
+    function switchSubitems(on) {
+      return api(base, { method: "PATCH", body: JSON.stringify({ subitems: on }) })
+        .then(function () { return reloadWithStatus(on ? "하위 항목 켜짐" : "하위 항목 꺼짐"); })
+        .catch(function (error) { setStatus("하위 항목 설정 실패: " + error.message, true); });
+    }
+
     function setStatus(text, bad) {
       var node = state.statusNode;
       if (!node) return;
@@ -171,7 +243,7 @@
       });
     }
 
-    function loadRelationTitles() {
+    function loadRelationTitles(initial) {
       var targets = [];
       state.properties.forEach(function (prop) {
         if (prop.type === "relation" && prop.config && prop.config.database && targets.indexOf(prop.config.database) < 0) targets.push(prop.config.database);
@@ -179,7 +251,8 @@
       var changed = false;
       var failure = null;
       return Promise.all(targets.map(function (target) {
-        return api("/db/" + encodeURIComponent(target)).then(function (data) {
+        var seed = initial && (target === slug || target === state.database.id ? { rows: state.rows } : bootData(target));
+        return (seed ? Promise.resolve(seed) : api("/db/" + encodeURIComponent(target))).then(function (data) {
           data.rows.forEach(function (entry) {
             var title = entry.pageTitle || entry.id;
             if (state.relationTitles[entry.id] !== title) { state.relationTitles[entry.id] = title; changed = true; }
@@ -425,11 +498,32 @@
       }
     }
 
+    function richSpan(value, className) {
+      var out = el("span", { class: className });
+      MODEL.richValue(value).forEach(function (seg) {
+        out.appendChild(seg.classes.length ? el("span", { class: seg.classes.join(" "), text: seg.text }) : document.createTextNode(seg.text));
+      });
+      return out;
+    }
+
     function cellEditor(prop, row) {
       var value = values(row)[prop.id];
       var wrap = el("div", { class: "dbcell c-" + prop.type });
-      if (prop.type === "formula" || prop.type === "rollup" || prop.type === "created_time" || prop.type === "updated_time") {
+      var fxError = prop.type === "formula" && row.errors ? row.errors[prop.id] : "";
+      if (fxError && (value === null || value === undefined || value === "")) {
+        wrap.appendChild(el("span", { class: "fxerror", title: fxError, text: fxError }));
+        return wrap;
+      }
+      if (prop.type === "formula" && MODEL.isRichValue(value)) {
+        wrap.appendChild(richSpan(value, "dbro"));
+        return wrap;
+      }
+      if (prop.type === "formula" || prop.type === "rollup" || prop.type === "created_time" || prop.type === "updated_time" || prop.type === "unique_id") {
         wrap.appendChild(el("span", { class: "dbro", text: MODEL.displayValue(prop, value) }));
+        return wrap;
+      }
+      if (prop.type === "button") {
+        wrap.appendChild(buttonCell(prop, row));
         return wrap;
       }
       if (prop.type === "checkbox") {
@@ -498,7 +592,7 @@
           var url = safeUrl(file.url, false);
           var isImage = url && (/^image\//.test(file.type || "") || /\.(png|jpe?g|gif|webp|avif|svg)(\?|$)/i.test(url) || /^data:image\//i.test(url));
           var item = el("span", { class: "dbfile" }, [
-            isImage ? el("img", { src: url, alt: file.name || "" }) : el("span", { class: "dbdoc", text: "📄" }),
+            isImage ? el("img", Object.assign({ src: url, alt: file.name || "" }, VIEWS.imageAttributes(file, url))) : el("span", { class: "dbdoc", text: "📄" }),
           ]);
           var remove = el("button", { type: "button", class: "dbfiledel", text: "✕", "aria-label": "파일 지우기" });
           remove.addEventListener("click", function () {
@@ -529,6 +623,16 @@
           name.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); commit(); } });
         });
         wrap.appendChild(addFile);
+        return wrap;
+      }
+      if (prop.type === "person") {
+        var people = Array.isArray(value) ? value : [];
+        var personWrap = el("div", { class: "dbrelwrap dbpeople" });
+        people.forEach(function (email) { personWrap.appendChild(personChip(email)); });
+        var pick = el("button", { type: "button", class: "dbaddfile", text: "+", "aria-label": "사람 지정" });
+        pick.addEventListener("click", function () { openPersonPicker(pick, prop, row, people); });
+        personWrap.appendChild(pick);
+        wrap.appendChild(personWrap);
         return wrap;
       }
       if (prop.type === "relation") {
@@ -594,6 +698,43 @@
       return wrap;
     }
 
+    function personChip(email) {
+      return el("span", { class: "dbperson", title: email }, [el("span", { class: "dbavatar", text: MODEL.personInitial(email), "aria-hidden": "true" }), el("span", { class: "dbpersonname", text: email })]);
+    }
+
+    // 후보는 서버가 권한에 맞춰 준다(GET /api/db/<slug>/people). 목록 밖 이메일은 직접 넣을 수 없다.
+    function openPersonPicker(anchor, prop, row, current) {
+      api(base + "/people").then(function (data) {
+        var chosen = current.slice();
+        var search = el("input", { class: "dboptsearch", type: "search", placeholder: "사람 찾기", "aria-label": "사람 찾기" });
+        var list = el("div", { class: "dboptlist" });
+        var paint = function () {
+          list.innerHTML = "";
+          var q = search.value.trim().toLowerCase();
+          var shown = (data.people || []).filter(function (entry) { return !q || entry.email.indexOf(q) >= 0; });
+          if (!shown.length) list.appendChild(el("p", { class: "dbhint", text: "지정할 수 있는 사람이 없어요. 이 페이지를 공유하면 여기에 나와요." }));
+          shown.forEach(function (entry) {
+            var on = chosen.indexOf(entry.email) >= 0;
+            var button = el("button", { type: "button", class: "dbopt dbpersonopt" + (on ? " on" : "") }, [personChip(entry.email), entry.owner ? el("span", { class: "dbhint", text: "소유자" }) : null]);
+            button.dataset.email = entry.email;
+            button.addEventListener("click", function () {
+              var at = chosen.indexOf(entry.email);
+              if (at >= 0) chosen.splice(at, 1); else if (prop.config.limit === 1) chosen = [entry.email]; else chosen.push(entry.email);
+              list.querySelectorAll(".dbpersonopt").forEach(function (node) { node.classList.toggle("on", chosen.indexOf(node.dataset.email) >= 0); });
+            });
+            list.appendChild(button);
+          });
+        };
+        search.addEventListener("input", paint);
+        paint();
+        var pop = popover(anchor, el("div", { class: "dboptbox" }, [el("h4", { text: "사람 지정" }), search, list]));
+        var done = el("button", { type: "button", class: "dbprimary", text: "확인" });
+        done.addEventListener("click", function () { pop.remove(); setCell(row.id, prop.id, chosen); });
+        pop.appendChild(done);
+        search.focus();
+      }).catch(function (error) { setStatus("사람 목록 불러오기 실패: " + error.message, true); });
+    }
+
     function openRelationPicker(anchor, prop, row, ids) {
       var targetSlug = prop.config.database;
       if (!targetSlug) {
@@ -655,7 +796,36 @@
       if (prop.type === "formula") items.push({ separator: true }, { label: "수식 편집", ico: "ƒ", run: function () { formulaEditor(anchor, prop); } });
       if (prop.type === "rollup") items.push({ separator: true }, { label: "롤업 설정", ico: "∑", run: function () { rollupEditor(anchor, prop); } });
       if (prop.type === "relation") items.push({ separator: true }, { label: "연결 DB 고르기", ico: "⇢", run: function () { relationEditor(anchor, prop); } });
+      if (prop.type === "unique_id") items.push({ separator: true }, { label: "ID 접두어", ico: "#", run: function () { prefixEditor(anchor, prop); } });
+      if (prop.type === "button") items.push({ separator: true }, { label: "버튼 동작", ico: "▶", run: function () { buttonEditor(anchor, prop); } });
       menu(anchor, prop.name, items);
+    }
+
+    function buttonCell(prop, row) {
+      var b = el("button", { type: "button", class: "dbbtn", text: (prop.config.icon ? prop.config.icon + " " : "") + (prop.config.label || prop.name) });
+      b.disabled = !prop.config.actions.length || document.body.dataset.readonly == "1";
+      b.onclick = function (ev) {
+        ev.stopPropagation();
+        chunk("buttons", "__BUTTONS_JS__", "__BUTTONS_CSS__").then(function () { return AcardButtons.pressCell(slug, row.id, prop, b); }).then(function (d) { if (d && !d.open) reload(); });
+      };
+      return b;
+    }
+
+    function buttonEditor(anchor, prop) {
+      chunk("button-editor", "__BUTTON_EDITOR_JS__", "__BUTTON_EDITOR_CSS__").then(function () { AcardButtonEditor.property(anchor, prop, state.properties, setProp); });
+    }
+
+    function prefixEditor(anchor, prop) {
+      var input = el("input", { class: "dburl", value: (prop.config && prop.config.prefix) || "", placeholder: "예: TASK-", maxlength: "20" });
+      var wrap = el("div", { class: "dbaddbox" }, [el("label", { class: "dblabel", text: "번호 앞에 붙일 글자" }), input]);
+      var box = popover(anchor, wrap);
+      input.focus();
+      var save = el("button", { type: "button", class: "dbprimary", text: "저장" });
+      save.addEventListener("click", function () {
+        box.remove();
+        setProp(prop.id, { config: Object.assign({}, prop.config, { prefix: input.value }) });
+      });
+      box.appendChild(save);
     }
 
     function renameProperty(anchor, prop) {
@@ -720,9 +890,9 @@
     }
 
     function formulaEditor(anchor, prop) {
-      var wrap = el("div", { class: "dbaddbox" }, [
-        el("p", { class: "dbhint", text: "예: if(prop(\"진행\") > 50, \"순조로움\", \"느림\") · concat(prop(\"상태\"), \" · \", prop(\"진행\"))" }),
-      ]);
+      var examples = el("div", { class: "dbhint dbformulaexamples" }, [el("span", { text: "예:" })]);
+      (MODEL.FORMULA_EXAMPLES || []).forEach(function (example) { examples.appendChild(el("code", { text: example })); });
+      var wrap = el("div", { class: "dbaddbox" }, [examples]);
       var input = el("input", { class: "dburl", value: prop.config.expression || "", placeholder: "수식" });
       var preview = el("p", { class: "dbhint" });
       wrap.appendChild(input);
@@ -730,21 +900,46 @@
       var box = popover(anchor, wrap);
       input.focus();
       var done = false;
+      // Parse errors first; then a preview on the first row's values (its relations stay as loaded, so a list
+      // lambda over a relation is checked for syntax here and computed by the server on save).
       function paint() {
-        var error = window.DoriFormula ? window.DoriFormula.formulaError(input.value) : null;
+        var F = window.DoriFormula;
+        var error = F ? F.formulaError(input.value) : null;
+        if (!error && F && F.evaluateFormulaDetailed && state.rows.length) {
+          var row0 = state.rows[0];
+          var vals = values(row0);
+          var find = function (key) { return state.properties.find(function (entry) { return entry.id === key || entry.name === key; }); };
+          var ctx = {
+            get: function (key) { var found = find(key); return found ? vals[found.id] : null; },
+            has: function (key) { return !!find(key); },
+            typeOf: function (key) { var found = find(key); return found ? found.type : "text"; },
+            now: Date.now(),
+          };
+          error = F.evaluateFormulaDetailed(input.value, ctx).error;
+        }
         preview.textContent = error ? "오류: " + error : "수식이 올바릅니다.";
         preview.classList.toggle("bad", !!error);
       }
       input.addEventListener("input", paint);
       paint();
+      // A formula that does not parse is never saved: Enter keeps the box open on its error, leaving the box keeps
+      // the formula that was there. An evaluation error (one row's data) still saves and shows in that row's cell.
+      function parses() {
+        return !(window.DoriFormula && window.DoriFormula.formulaError(input.value));
+      }
       function commit() {
         if (done) return;
         done = true;
         box.remove();
-        setProp(prop.id, { config: Object.assign({}, prop.config, { expression: input.value }) });
+        if (parses()) setProp(prop.id, { config: Object.assign({}, prop.config, { expression: input.value }) });
       }
       input.addEventListener("blur", commit);
-      input.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { ev.preventDefault(); commit(); } });
+      input.addEventListener("keydown", function (ev) {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        if (parses()) commit();
+        else paint();
+      });
     }
 
     function rollupEditor(anchor, prop) {
@@ -792,7 +987,6 @@
       wrap.appendChild(el("label", { class: "dblabel", text: "데이터베이스 슬러그" }));
       wrap.appendChild(input);
       var list = el("div", { class: "dboptlist" });
-      wrap.appendChild(list);
       api("/db/list").then(function (data) {
         (data.databases || []).forEach(function (entry) {
           var button = el("button", { type: "button", class: "dbopt", text: entry.title + " (" + entry.slug + ")" });
@@ -800,19 +994,72 @@
           list.appendChild(button);
         });
       }).catch(function (error) { setStatus("데이터베이스 목록 불러오기 실패: " + error.message, true); });
+      var wasSynced = !!(prop.config.synced && prop.config.pair);
+      var synced = el("input", { type: "checkbox", class: "dbrelsync", "aria-label": "상대 DB에도 표시" });
+      synced.checked = wasSynced;
+      wrap.appendChild(el("label", { class: "dbrecurday" }, [synced, el("span", { text: "상대 DB에도 표시" })]));
+      var pairName = el("input", { class: "dbname dbrelpair", value: state.database ? state.database.title || "" : "", placeholder: "상대 DB에 생길 속성 이름", "aria-label": "상대 DB에 생길 속성 이름" });
+      var pairLabel = el("label", { class: "dblabel", text: "상대 DB에 생길 속성 이름" });
+      var showPair = function () { var on = synced.checked && !wasSynced; pairLabel.hidden = !on; pairName.hidden = !on; };
+      synced.addEventListener("change", showPair);
+      wrap.appendChild(pairLabel);
+      wrap.appendChild(pairName);
+      wrap.appendChild(list);
+      showPair();
       var box = popover(anchor, wrap);
       var save = el("button", { type: "button", class: "dbprimary", text: "저장" });
       save.addEventListener("click", function () {
+        var patch = { config: Object.assign({}, prop.config, { database: input.value.trim(), synced: synced.checked }) };
+        if (synced.checked && !wasSynced) patch.pairName = pairName.value.trim();
+        if (wasSynced && !synced.checked) patch.dropPair = window.confirm("상대 DB의 짝 속성도 지울까요? 취소를 누르면 짝 속성은 한쪽 방향 관계로 남아요.");
         box.remove();
-        setProp(prop.id, { config: Object.assign({}, prop.config, { database: input.value.trim() }) });
+        setProp(prop.id, patch);
       });
       box.appendChild(save);
     }
 
+    function cardMenu(anchor, view, key) {
+      var card = MODEL.normaliseCard(view.config.card || {});
+      var set = function (patch) { saveView({ card: Object.assign({}, card, patch) }).then(render); };
+      if (key === "preview") {
+        var items = [
+          { label: "없음", on: card.preview === "none", run: function () { set({ preview: "none" }); } },
+          { label: "페이지 커버", on: card.preview === "page_cover", run: function () { set({ preview: "page_cover" }); } },
+          { label: "페이지 첫 이미지", on: card.preview === "page_content", run: function () { set({ preview: "page_content" }); } },
+        ];
+        state.properties.filter(function (prop) { return prop.type === "files"; }).forEach(function (prop) {
+          items.push({ label: prop.name, on: card.preview === "property" && card.property === prop.id, run: function () { set({ preview: "property", property: prop.id }); } });
+        });
+        items.forEach(function (item) { item.ico = item.on ? "✓" : ""; });
+        menu(anchor, "카드 미리보기", items);
+        return;
+      }
+      if (key === "size") {
+        menu(anchor, "카드 크기", [["s", "작게"], ["m", "중간"], ["l", "크게"]].map(function (pair) {
+          return { label: pair[1], ico: card.size === pair[0] ? "✓" : "", on: card.size === pair[0], run: function () { set({ size: pair[0] }); } };
+        }));
+        return;
+      }
+      menu(anchor, "이미지 맞춤", [["cover", "채우기"], ["contain", "맞추기"]].map(function (pair) {
+        return { label: pair[1], ico: card.fit === pair[0] ? "✓" : "", on: card.fit === pair[0], run: function () { set({ fit: pair[0] }); } };
+      }));
+    }
+
     function viewMenu(anchor) {
       var view = currentView();
+      var cards = view.type === "gallery" || view.type === "board";
+      var card = cards ? MODEL.normaliseCard(view.config.card || {}) : null;
       menu(anchor, view.name, [
         { label: "뷰 이름 바꾸기", ico: "✎", run: function () { renameView(anchor, view); } },
+        cards ? { separator: true } : null,
+        cards ? { label: "카드 미리보기", ico: "▣", run: function () { cardMenu(anchor, view, "preview"); } } : null,
+        cards ? { label: "카드 크기", ico: "↔", run: function () { cardMenu(anchor, view, "size"); } } : null,
+        cards ? { label: "이미지 맞춤", ico: "⤢", run: function () { cardMenu(anchor, view, "fit"); } } : null,
+        cards ? { label: "아이콘 보이기", ico: card.icon ? "✓" : "", on: card.icon, run: function () { saveView({ card: Object.assign({}, card, { icon: !card.icon }) }).then(render); } } : null,
+        cards ? { separator: true } : null,
+        { label: subitems() ? "하위 항목 끄기" : "하위 항목 켜기", ico: "↳", run: function () { switchSubitems(!subitems()); } },
+        subitems() && view.type === "table" ? { label: "하위 항목: " + (view.config.subitems === "flat" ? "평평" : "중첩"), ico: "≡", run: function () { saveView({ subitems: view.config.subitems === "flat" ? null : "flat" }).then(render); } } : null,
+        { separator: true },
         state.views.length > 1 ? { label: "뷰 삭제", ico: "✕", run: function () {
           if (!window.confirm(view.name + " 뷰를 지울까요?")) return;
           api(base + "/views/" + encodeURIComponent(view.id), { method: "DELETE" })
@@ -882,7 +1129,7 @@
         var props = {};
         if (row) {
           state.properties.forEach(function (prop) {
-            if (prop.type === "title" || prop.type === "formula" || prop.type === "rollup" || prop.type === "created_time" || prop.type === "updated_time") return;
+            if (prop.type === "title" || prop.type === "formula" || prop.type === "rollup" || prop.type === "created_time" || prop.type === "updated_time" || prop.type === "unique_id" || prop.type === "button") return;
             var v = (row.props || {})[prop.id];
             if (v !== undefined && v !== null) props[prop.id] = v;
           });
@@ -902,10 +1149,80 @@
       box.appendChild(save);
     }
 
+    function recurrenceEditor(anchor, template) {
+      var rec = template.recurrence || { freq: "day", interval: 1, weekdays: [1], monthday: 1, hour: 0, minute: 0, tz: "Asia/Seoul" };
+      var wrap = el("div", { class: "dbaddbox dbrecur" });
+      var freq = el("select", { class: "dbselect", "aria-label": "주기" });
+      [["day", "매일"], ["week", "매주"], ["month", "매월"]].forEach(function (pair) {
+        freq.appendChild(el("option", { value: pair[0], text: pair[1], selected: rec.freq === pair[0] }));
+      });
+      var days = el("div", { class: "dbrecurdays" });
+      ["일", "월", "화", "수", "목", "금", "토"].forEach(function (name, index) {
+        var box = el("input", { type: "checkbox", value: String(index), "aria-label": name + "요일" });
+        box.checked = (rec.weekdays || []).indexOf(index) >= 0;
+        days.appendChild(el("label", { class: "dbrecurday" }, [box, el("span", { text: name })]));
+      });
+      var monthday = el("input", { class: "dbname", type: "number", min: "1", max: "31", value: String(rec.monthday || 1), "aria-label": "날짜" });
+      var time = el("input", { class: "dbname", type: "time", step: "300", value: String(rec.hour).padStart(2, "0") + ":" + String(rec.minute).padStart(2, "0"), "aria-label": "시각" });
+      var tz = el("input", { class: "dburl", value: rec.tz || "Asia/Seoul", "aria-label": "시간대" });
+      var next = el("p", { class: "dbhint", text: template.recurrence && template.recurrence.next_run ? "다음: " + new Date(template.recurrence.next_run).toLocaleString() : "" });
+      wrap.appendChild(el("label", { class: "dblabel", text: "주기" }));
+      wrap.appendChild(freq);
+      var dayLabel = el("label", { class: "dblabel", text: "요일" });
+      var dateLabel = el("label", { class: "dblabel", text: "날짜(없는 달은 말일)" });
+      wrap.appendChild(dayLabel);
+      wrap.appendChild(days);
+      wrap.appendChild(dateLabel);
+      wrap.appendChild(monthday);
+      wrap.appendChild(el("label", { class: "dblabel", text: "시각" }));
+      wrap.appendChild(time);
+      wrap.appendChild(el("label", { class: "dblabel", text: "시간대" }));
+      wrap.appendChild(tz);
+      wrap.appendChild(next);
+      var paint = function () {
+        dayLabel.hidden = days.hidden = freq.value !== "week";
+        dateLabel.hidden = monthday.hidden = freq.value !== "month";
+      };
+      freq.addEventListener("change", paint);
+      paint();
+      var box = popover(anchor, wrap);
+      var send = function (value) {
+        box.remove();
+        api(base + "/templates/" + encodeURIComponent(template.id), { method: "PATCH", body: JSON.stringify({ recurrence: value }) })
+          .then(function () { return reloadWithStatus(value ? "반복 저장됨" : "반복 꺼짐"); })
+          .catch(function (error) { setStatus("반복 저장 실패: " + error.message, true); });
+      };
+      var save = el("button", { type: "button", class: "dbprimary", text: "저장" });
+      save.addEventListener("click", function () {
+        var parts = (time.value || "00:00").split(":");
+        var weekdays = [];
+        days.querySelectorAll("input").forEach(function (input) { if (input.checked) weekdays.push(Number(input.value)); });
+        send({ freq: freq.value, interval: 1, weekdays: weekdays, monthday: Number(monthday.value) || 1, hour: Number(parts[0]) || 0, minute: Number(parts[1]) || 0, tz: tz.value.trim() || "Asia/Seoul" });
+      });
+      box.appendChild(save);
+      if (template.recurrence) {
+        var off = el("button", { type: "button", class: "dbsecondary", text: "반복 끄기" });
+        off.addEventListener("click", function () { send(null); });
+        box.appendChild(off);
+      }
+    }
+
     function templateMenu(anchor) {
       var items = [{ label: "새 템플릿 만들기", ico: "+", run: function () { templateEditor(anchor); } }];
       if (state.templates.length) items.push({ separator: true });
+      var view = currentView();
       state.templates.forEach(function (template) {
+        var isDefault = view.config.default_template === template.id;
+        items.push({
+          label: template.name + " - 이 뷰의 기본값으로", ico: isDefault ? "✓" : "", on: isDefault, aria: template.name + " 템플릿을 이 뷰의 새 행 기본값으로",
+          run: function () {
+            saveView({ default_template: isDefault ? null : template.id }).then(function () { return reloadWithStatus(isDefault ? "기본 템플릿 해제됨" : "기본 템플릿 설정됨"); });
+          },
+        });
+        items.push({
+          label: template.name + " 반복…", ico: template.recurrence ? "↻" : "◷", aria: template.name + " 템플릿 반복 설정",
+          run: function () { recurrenceEditor(anchor, template); },
+        });
         items.push({
           label: template.name + " 삭제", ico: "✕", aria: template.name + " 템플릿 삭제",
           run: function () {
@@ -928,6 +1245,7 @@
         if (reader) tab.prepend(readerIcon(entry.type));
         tab.addEventListener("click", function () {
           state.viewId = entry.id;
+          state.collapsed = null;
           if (reader) {
             var url = new URL(location.href);
             if (entry.id === (state.views[0] || {}).id) url.searchParams.delete("view"); else url.searchParams.set("view", entry.type);
@@ -1013,6 +1331,8 @@
 
       var newRow = el("button", { type: "button", class: "dbprimary", text: "+ 새 행" });
       newRow.addEventListener("click", function () {
+        var preset = view.config.default_template && state.templates.find(function (template) { return template.id === view.config.default_template; });
+        if (preset) { addRow(preset.id); return; }
         if (!state.templates.length) { addRow(null); return; }
         menu(newRow, "새 행", [{ label: "빈 행", ico: "＋", run: function () { addRow(null); } }].concat(state.templates.map(function (template) {
           return { label: template.name, ico: template.icon || "▤", run: function () { addRow(template.id); } };
@@ -1034,6 +1354,22 @@
       var opSelect = el("select", { class: "dbselect" });
       var valueInput = el("input", { class: "dburl", placeholder: "값", value: draft ? String(draft.value === undefined || draft.value === null ? "" : draft.value) : "" });
       var valueWrap = el("div", { class: "dboptlist" });
+      var draftRelative = draft && draft.value && typeof draft.value === "object" ? String(draft.value.relative || "").split(":") : [];
+      var periodSelect = el("select", { class: "dbselect dbperiod", "aria-label": "기간" });
+      (MODEL.RELATIVE_DATES || []).forEach(function (entry) {
+        periodSelect.appendChild(el("option", { value: entry.id, text: entry.label, selected: draftRelative[0] === entry.id }));
+      });
+      var daysInput = el("input", { class: "dburl dbperioddays", type: "number", min: "1", max: "3650", "aria-label": "일 수", value: draftRelative[1] || "7" });
+      var periodWrap = el("div", { class: "dbrow2 dbperiodrow" }, [periodSelect, daysInput]);
+      function paintPeriod() {
+        var within = opSelect.value === "is_within";
+        periodWrap.hidden = !within;
+        valueInput.hidden = within;
+        valueWrap.hidden = within;
+        daysInput.hidden = !/_days$/.test(periodSelect.value);
+      }
+      opSelect.addEventListener("change", paintPeriod);
+      periodSelect.addEventListener("change", paintPeriod);
       function currentProp() {
         return state.properties.find(function (entry) { return entry.id === propSelect.value; }) || state.properties[0];
       }
@@ -1044,6 +1380,7 @@
           opSelect.appendChild(el("option", { value: operator, text: label, selected: draft && draft.operator === operator }));
         });
         paintValues();
+        paintPeriod();
       }
       function paintValues() {
         valueWrap.innerHTML = "";
@@ -1053,6 +1390,15 @@
           options.forEach(function (option) {
             var button = el("button", { type: "button", class: "dbopt" + (draft && draft.value === option.id ? " on" : ""), text: option.name });
             button.addEventListener("click", function () { valueInput.value = option.id; });
+            valueWrap.appendChild(button);
+          });
+        }
+        if (prop.type === "person") {
+          var seen = {};
+          state.rows.forEach(function (row) { ((row.props || {})[prop.id] || []).forEach(function (email) { seen[email] = true; }); });
+          Object.keys(seen).sort().forEach(function (email) {
+            var button = el("button", { type: "button", class: "dbopt" + (draft && draft.value === email ? " on" : ""), text: email });
+            button.addEventListener("click", function () { valueInput.value = email; });
             valueWrap.appendChild(button);
           });
         }
@@ -1072,6 +1418,7 @@
       wrap.appendChild(el("label", { class: "dblabel", text: "값" }));
       wrap.appendChild(valueInput);
       wrap.appendChild(valueWrap);
+      wrap.appendChild(periodWrap);
       var box = popover(anchor, wrap);
       var row = el("div", { class: "dbrow2" });
       var apply = el("button", { type: "button", class: "dbprimary", text: "적용" });
@@ -1080,6 +1427,7 @@
         var value = valueInput.value;
         if (prop.type === "number") value = value === "" ? null : Number(value);
         if (prop.type === "date") value = value || null;
+        if (opSelect.value === "is_within") value = { relative: /_days$/.test(periodSelect.value) ? periodSelect.value + ":" + Math.max(1, Math.min(3650, Math.trunc(Number(daysInput.value) || 7))) : periodSelect.value };
         box.remove();
         saveView({ filter: { property: propSelect.value, operator: opSelect.value, value: value } }).then(render);
       });
@@ -1139,6 +1487,7 @@
     function rowMenu(anchor, row) {
       menu(anchor, "행", [
         { label: "페이지로 열기", ico: "↗", run: function () { openRow(row.id); } },
+        subitems() ? { label: "하위 항목 추가", ico: "↳", run: function () { addSubitem(row); } } : null,
         { label: "복제", ico: "⧉", run: function () {
           var props = {};
           state.properties.forEach(function (prop) { props[prop.id] = values(row)[prop.id]; });
@@ -1162,7 +1511,10 @@
       var table = el("table", { class: "dbtable" });
 
       var headRow = el("tr");
-      headRow.appendChild(el("th", { class: reader ? "table-select" : "dbgutter", "aria-label": "완료" }, reader ? [el("span", { class: "table-check", "aria-hidden": "true" })] : []));
+      // #34: the reader's leftmost box marks a row 완료, so it only exists when a status property has a 완료 option.
+      var doneStatus = state.properties.find(function (prop) { return prop.type === "status"; });
+      var doneColumn = !reader || !!(doneStatus && (doneStatus.config.options || []).some(function (entry) { return entry.name === "완료"; }));
+      if (doneColumn) headRow.appendChild(el("th", { class: reader ? "table-select" : "dbgutter", "aria-label": "완료" }));
       columns.forEach(function (prop, index) {
         var width = MODEL.columnWidth(prop, view);
         var th = el("th", { class: "dbcol", style: "width:" + width + "px;min-width:" + width + "px" });
@@ -1216,8 +1568,11 @@
       table.appendChild(el("thead", null, [headRow]));
 
       var tbody = el("tbody");
-      rows.forEach(function (row) {
-        var tr = el("tr", { dataset: { row: row.id } });
+      var nested = nestedRows(rows);
+      var entries = nested || rows.map(function (row) { return { row: row, depth: 0 }; });
+      entries.forEach(function (entry) {
+        var row = entry.row;
+        var tr = el("tr", { dataset: { row: row.id }, class: nested ? "dbsub d" + entry.depth + (entry.dim ? " dim" : "") : null });
         var gutter = el("td", { class: reader ? "table-select" : "dbgutter" });
         var grip = el("button", { type: "button", class: "dbgrip", text: icon("grip"), "aria-label": "행 메뉴" });
         grip.addEventListener("click", function (ev) { rowMenu(ev.currentTarget, row); });
@@ -1235,9 +1590,17 @@
           });
           gutter.appendChild(complete);
         } else gutter.appendChild(grip);
-        tr.appendChild(gutter);
+        if (doneColumn) tr.appendChild(gutter);
         columns.forEach(function (prop) {
-          tr.appendChild(el("td", { class: "dbcellhost" }, [cellEditor(prop, row)]));
+          var cell = cellEditor(prop, row);
+          if (nested && prop.type === "title") {
+            var toggle = entry.hasChildren
+              ? el("button", { type: "button", class: "dbsubtoggle" + (entry.collapsed ? "" : " open"), text: "▸", "aria-label": entry.collapsed ? "하위 항목 펼치기" : "하위 항목 접기", "aria-expanded": String(!entry.collapsed) })
+              : el("span", { class: "dbsubtoggle none" });
+            if (entry.hasChildren) toggle.addEventListener("click", function () { toggleCollapsed(row.id); });
+            cell.prepend(toggle);
+          }
+          tr.appendChild(el("td", { class: "dbcellhost" }, [cell]));
         });
         if (!reader) tr.appendChild(el("td", { class: "dbgutter" }));
         tbody.appendChild(tr);
@@ -1245,7 +1608,7 @@
       table.appendChild(tbody);
 
       var footRow = el("tr", { class: "dbfoot" });
-      footRow.appendChild(el("td", { class: "dbgutter" }));
+      if (doneColumn) footRow.appendChild(el("td", { class: "dbgutter" }));
       columns.forEach(function (prop) {
         var kind = calculations[prop.id];
         var text = kind && kind !== "none" ? MODEL.formatCalculation(kind, MODEL.computeCalculation(state.properties, rows, prop.id, kind, values), prop) : "";
@@ -1334,6 +1697,7 @@
         openRow: openRow,
         groupBy: view.config.group_by,
         saveView: saveView,
+        cardPreview: function (row, vals) { return MODEL.cardPreviewFile(state.properties, view, row, vals); },
       }));
       return host;
     }
@@ -1345,6 +1709,16 @@
       var count = filteredRows().length;
       if (!reader) body.appendChild(el("p", { class: "dbmeta", text: state.properties.length + "개 속성 · " + count + " / " + state.rows.length + "행" }));
       body.appendChild(hostFor(currentView()));
+      prioritizeImages();
+    }
+
+    function prioritizeImages() {
+      if (!reader) return;
+      document.querySelectorAll('.reader .blocks figure.img img, .reader .dbbrowser .filethumb img, .reader .dbbrowser .dbfile img, .reader .dbbrowser .dbv-cover').forEach(function (img, index) {
+        img.setAttribute('loading', index ? 'lazy' : 'eager');
+        if (index) img.removeAttribute('fetchpriority');
+        else img.setAttribute('fetchpriority', 'high');
+      });
     }
 
     function renderRowPanel(root) {
@@ -1373,6 +1747,7 @@
       if (!root) return;
       root.innerHTML = "";
       if (state.rowId) { renderRowPanel(root); return; }
+      if (reader) root.appendChild(readerTemplate.cloneNode(true));
       if (reader) root.appendChild(readerAssets.querySelector(".table-heading").cloneNode(true));
       root.appendChild(toolbar());
       var status = el("p", { class: "dbstatus", role: "status", "aria-live": "polite" });
@@ -1388,10 +1763,11 @@
 
     function init() {
       var errorText = state.rowId ? "속성을 불러오지 못했어요: " : "데이터베이스를 불러오지 못했어요: ";
-      return api(base).then(function (data) {
+      var initial = validInitial(opts.initial, slug) ? opts.initial : bootData(slug);
+      return (initial ? Promise.resolve(initial) : api(base)).then(function (data) {
         applyData(data);
         render();
-        return loadRelationTitles().then(function () { return data; });
+        return loadRelationTitles(true).then(function () { return data; });
       }).catch(function (error) {
         var root = document.getElementById(state.mountId);
         if (root) root.appendChild(el("p", { class: "dbhint bad", text: errorText + error.message }));
@@ -1399,7 +1775,18 @@
       });
     }
 
-    return { init: init, state: state, render: render };
+    return { init: init, state: state, render: render, reload: reload };
+  }
+
+  var chunks = Object.create(null);
+  function chunk(name, js, css) {
+    return chunks[name] || (chunks[name] = new Promise(function (resolve, reject) {
+      if (!document.querySelector('link[href^="/lazy/' + name + '.css"]')) document.head.appendChild(Object.assign(document.createElement("link"), { rel: "stylesheet", href: "/lazy/" + name + ".css?v=" + css }));
+      var script = document.createElement("script");
+      script.src = "/lazy/" + name + ".js?v=" + js;
+      script.onload = resolve; script.onerror = function () { delete chunks[name]; reject(new Error(name)); };
+      document.head.appendChild(script);
+    }));
   }
 
   function mount(slug, opts) {
@@ -1411,16 +1798,21 @@
 
   function load(slug, options) {
     var opts = options || {};
-    return mount(slug, { mountId: opts.mountId, titleInput: opts.titleInput });
+    return mount(slug, { mountId: opts.mountId, titleInput: opts.titleInput, initial: opts.initial });
   }
 
-  function loadRow(slug, rowId, mountId) {
-    return mount(slug, { mountId: mountId, rowId: rowId });
+  function loadRow(slug, rowId, mountId, options) {
+    return mount(slug, { mountId: mountId, rowId: rowId, initial: options && options.initial });
   }
 
   window.DoriDB = {
     load: load,
     loadRow: loadRow,
+    mountAll: mountReaders,
+    reload: function (mountId) {
+      var entry = registry[mountId || lastMount];
+      return entry ? entry.reload() : Promise.resolve();
+    },
     state: function (mountId) {
       var entry = registry[mountId || lastMount];
       return entry ? entry.state : null;
@@ -1428,13 +1820,13 @@
   };
   // #15: a live/SW refresh swaps <main> for the server copy (acard:page-fresh), which drops the live board and leaves
   // its unstyled fallback; mount the fresh nodes again so the board keeps its look and the newest order.
-  function mountReaders() { document.querySelectorAll(".reader .dbbrowser[data-db]:not([data-live])").forEach(function (node, index) {
+  function mountReaders() { return Promise.all(Array.from(document.querySelectorAll(".reader .dbbrowser[data-db]:not([data-live])")).map(function (node, index) {
     node.dataset.live = "1";
     node.id = node.id || "db-reader-" + index;
     // Until the live tabs replace the server-drawn ones, a tab click opens its view by URL (the server draws ?view=).
     if (node.id != "db-home") node.onclick = function (ev) { var tab = ev.target.closest("[data-view]"); if (tab) location.search = "?view=" + tab.dataset.view; };
-    load(node.dataset.db, { mountId: node.id }).then(function () { node.onclick = null; }, function () {});
-  }); }
+    return load(node.dataset.db, { mountId: node.id }).then(function () { node.onclick = null; }, function () {});
+  })); }
   mountReaders();
   document.addEventListener("acard:page-fresh", mountReaders);
   window.addEventListener("popstate", function () {

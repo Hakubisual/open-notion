@@ -21,6 +21,8 @@ export class LiveFeed extends DurableObject {
     await this.ready;
     const url = new URL(request.url);
     if (url.pathname === "/publish" && request.method === "POST") return this.publish(await request.json());
+    // #61: shared pages are edge-cached under this number, so any published change starts a fresh cache.
+    if (url.pathname === "/seq") return Response.json({ id: this.seq });
     const since = Number(url.searchParams.get("since") ?? "");
     const scope = parseScope(url.searchParams.get("scope"));
     if (url.pathname === "/ws") {

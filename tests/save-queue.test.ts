@@ -3,7 +3,7 @@ import { runInNewContext } from "node:vm";
 
 const source = await Bun.file(new URL("../assets/features/save-queue.js", import.meta.url)).text();
 function setup(send: (slug: string, payload: any) => Promise<Response> = async () => new Response("{}")) {
-  const context: any = { Promise, Map, Date, JSON, Math, Response };
+  const context: any = { Promise, Map, Date, JSON, Math, Response, setTimeout, clearTimeout };
   runInNewContext(source, context);
   const records = new Map<string, any>();
   const storage = {
@@ -11,10 +11,10 @@ function setup(send: (slug: string, payload: any) => Promise<Response> = async (
     write: (entry: any) => { records.set(entry.slug, structuredClone(entry)); },
   };
   let clock = 100;
-  const options = { storage, send, now: () => clock };
+  const options = { identity: "member-a", storage, send, now: () => clock };
   return { api: context.AcardSaveQueue, storage, records, options, tick: (ms: number) => { clock += ms; } };
 }
-const payload = (text: string) => ({ title: "Queue", blocks: [{ id: "b1", type: "paragraph", text }] });
+const payload = (text: string) => ({ title: "Queue", blocks: [{ id: "b1", type: "paragraph", text }], base_updated: 10 });
 
 test("retry schedule doubles from one second and caps at thirty seconds", async () => {
   const f = setup(async () => { throw new TypeError("offline"); });
@@ -104,12 +104,12 @@ test("localStorage fallback writes synchronously and round-trips pending pages",
     get length() { return values.size; }, key: (i: number) => [...values.keys()][i],
     getItem: (key: string) => values.get(key), setItem: (key: string, value: string) => values.set(key, value),
   };
-  const storage = f.api.storage(local, null);
+  const storage = f.api.storage(local, null, "member-a");
   const q = f.api.create({ ...f.options, storage });
   await q.ready;
   q.enqueue("one", payload("before debounce"));
   expect(values.size).toBe(1);
-  const restored = f.api.create({ ...f.options, storage: f.api.storage(local, null) });
+  const restored = f.api.create({ ...f.options, storage: f.api.storage(local, null, "member-a") });
   await restored.ready;
   expect(restored.get("one").payload).toEqual(payload("before debounce"));
 });
@@ -127,14 +127,14 @@ test("failed persistence never sends a payload or silently discards it", async (
 
 test("a crash journal wins over stale IndexedDB retry metadata at the same sequence", async () => {
   const f = setup();
-  const entry = { slug: "one", sequence: 10, payload: payload("keep"), updated: 100, attempts: 0, nextAt: 0, blocked: 0 };
+  const entry = { slug: "one", acard_id: "member-a", base_updated: 10, sequence: 10, payload: payload("keep"), updated: 100, attempts: 0, nextAt: 0, blocked: 0 };
   const q = f.api.create({ ...f.options, storage: { read: () => [entry, { ...entry, blocked: 409 }], write: () => {} } });
   await q.ready;
   expect(q.get("one").blocked).toBe(409);
   expect(await q.attempt("one", true)).toBeNull();
 });
 
-test("new drafts supersede permanent failures and different pages flush independently", async () => {
+test("explicitly rebased drafts supersede permanent failures and different pages flush independently", async () => {
   const sent: string[] = [];
   const f = setup(async (slug, body) => {
     sent.push(slug + ":" + body.blocks[0].text);
@@ -144,7 +144,7 @@ test("new drafts supersede permanent failures and different pages flush independ
   await q.ready;
   q.enqueue("one", payload("blocked"));
   await q.flush(true);
-  q.enqueue("one", payload("fixed"));
+  q.enqueue("one", { ...payload("fixed"), base_updated: 11 });
   q.enqueue("two", payload("other"));
   await q.flush(true);
   expect(sent).toEqual(["one:blocked", "one:fixed", "two:other"]);
@@ -157,54 +157,101 @@ function wired(online: boolean) {
   const listeners: Record<string, ((v?: any) => void)[]> = {};
   const status: any = { textContent: "" };
   let send!: (r: Response | Error) => void;
-  const timers: (() => void)[] = [];
+  let started: (() => void) | undefined;
+  let scheduled: (() => void) | undefined;
+  const statusWaits = new Map<string, () => void>();
+  const timers = new Map<number, () => void>();
+  let timerId = 0;
+  let clock = Date.now();
   const editor: any = {
-    slug: "one", state: { title: "Queue", blocks: [], saving: false, dirty: false },
-    transport: () => new Promise<Response>((ok, bad) => { send = (r) => (r instanceof Error ? bad(r) : ok(r)); }),
-    setSave: (text: string) => { status.textContent = text; statuses.push(text); },
+    slug: "one", state: { title: "Queue", blocks: [], saving: false, dirty: false, baseUpdated: 10 },
+    transport: () => new Promise<Response>((ok, bad) => { send = (r) => (r instanceof Error ? bad(r) : ok(r)); started?.(); }),
+    setSave: (text: string) => { status.textContent = text; statuses.push(text); statusWaits.get(text)?.(); statusWaits.delete(text); },
     on: (name: string, fn: any) => { (listeners[name] ||= []).push(fn); },
     api: async () => null, render: () => {},
   };
   const values = new Map<string, string>();
   const localStorage = { get length() { return values.size; }, key: (i: number) => [...values.keys()][i], getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { values.set(k, v); } };
   const window: any = { AcardEditor: editor, localStorage, indexedDB: undefined, addEventListener: (name: string, fn: any) => { (listeners["window:" + name] ||= []).push(fn); } };
-  const context: any = { window, Promise, Map, Date, JSON, Math, Response, Object, Array,
-    navigator: { onLine: online }, document: { getElementById: () => status, addEventListener() {} },
+  const context: any = { window, Promise, Map, Date: { now: () => clock }, JSON, Math, Response, Object, Array,
+    navigator: { onLine: online }, document: { querySelector: () => ({ content: "member-a" }), getElementById: () => status, addEventListener() {} },
     MutationObserver: class { observe() {} },
-    setTimeout: (fn: () => void) => { timers.push(fn); return 1; }, clearTimeout() {} };
+    setTimeout: (fn: () => void) => { timers.set(++timerId, fn); scheduled?.(); return timerId; }, clearTimeout: (id: number) => { timers.delete(id); } };
   runInNewContext(source.replace("(typeof window === \"undefined\" ? globalThis : window)", "(window)"), context);
-  const emit = (name: string, value?: any) => (listeners[name] || []).forEach((fn) => fn(value));
-  return { editor, statuses, status, emit, respond: (r: Response | Error) => send(r), tick: () => timers.splice(0).forEach((fn) => fn()) };
+  const emit = (name: string, value?: any) => Promise.all((listeners[name] || []).map((fn) => fn(value)));
+  const nextSend = () => new Promise<void>(resolve => { started = resolve; });
+  const nextStatus = (text: string) => new Promise<void>(resolve => { statusWaits.set(text, resolve); });
+  const nextTimer = () => new Promise<void>(resolve => { scheduled = resolve; });
+  return { editor, statuses, status, emit, nextSend, nextStatus, nextTimer, respond: (r: Response | Error) => send(r), tick: () => { clock += 30000; const due = [...timers.values()]; timers.clear(); due.forEach(fn => fn()); } };
 }
-const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
 test("status: online failure says it is resending, never offline; only a server OK shows saved", async () => {
   const w = wired(true);
-  w.emit("ready", w.editor);
-  await settle();
-  w.emit("change", payload("draft"));
-  await settle();
+  await w.emit("ready", w.editor);
+  await w.emit("change", payload("draft"));
   expect(w.status.textContent).toBe("저장 중…");
+  const first = w.nextSend();
   w.tick();
-  await settle();
+  await first;
   expect(w.status.textContent).not.toMatch(/저장됨|오프라인/);
+  const retrying = w.nextStatus("저장 안 된 변경을 다시 보내는 중");
+  const retryScheduled = w.nextTimer();
   w.respond(new TypeError("network"));
-  await settle();
+  await retrying;
+  await retryScheduled;
   expect(w.status.textContent).not.toMatch(/저장됨|오프라인/);
   expect(w.status.textContent).toMatch(/다시 보내는/);
-  w.emit("window:online");
-  await settle();
-  w.respond(new Response("{}"));
-  await settle();
+  const retry = w.nextSend();
+  await w.emit("window:online");
+  w.tick();
+  await retry;
+  const saved = w.nextStatus("저장됨");
+  w.respond(Response.json({ updated: 11 }));
+  await saved;
   expect(w.status.textContent).toBe("저장됨");
   expect(w.statuses.filter((s) => /오프라인/.test(s))).toEqual([]);
 });
 
 test("status: really offline shows the queued count", async () => {
   const w = wired(false);
-  w.emit("ready", w.editor);
-  await settle();
-  w.emit("change", payload("draft"));
-  await settle();
+  await w.emit("ready", w.editor);
+  await w.emit("change", payload("draft"));
   expect(w.status.textContent).toBe("오프라인 - 1개 대기 중");
+});
+
+// A localStorage stand-in and an IndexedDB whose open request never answers (another tab holds the database).
+function memoryLocal() {
+  const map = new Map<string, string>();
+  return { get length() { return map.size; }, key: (i: number) => [...map.keys()][i] ?? null, getItem: (k: string) => map.get(k) ?? null, setItem: (k: string, v: string) => { map.set(k, v); }, removeItem: (k: string) => { map.delete(k); } };
+}
+test("a blocked or never-answering IndexedDB open gives up within the step limit and the journal keeps saves", async () => {
+  const f = setup();
+  const local = memoryLocal();
+  local.setItem("acard-save-queue:member-a:one", JSON.stringify({ slug: "one", acard_id: "member-a", base_updated: 10, payload: payload("left over"), sequence: 5, updated: 1, attempts: 0, nextAt: 0, blocked: 0 }));
+  const hung = { open: () => ({}), deleteDatabase: () => ({}) };
+  const started = Date.now();
+  const store = f.api.storage(local, hung, "member-a");
+  const rows = await store.read();
+  expect(Date.now() - started).toBeLessThan(3000);
+  expect(rows.map((r: any) => r.payload.blocks[0].text)).toEqual(["left over"]);
+  await store.write({ slug: "two", acard_id: "member-a", base_updated: 10, payload: payload("new"), sequence: 6 });
+  expect(JSON.parse(local.getItem("acard-save-queue:member-a:two")!).payload.blocks[0].text).toBe("new");
+});
+
+test("a database left at a newer version (VersionError) is opened at its own version instead of being skipped", async () => {
+  const f = setup();
+  const versions: (number | undefined)[] = [];
+  const rows = [{ slug: "kept", acard_id: "member-a", base_updated: 10, payload: payload("in idb"), sequence: 9 }];
+  const db = { version: 7, objectStoreNames: { contains: () => true }, close() {}, transaction: () => ({ objectStore: () => ({ getAll: () => { const r: any = {}; queueMicrotask(() => { r.result = rows; r.onsuccess(); }); return r; } }) }) };
+  const indexed = {
+    open: (_: string, version?: number) => {
+      versions.push(version);
+      const r: any = {};
+      queueMicrotask(() => { if (version === 1) r.onerror({ preventDefault() {} }); else { r.result = db; r.onsuccess(); } });
+      return r;
+    },
+  };
+  const store = f.api.storage(memoryLocal(), indexed, "member-a");
+  expect((await store.read()).map((r: any) => r.slug)).toEqual(["kept"]);
+  expect(versions).toEqual([1, undefined]);
 });

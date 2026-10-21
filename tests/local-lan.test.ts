@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { guard, passwordGate } from "../local/server";
+import { guard, localEnv, passwordGate } from "../local/server";
 
 const req = (url: string, init: RequestInit & { host?: string } = {}) =>
   new Request(url, { ...init, headers: { host: init.host ?? new URL(url).host, ...(init.headers as Record<string, string>) } });
@@ -19,6 +19,25 @@ test("guard allows configured LAN names and rejects others", () => {
   expect(guard(crossSite, 47811, ["192.168.0.10"])?.status).toBe(403);
   const sameSite = req("http://192.168.0.10:47811/api/pages", { method: "POST", headers: { origin: "http://192.168.0.10:47811" } });
   expect(guard(sameSite, 47811, ["192.168.0.10"])).toBeNull();
+});
+
+// The local workspace store stands in for WorkspaceStore, so it must answer every call gate/tenancy.ts makes (pipe()
+// since 44b4cfe: the first page request crashed the local server with "stub.pipe is not a function").
+test("local workspace store answers statements, batches and failures through the tenancy adapter", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "lan-store-"));
+  const local = localEnv({ dataDir: dir, appDir: dir, port: 47811 });
+  try {
+    const db = (local.env as any).DB;
+    await db.prepare("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v TEXT)").run();
+    const [one, two] = await Promise.all([db.prepare("INSERT INTO t (v) VALUES (?)").bind("a").run(), db.prepare("INSERT INTO t (v) VALUES (?)").bind("b").run()]);
+    expect([one.meta.changes, two.meta.changes]).toEqual([1, 1]);
+    await db.batch([db.prepare("INSERT INTO t (v) VALUES (?)").bind("c")]);
+    expect(await db.prepare("SELECT count(*) AS n FROM t").first()).toEqual({ n: 3 });
+    await expect(db.prepare("SELECT * FROM missing").all()).rejects.toThrow(/missing/);
+  } finally {
+    local.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("password gate: login sets a cookie that unlocks pages, wrong password and forged cookies do not", async () => {

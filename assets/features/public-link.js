@@ -10,6 +10,7 @@
       document.getElementById("more-menu").hidden = true;
       editor.lazy("share-dialog").then(function (share) { share.open(editor.slug); }).catch(function () { button.textContent = "불러오지 못했어요. 새로고침해 주세요."; });
     };
-    document.getElementById("more-menu").prepend(button);
+    var menu = document.getElementById("more-menu"), line = menu.querySelector(".menu-width + hr");
+    if (line) line.after(button); else menu.prepend(button);
   });
 })();

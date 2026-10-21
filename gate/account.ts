@@ -36,12 +36,14 @@ const err = (status: number, code: string, message: string) => json({ error: cod
 export function withCookies(res: Response, list: string[]): Response {
   if (!list.length || res.status === 101) return res;
   const out = new Response(res.body, res);
+  if (list.some(value => value.startsWith(ACCESS_COOKIE + "="))) out.headers.set("clear-site-data", '"cache"');
   for (const value of list) out.headers.append("set-cookie", value);
   return out;
 }
 
 export const redirect = (to: string, list: string[] = []) => {
   const headers = new Headers({ location: to, "cache-control": "no-store" });
+  if (list.some(value => value.startsWith(ACCESS_COOKIE + "="))) headers.set("clear-site-data", '"cache"');
   for (const value of list) headers.append("set-cookie", value);
   return new Response(null, { status: 303, headers });
 };

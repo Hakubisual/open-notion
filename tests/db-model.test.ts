@@ -20,6 +20,8 @@ import {
   normaliseTemplate,
   normaliseView,
   optionById,
+  richValue,
+  filterOperatorsFor,
   sortRows,
   visibleProperties,
 } from "../db-model.js";
@@ -43,6 +45,15 @@ function row(id, values, ord) {
 const values = (row) => row.props;
 
 describe("normaliseProperty", () => {
+  test("file values retain validated upload geometry through persistence", () => {
+    const file = { name: "photo", url: "/media/0123456789abcdef", type: "image/png" };
+    expect(normaliseCellValue({ type: "files" }, [{ ...file, width: 640, height: 480 }])).toEqual([{ ...file, iw: 640, ih: 480 }]);
+    expect(normaliseCellValue({ type: "files" }, [{ ...file, iw: 320, ih: 240 }])).toEqual([{ ...file, iw: 320, ih: 240 }]);
+    for (const dimensions of [{ width: 0, height: 480 }, { iw: Infinity, ih: 480 }, { iw: "640", ih: 480 }, {}]) {
+      expect(normaliseCellValue({ type: "files" }, [{ ...file, ...dimensions }])).toEqual([file]);
+    }
+  });
+
   test("모르는 종류는 텍스트로 떨어뜨린다", () => {
     const prop = normaliseProperty({ id: "p1", name: "메모", type: "wat" }, 0);
     expect(prop.type).toBe("text");
@@ -190,6 +201,19 @@ describe("displayValue", () => {
     const prop = normaliseProperty(PROGRESS, 0);
     expect(displayValue(prop, 0.5)).toBe("50%");
   });
+
+  test("수식 서식 값은 평문으로 보이고, 비었는지·정렬·필터는 그 글자를 본다", () => {
+    const prop = normaliseProperty({ id: "f", name: "수식", type: "formula" }, 0);
+    const late = { __rich: [{ text: "지남", color: "red", b: true }] };
+    expect(displayValue(prop, late)).toBe("지남");
+    expect(richValue(late)).toEqual([{ text: "지남", classes: ["fx-red", "fx-b"] }]);
+    expect(richValue("남음")).toEqual([{ text: "남음", classes: [] }]);
+    expect(isEmptyValue(prop, late)).toBe(false);
+    expect(isEmptyValue(prop, { __rich: [] })).toBe(true);
+    expect(matchesFilter([prop], { f: late }, { property: "f", operator: "contains", value: "지" })).toBe(true);
+    const rows = [{ id: "1", v: { f: "나" } }, { id: "2", v: { f: late } }];
+    expect(sortRows([prop], rows, [{ property: "f" }], (r: any) => r.v).map((r: any) => r.id)).toEqual(["1", "2"]);
+  });
 });
 
 describe("matchesFilter", () => {
@@ -225,6 +249,21 @@ describe("matchesFilter", () => {
 
   test("조건이 없으면 모두 통과", () => {
     expect(matchesFilter(list, {}, null)).toBe(true);
+  });
+
+  test("상대 날짜 is_within은 서울 날짜로 오늘 기준 범위를 본다", () => {
+    const dates = props({ id: "due", name: "마감", type: "date" });
+    const now = Date.UTC(2026, 9, 31, 15, 30); // 2026-11-01 00:30 in Seoul
+    const hit = (start: any, relative: string) => matchesFilter(dates, { due: start === null ? null : { start, end: null } }, { property: "due", operator: "is_within", value: { relative } }, { now });
+    expect(["2026-10-31", "2026-11-01", "2026-11-30", "2026-12-01"].map((d) => hit(d, "this_month"))).toEqual([false, true, true, false]);
+    expect(["2026-11-01T00:10", "2026-10-31T23:59"].map((d) => hit(d, "today"))).toEqual([true, false]);
+    expect(["2026-10-25", "2026-10-26", "2026-11-01", "2026-11-02"].map((d) => hit(d, "this_week"))).toEqual([false, true, true, false]);
+    expect(["2025-12-31", "2026-01-01", "2026-12-31"].map((d) => hit(d, "this_year"))).toEqual([false, true, true]);
+    expect(["2026-10-24", "2026-10-25", "2026-11-01", "2026-11-02"].map((d) => hit(d, "past_days:7"))).toEqual([false, true, true, false]);
+    expect(["2026-10-31", "2026-11-01", "2026-11-08", "2026-11-09"].map((d) => hit(d, "next_days:7"))).toEqual([false, true, true, false]);
+    expect(hit(null, "this_month")).toBe(false);
+    expect(hit("2026-11-05", "someday")).toBe(false);
+    expect(filterOperatorsFor("date")).toContain("is_within");
   });
 
   test("날짜는 is_before/is_after", () => {
@@ -407,10 +446,10 @@ describe("normaliseRow 와 normaliseTemplate", () => {
 });
 
 describe("목록 상수", () => {
-  test("속성 종류 17가지가 모두 있다", () => {
+  test("속성 종류 20가지가 모두 있다", () => {
     expect(PROPERTY_TYPE_NAMES).toEqual([
       "title", "text", "number", "select", "multi_select", "status", "date", "checkbox",
-      "url", "email", "phone", "files", "formula", "relation", "rollup", "created_time", "updated_time",
+      "url", "email", "phone", "files", "formula", "relation", "person", "rollup", "created_time", "updated_time", "unique_id", "button",
     ]);
   });
 

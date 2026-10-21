@@ -49,12 +49,12 @@ describe("markdownToBlocks: 미디어·레이아웃 블록", () => {
   });
 
   test(":::cols 는 --- 로 열을 나누고 2~3열로 묶는다", () => {
+    // notion-parity C13: the columns hold blocks - each line is a paragraph in its column.
     const blocks = markdownToBlocks(":::cols\n첫째\n---\n둘째\n---\n셋째\n---\n넷째\n:::");
-    expect(blocks).toHaveLength(1);
-    expect(blocks[0].type).toBe("columns");
-    expect(blocks[0].meta.columns).toEqual([
-      { text: "첫째" }, { text: "둘째" }, { text: "셋째\n넷째" },
+    expect(blocks.map((b) => b.type + ":" + (b.indent || 0) + (b.text ? ":" + b.text : ""))).toEqual([
+      "columns:0", "column:1", "paragraph:2:첫째", "column:1", "paragraph:2:둘째", "column:1", "paragraph:2:셋째", "paragraph:2:넷째",
     ]);
+    expect(blocks[0].meta).toEqual({ widths: [0.3333, 0.3333, 0.3333] });
   });
 
   test("=== 구분 표는 간단 표, --- 구분 표는 데이터베이스다", () => {
@@ -82,12 +82,34 @@ describe("renderBlocks: 미디어·레이아웃 블록", () => {
     expect(html).toContain('<video controls preload="metadata" src="/media/clip.mp4">');
   });
 
-  test("임베드는 허용 목록 밖 주소를 iframe 으로 넣지 않는다", () => {
+  test("임베드: 아는 플레이어는 그대로, 그 밖의 https 위젯은 샌드박스 프레임 (notion-parity C11)", () => {
     const ok = parse("- [embed] https://codepen.io/x");
-    expect(ok).toContain("<iframe");
-    const bad = parse("- [embed] https://evil.example/x");
-    expect(bad).not.toContain("<iframe");
-    expect(bad).toContain("여기에 넣을 수 없는 주소예요");
+    expect(ok).toContain('<div class="media16 embed"><iframe src="https://codepen.io/x" loading="lazy" allowfullscreen referrerpolicy="no-referrer"></iframe></div>');
+    expect(ok).not.toContain("sandbox");
+    const SANDBOX = 'sandbox="allow-scripts allow-same-origin allow-popups allow-forms"';
+    for (const url of ["https://s.tradingview.com/widgetembed/?symbol=NASDAQ%3AAAPL", "https://x.github.io/clock/", "https://evil.example/x"]) {
+      const html = renderBlocks([{ id: "e", type: "embed", text: "", meta: { url } }] as any);
+      expect(html).toContain(SANDBOX);
+      expect(html).not.toContain("allow-top-navigation");
+      expect(html).not.toContain("allowfullscreen");
+    }
+  });
+
+  test("임베드는 https 가 아니거나 Acard 자신·IP·내부 주소면 거부한다", () => {
+    for (const url of ["http://a.com", "javascript:alert(1)", "data:text/html,<b>x</b>", "https://notes.example.com/x", "https://www.notes.example.com/x", "https://notes-example.pages.dev/", "https://abc.notes-example.pages.dev/", "https://127.0.0.1/", "https://[::1]/", "https://localhost/", "https://intranet/", "http://youtube.com/embed/x", "not a url"]) {
+      const html = renderBlocks([{ id: "e", type: "embed", text: "", meta: { url } }] as any);
+      expect([url, html.includes("<iframe")]).toEqual([url, false]);
+      expect(html).toContain("여기에 넣을 수 없는 주소예요");
+    }
+  });
+
+  test("임베드 높이는 120~2000px 로 묶고, 없으면 지금처럼 16:9", () => {
+    const at = (height: unknown) => renderBlocks([{ id: "e", type: "embed", text: "", meta: { url: "https://x.github.io/w", height } }] as any);
+    expect(at(480)).toContain('<div class="media16 embed" style="padding-top:0;height:480px">');
+    expect(at(99999)).toContain("height:2000px");
+    expect(at(5)).toContain("height:120px");
+    expect(at("480px; background:url(x)")).toContain('<div class="media16 embed">');
+    expect(at(undefined)).toContain('<div class="media16 embed"><iframe');
   });
 
   test("북마크와 파일 카드를 그린다", () => {
@@ -99,7 +121,7 @@ describe("renderBlocks: 미디어·레이아웃 블록", () => {
 
   test("열 나누기와 간단 표를 그린다", () => {
     const html = parse(":::cols\n가\n---\n나\n:::\n\n| 열1 | 열2 |\n| === | === |\n| 1 | 2 |");
-    expect(html).toContain('<div class="cols cols2">');
+    expect(html).toContain('<div class="cols cols2" style="--cols:0.5fr 0.5fr"><div class="col">');
     expect(html).toContain("<p>가</p>");
     expect(html).toContain('<div class="stable" tabindex="0" role="region"');
     expect(html).toContain('</svg>열1</span></th>');

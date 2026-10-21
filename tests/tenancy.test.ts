@@ -176,6 +176,18 @@ describe("one site, many workspaces", () => {
     expect((await call("GET", "/owner-secret/")).status).toBe(303);
   });
 
+  // The old /connect page was merged into 설정 > 에이전트 연결 (owner pick 2026-10-20); old links must still land there.
+  test("/connect sends signed-in and signed-out people to 설정 > 에이전트 연결", async () => {
+    const cookie = await as(OWNER_UID);
+    for (const [path, to] of [["/connect", "/settings/agents/"], ["/connect/", "/settings/agents/"], ["/connect?from=mail", "/settings/agents/?from=mail"]]) {
+      for (const who of [cookie, undefined]) {
+        const res = await call("GET", path, { cookie: who });
+        expect([path, !!who, res.status, res.headers.get("location")]).toEqual([path, !!who, 301, to]);
+      }
+    }
+    expect((await call("GET", "/settings/agents/")).headers.get("location")).toBe("/login?next=/settings/agents/");
+  });
+
   test("owner signs in with Google session and sees the existing workspace", async () => {
     const cookie = await as(OWNER_UID);
     const tree = await call("GET", "/api/tree", { cookie });
@@ -185,6 +197,49 @@ describe("one site, many workspaces", () => {
     expect(page.text).toContain("zebra");
   });
 
+  // #44: the pooler is out of connections everywhere (even outside the page handlers): the Worker answers 503 with the
+  // retrying page or a retry JSON, never an uncaught exception (Cloudflare 1101).
+  test("a busy database pooler never throws out of the Worker", async () => {
+    const cookie = await as(OWNER_UID);
+    const db = env.DB;
+    const busy = () => { throw Object.assign(new Error("(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15"), { code: "XX000" }); };
+    const stmt: any = { bind: () => stmt, first: busy, all: busy, run: busy, raw: busy };
+    env.DB = { prepare: () => stmt, batch: busy, exec: busy };
+    try {
+      const page = await call("GET", "/owner-secret/", { cookie });
+      expect(page.status).toBe(503);
+      expect(page.text).toContain("잠시 연결이 몰렸어요");
+      expect(page.text).not.toContain("없는 문서");
+      const tree = await call("GET", "/api/tree", { cookie });
+      expect(tree.status).toBe(503);
+      expect(tree.headers.get("retry-after")).toBe("2");
+      expect(tree.data.retry).toBe(true);
+    const agent = await call("GET", "/api/v1/pages", { bearer: "acard_" + "x".repeat(40) });
+    expect(agent.status).toBe(503);
+    } finally {
+      env.DB = db;
+    }
+    expect((await call("GET", "/owner-secret/", { cookie })).status).toBe(200);
+  });
+  // #57: Hyperdrive dropping a pooled socket ("Network connection lost.", "write CONNECTION_CLOSED") was thrown out of the
+  // Worker as Cloudflare 1101 for the owner's first screen and agent calls.
+  test("a dropped database socket never throws out of the Worker", async () => {
+    const cookie = await as(OWNER_UID);
+    const db = env.DB;
+    for (const message of ["Network connection lost.", "write CONNECTION_CLOSED 7fbe.hyperdrive.local:5432"]) {
+      const lost = () => { throw Object.assign(new Error(message), { code: message.startsWith("write") ? "CONNECTION_CLOSED" : undefined }); };
+      const stmt: any = { bind: () => stmt, first: lost, all: lost, run: lost, raw: lost };
+      env.DB = { prepare: () => stmt, batch: lost, exec: lost };
+      try {
+        const agent = await call("GET", "/api/v1/me", { bearer: "acard_" + "x".repeat(40) });
+        expect(agent.status).toBe(503);
+        const tree = await call("GET", "/api/tree", { cookie });
+        expect(tree.status).toBe(503);
+      } finally {
+        env.DB = db;
+      }
+    }
+  });
   test("a new account gets an empty workspace with the same app and can create a page that persists", async () => {
     const cookie = await as(UID_A);
     const tree = await call("GET", "/api/tree", { cookie });
@@ -272,13 +327,13 @@ describe("one site, many workspaces", () => {
   test("only a request carrying the forward secret is treated as notes.example.com", async () => {
     env.FORWARD_SECRET = "fwd-secret";
     try {
-      const google = (secret: string) => worker.fetch(new Request("https://dori-notes.pages.dev/api/auth/google", { headers: { "x-acard-forward": secret, "x-acard-host": "notes.example.com" }, redirect: "manual" }), env, {});
-      const viaWorker = await worker.fetch(new Request("https://dori-notes.pages.dev/login", { headers: { "x-acard-forward": "fwd-secret", "x-acard-host": "notes.example.com", accept: "text/html" } }), env, {});
+      const google = (secret: string) => worker.fetch(new Request("https://notes-example.pages.dev/api/auth/google", { headers: { "x-acard-forward": secret, "x-acard-host": "notes.example.com" }, redirect: "manual" }), env, {});
+      const viaWorker = await worker.fetch(new Request("https://notes-example.pages.dev/login", { headers: { "x-acard-forward": "fwd-secret", "x-acard-host": "notes.example.com", accept: "text/html" } }), env, {});
       expect(viaWorker.status).toBe(200);
       const trusted = decodeURIComponent((await google("fwd-secret")).headers.get("location") ?? "");
       expect(trusted).toContain("redirect_to=https://notes.example.com/api/auth/callback");
       const forged = decodeURIComponent((await google("wrong")).headers.get("location") ?? "");
-      expect(forged).toContain("redirect_to=https://dori-notes.pages.dev/api/auth/callback");
+      expect(forged).toContain("redirect_to=https://notes-example.pages.dev/api/auth/callback");
     } finally { delete env.FORWARD_SECRET; }
   });
 
@@ -293,5 +348,89 @@ describe("one site, many workspaces", () => {
     expect([...env.MEDIA.map.keys()].some((k: string) => k.startsWith("ws/" + ws))).toBe(false);
     expect((await call("POST", "/api/account/delete", { cookie: await as(OWNER_UID) })).status).toBe(403);
     expect(owner.query("SELECT count(*) AS n FROM pages WHERE slug = 'owner-secret'").get()).toEqual({ n: 1 });
+  });
+});
+
+test("member share URLs reach the share route with their page, media and HTML-block frame paths", async () => {
+  const { MEMBER_SHARE } = await import("../gate/tenancy");
+  const ws = hex(UID_A), tok = "A".repeat(43);
+  for (const rest of ["", "/", "/sub/", "/media/0123456789abcdef", "/frame/bpqhtml0", "/sub/frame/b1"]) expect(MEMBER_SHARE.exec("/p/m" + ws + "/" + tok + rest)?.[2]).toBe("/" + tok + rest);
+  for (const bad of ["/a/b/c", "/media/xyz", "/sub/frame/b1/x"]) expect(MEMBER_SHARE.test("/p/m" + ws + "/" + tok + bad)).toBe(false);
+});
+
+describe("repeating templates run per workspace (notion-parity C5)", () => {
+  const RA = "44444444-4444-4444-8444-444444444444";
+  const RB = "55555555-5555-4555-8555-555555555555";
+  const tickCall = (body: unknown, secret?: string) => worker.fetch(new Request("https://notes.example.com/__recurring/tick", { method: "POST", headers: { "content-type": "application/json", ...(secret === undefined ? {} : { "x-recurring-tick": secret }) }, body: JSON.stringify(body) }), env, {});
+
+  async function memberDiary(uid: string) {
+    const cookie = await as(uid);
+    const db = (await call("POST", "/api/db", { cookie, body: { title: "반복 " + uid.slice(0, 4) } })).data;
+    const base = "/api/db/" + encodeURIComponent(db.slug);
+    const tpl = (await call("POST", base + "/templates", { cookie, body: { name: "오늘", props: {}, blocks: [] } })).data.template;
+    const saved = (await call("PATCH", base + "/templates/" + encodeURIComponent(tpl.id), { cookie, body: { recurrence: { freq: "day", hour: 7, minute: 0, tz: "Asia/Seoul" } } })).data.template;
+    return { cookie, base, tpl: saved };
+  }
+
+  test("(e) without the secret header the tick is 404 like the agent tick and changes nothing", async () => {
+    env.RECURRING_TICK_SECRET = "tick-secret";
+    const { cookie, base, tpl } = await memberDiary(RA);
+    const due = tpl.recurrence.next_run + 1000;
+    expect((await tickCall({ ws: hex(RA), now: due })).status).toBe(404);
+    expect((await tickCall({ ws: hex(RA), now: due }, "wrong")).status).toBe(404);
+    expect((await call("GET", base, { cookie })).data.rows.length).toBe(0);
+    expect((await tickCall({ ws: "../owner", now: due }, "tick-secret")).status).toBe(400);
+    const agent = await worker.fetch(new Request("https://notes.example.com/__agent/tick", { method: "POST", body: "{}" }), env, {});
+    expect(agent.status).toBe(404);
+  });
+
+  test("(f) a tick for workspace A makes A's row and never B's", async () => {
+    env.RECURRING_TICK_SECRET = "tick-secret";
+    const a = await memberDiary(RA);
+    const b = await memberDiary(RB);
+    const due = Math.max(a.tpl.recurrence.next_run, b.tpl.recurrence.next_run) + 1000;
+    const before = (await call("GET", a.base, { cookie: a.cookie })).data.rows.length;
+    const res = await tickCall({ ws: hex(RA), now: due }, "tick-secret");
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out.created.length).toBeGreaterThanOrEqual(1);
+    expect((await call("GET", a.base, { cookie: a.cookie })).data.rows.length).toBe(before + 1);
+    expect((await call("GET", b.base, { cookie: b.cookie })).data.rows.length).toBe(0);
+    const ownerRows = owner.query("SELECT count(*) AS n FROM sqlite_master WHERE name = 'db_template_runs'").get() as any;
+    if (ownerRows.n) expect(owner.query("SELECT count(*) AS n FROM db_template_runs").get()).toEqual({ n: 0 });
+  });
+
+  test("(g) saving a repeat arms the member store's alarm; the alarm calls the site and re-arms; the last repeat off clears it", async () => {
+    env.RECURRING_TICK_SECRET = "tick-secret";
+    const uid = "33333333-3333-4333-8333-333333333333";
+    const { cookie, base, tpl } = await memberDiary(uid);
+    const store = stores.get("ws:" + hex(uid));
+    const alarms: (number | null)[] = [];
+    const storage = store.ctx.storage;
+    const kv = new Map<string, unknown>();
+    storage.setAlarm = async (at: number) => { alarms.push(at); };
+    storage.deleteAlarm = async () => { alarms.push(null); };
+    storage.put = async (k: string, v: unknown) => { kv.set(k, v); };
+    storage.get = async (k: string) => kv.get(k);
+    await call("PATCH", base + "/templates/" + encodeURIComponent(tpl.id), { cookie, body: { recurrence: { freq: "day", hour: 7, minute: 0, tz: "Asia/Seoul" } } });
+    const armed = alarms.at(-1)!;
+    expect(armed).toBe((await call("GET", base, { cookie })).data.templates[0].recurrence.next_run);
+    expect(kv.get("recurringWs")).toBe(hex(uid));
+    // The alarm posts to the site; route that fetch into this worker with a clock past the run.
+    store.env = { SITE_URL: "https://notes.example.com", RECURRING_TICK_SECRET: "tick-secret" };
+    const realFetchHere = globalThis.fetch;
+    globalThis.fetch = (async (input: any, init?: any) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === "https://notes.example.com/__recurring/tick") {
+        const body = JSON.parse(init.body);
+        return worker.fetch(new Request(url, { method: "POST", headers: init.headers, body: JSON.stringify({ ...body, now: armed + 1000 }) }), env, {});
+      }
+      return realFetchHere(input, init);
+    }) as typeof fetch;
+    try { await store.alarm(); } finally { globalThis.fetch = realFetchHere; }
+    expect((await call("GET", base, { cookie })).data.rows.length).toBe(1);
+    expect(alarms.at(-1)).toBe(armed + 24 * 3600000);
+    await call("PATCH", base + "/templates/" + encodeURIComponent(tpl.id), { cookie, body: { recurrence: null } });
+    expect(alarms.at(-1)).toBeNull();
   });
 });

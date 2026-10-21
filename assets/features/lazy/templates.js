@@ -38,7 +38,7 @@
       if (!pendingPage) pendingPage = await editor.api("/pages", { method: "POST", body: JSON.stringify({ title: template ? template.name : "제목 없음" }) });
       if (template) {
         if (template.personal) await editor.api("/page/" + encodeURIComponent(pendingPage.slug) + "/from-template", { method: "POST", body: JSON.stringify({ templateId: template.id }) });
-        else await editor.api("/page/" + encodeURIComponent(pendingPage.slug), { method: "PUT", body: JSON.stringify({ title: template.name, blocks: template.blocks }) });
+        else await editor.api("/page/" + encodeURIComponent(pendingPage.slug), { method: "PUT", body: JSON.stringify({ title: template.name, blocks: template.blocks, base_updated: pendingPage.updated }) });
       }
       location.href = "/edit/" + encodeURIComponent(pendingPage.slug) + "/" + (template ? "" : "?new");
     } catch (error) {

@@ -86,6 +86,24 @@ describe("formula and numbers", () => {
     expect(html.dbCellHtml(f, "", {})).toBe("");
   });
 
+  test("a style() result draws fx-* spans with its text escaped", () => {
+    expect(html.dbCellHtml(f, { __rich: [{ text: "지남", color: "red", b: true }] }, {})).toBe('<span class="fx-red fx-b">지남</span>');
+    expect(html.dbCellHtml(f, { __rich: [{ text: "a " }, { text: "<script>", bg: "blue" }] }, {})).toBe('a <span class="fx-blue_background">&lt;script&gt;</span>');
+    expect(html.dbCellHtml(f, { __rich: [{ text: "x", color: "chartreuse" }] }, {})).toBe("x");
+  });
+
+  test("a formula error shows as a grey escaped message in its cell; the rest of the table still draws", () => {
+    const props = [{ id: "t", name: "이름", type: "title" }, { id: "f", name: "수식", type: "formula", config: {} }, { id: "n", name: "점수", type: "number", config: {} }];
+    const rows = [
+      { id: "r1", values: { t: "하나", f: null, n: 3 }, errors: { f: "수식이 <너무> 깁니다" } },
+      { id: "r2", values: { t: "둘", f: 7, n: 4 }, errors: {} },
+    ];
+    const out = html.databaseTableHtml(props, rows, { config: {} }, { now: NOW });
+    expect(out).toContain('<span class="fxerror" title="수식이 &lt;너무&gt; 깁니다">수식이 &lt;너무&gt; 깁니다</span>');
+    expect(out).toContain("둘");
+    expect(out.match(/<tr/g)!.length).toBeGreaterThanOrEqual(3);
+  });
+
   test("bar scaling follows config.max, percent uses 1, number uses 100", () => {
     const n = (config: any, value: number) => html.dbNumberCell({ id: "n", name: "n", type: "number", config: Object.assign({ display: "bar" }, config) }, value);
     expect(n({ max: 200 }, 50)).toContain("width:25%");

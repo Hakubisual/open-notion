@@ -1,6 +1,7 @@
-// Language for the hosted site UI copy. The first visit follows the Cloudflare country only (KR -> ko, CN -> zh, everything
-// else -> en, as the owner asked; Accept-Language is ignored). A choice made with ?lang= is kept in the acard_lang
-// cookie and wins over the country. Country changes language only, never content, prices or redirects.
+// Language for the hosted site UI copy. English is the default for every first visit, whatever the country (
+// Accept-Language and CF-IPCountry are ignored). A choice made with ?lang= or the
+// language menu is kept in the acard_lang cookie (signed-in users also get it back from profiles.lang). A signed-in user
+// who never chose (no cookie, no profiles.lang) and whose browser asks for Korean first gets Korean (beta #39, issue #59).
 import en from "../src/i18n/en.json";
 import ko from "../src/i18n/ko.json";
 import zh from "../src/i18n/zh.json";
@@ -13,20 +14,30 @@ const HTML_LANG: Record<Lang, string> = { en: "en", ko: "ko", zh: "zh-CN" };
 
 export const isLang = (v: unknown): v is Lang => v === "en" || v === "ko" || v === "zh";
 
-export function langForCountry(country: string | null | undefined): Lang {
-  const c = (country ?? "").toUpperCase();
-  if (c === "KR") return "ko";
-  if (c === "CN") return "zh";
-  return "en";
-}
-
 function cookieLang(request: Request): Lang | null {
   const m = /(?:^|;\s*)acard_lang=([a-z]{2})/.exec(request.headers.get("cookie") ?? "");
   return m && isLang(m[1]) ? m[1] : null;
 }
 
 export function pickLang(request: Request): Lang {
-  return cookieLang(request) ?? langForCountry(request.headers.get("cf-ipcountry"));
+  return cookieLang(request) ?? "en";
+}
+
+// Signed-in pages: the saved choice first, then a Korean browser, then English. Landing and sign-in pages keep pickLang.
+export function pickUserLang(request: Request): Lang {
+  return cookieLang(request) ?? browserLang(request) ?? "en";
+}
+
+// The browser's first language (navigator.language is the first Accept-Language entry): "ko" when it is Korean.
+export function browserLang(request: Request): Lang | null {
+  let best = "", bestQ = -1;
+  for (const part of (request.headers.get("accept-language") ?? "").split(",")) {
+    const [tag, ...params] = part.trim().toLowerCase().split(";");
+    const q = params.map((p) => /^\s*q=([\d.]+)\s*$/.exec(p)).find(Boolean);
+    const weight = q ? Number(q[1]) : 1;
+    if (tag && tag !== "*" && weight > bestQ) { best = tag; bestQ = weight; }
+  }
+  return best === "ko" || best.startsWith("ko-") ? "ko" : null;
 }
 
 export const langCookie = (lang: Lang) => `${LANG_COOKIE}=${lang}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`;
@@ -59,7 +70,7 @@ export function translateHtml(res: Response, lang: Lang): Response {
   for (const [k, v] of Object.entries(dict)) if (k.startsWith("js.")) js[k] = v;
   const headers = new Headers(res.headers);
   headers.set("content-language", HTML_LANG[lang]);
-  headers.set("vary", "Cookie, CF-IPCountry");
+  headers.set("vary", "Cookie");
   const out = new HTMLRewriter()
     .on("html", { element(el) { el.setAttribute("lang", HTML_LANG[lang]); } })
     .on("head", { element(el) { el.append(`<script>window.ACARD_LANG=${JSON.stringify(lang)};window.ACARD_T=${JSON.stringify(js).replace(/</g, "\\u003c")}</script>`, { html: true }); } })
@@ -120,7 +131,7 @@ export function injectAppLang(res: Response, lang: Lang): Response {
   if (lang === "ko" || !(res.headers.get("content-type") ?? "").includes("text/html")) return res;
   const headers = new Headers(res.headers);
   headers.set("content-language", HTML_LANG[lang]);
-  headers.set("vary", "Cookie, CF-IPCountry");
+  headers.set("vary", "Cookie");
   return new HTMLRewriter()
     .on("html", { element(el) { el.setAttribute("lang", HTML_LANG[lang]); } })
     .on("head", { element(el) { el.prepend(`<script>window.ACARD_LANG=${JSON.stringify(lang)}</script><script src="/i18n-app.js"></script>`, { html: true }); } })

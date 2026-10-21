@@ -52,6 +52,13 @@ async function call(method: string, path: string, options: { token?: string; bod
   return { status: response.status, data, headers: response.headers };
 }
 
+async function gateCookie() {
+  const expires = String(Math.floor(Date.now() / 1000) + 3600);
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("secret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = [...new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(expires)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return "dn_auth=" + expires + "." + mac;
+}
+
 async function token(scopes: string[], name = "Claude Code") {
   return (await createAgentToken(db, { name, scopes })).token;
 }
@@ -81,6 +88,24 @@ describe("acard-agents migration", () => {
     const runtimeOnly = new Database(":memory:");
     await ensureAgentSchema(d1(runtimeOnly));
     expect(tables(fresh)).toEqual(tables(runtimeOnly));
+  });
+});
+
+// Owner pick 2026-10-20: the developer-facing p50/p95 table sits under a closed "고급" and is fetched only when opened.
+describe("settings > agent connections", () => {
+  test("the response-time table is folded under a closed 고급 and not loaded until it opens", () => {
+    const html = read("assets/agents.html");
+    const details = /<details\b([^>]*)>([\s\S]*?)<\/details>/.exec(html);
+    expect(details).not.toBeNull();
+    expect(details![1]).not.toMatch(/\bopen\b/);
+    expect(details![2]).toMatch(/<summary[^>]*>고급<\/summary>/);
+    expect(details![2]).toContain('id="latency"');
+    expect(html.replace(details![0], "")).not.toContain("latency");
+    const js = read("assets/agents.js");
+    const toggle = js.indexOf('addEventListener("toggle"');
+    expect(toggle).toBeGreaterThan(0);
+    expect(js.match(/loadLatency\(\);/g)?.length).toBe(1);
+    expect(js.indexOf("loadLatency();")).toBeGreaterThan(toggle);
   });
 });
 
@@ -146,6 +171,20 @@ describe("markdown pages through /api/v1", () => {
     expect(history.c).toBe(1);
   });
 
+  test("block style round trips through the page API with acard_meta: 1, and stays text without it (notion-parity)", async () => {
+    const writer = await token(["read", "write"]);
+    const md = '---\ntitle: 스타일\nacard_meta: 1\n---\n> [!note] 메모\n<!--acard {"color":"yellow_background","icon":"🔥"}-->\n\n## 접는 제목\n<!--acard {"toggle":true,"open":false}-->\n\n  안쪽\n\n- [embed] https://x.github.io/w\n<!--acard {"height":480}-->\n';
+    const slug = (await call("POST", "/api/v1/pages", { token: writer, markdown: md })).data.slug;
+    const stored = sqlite.query("SELECT type, meta FROM blocks WHERE page = ? ORDER BY ord").all(slug).map((r: any) => [r.type, JSON.parse(r.meta || "null")]);
+    expect(stored).toEqual([["callout", { tone: "note", color: "yellow_background", icon: "🔥" }], ["heading2", { toggle: true, open: false }], ["paragraph", null], ["embed", { url: "https://x.github.io/w", height: 480 }]]);
+    const raw = (await call("GET", "/api/v1/pages/" + slug, { token: writer, accept: "text/markdown" })).data;
+    expect(raw).toContain("acard_meta: 1");
+    expect(raw).toContain('> [!note] 메모\n<!--acard {"color":"yellow_background","icon":"🔥"}-->');
+    expect(raw).toContain('<!--acard {"height":480}-->');
+    const plain = (await call("POST", "/api/v1/pages", { token: writer, markdown: '---\ntitle: 평범\n---\nhello\n<!--acard {"color":"red"}-->\n' })).data.slug;
+    expect(sqlite.query("SELECT text, meta FROM blocks WHERE page = ?").all(plain).map((r: any) => [r.text, r.meta])).toEqual([['hello <!--acard {"color":"red"}-->', null]]);
+  });
+
   test("a stale expectedUpdated is rejected with 409 and keeps the newer content", async () => {
     const writer = await token(["read", "write"]);
     const slug = (await call("POST", "/api/v1/pages", { token: writer, markdown: "---\ntitle: Shared\n---\nv1\n" })).data.slug;
@@ -158,6 +197,47 @@ describe("markdown pages through /api/v1", () => {
     expect(texts).toEqual(["human edit"]);
     const fresh = await call("PUT", "/api/v1/pages/" + slug, { token: writer, body: { markdown: "v3 from agent", expectedUpdated: readAt + 5000 } });
     expect(fresh.status).toBe(200);
+  });
+
+  test("a person's edit after the agent's read survives an update without expectedUpdated (409), and the right version succeeds (#25)", async () => {
+    const writer = await token(["read", "write"]);
+    const slug = (await call("POST", "/api/v1/pages", { token: writer, markdown: "---\ntitle: Plan\n---\none\n\ntwo\n\nthree\n" })).data.slug;
+    // The agent wrote a minute ago, so the person's save below is later without waiting on the clock.
+    sqlite.query("UPDATE pages SET updated = updated - 60000 WHERE slug = ?").run(slug);
+    sqlite.query("UPDATE agent_activity SET created = created - 60000 WHERE page = ?").run(slug);
+    const read = await call("GET", "/api/v1/pages/" + slug, { token: writer });
+    expect(read.headers.get("etag")).toBe('"' + read.data.updated + '"');
+    // The person changes block 3 in the editor (the editor's own save route).
+    const editor = (await worker.fetch(new Request("https://notes.test/api/page/" + slug, { headers: { cookie: await gateCookie() } }), env).then((r) => r.json())) as any;
+    editor.blocks[2].text = "사람이 고친 셋째 문단";
+    if (editor.blocks[2].meta) delete editor.blocks[2].meta.richText;
+    const saved = await worker.fetch(new Request("https://notes.test/api/page/" + slug, { method: "PUT", headers: { cookie: await gateCookie(), "content-type": "application/json" }, body: JSON.stringify({ title: "Plan", blocks: editor.blocks, base_updated: editor.page.updated }) }), env);
+    expect(saved.status).toBe(200);
+    const texts = () => (sqlite.query("SELECT text FROM blocks WHERE page = ? ORDER BY ord").all(slug) as any[]).map((row) => row.text);
+
+    const blind = await call("PUT", "/api/v1/pages/" + slug, { token: writer, body: { markdown: "agent rewrite" } });
+    expect(blind.status).toBe(409);
+    expect(blind.data.error).toContain("다시 읽고");
+    const stale = await call("PUT", "/api/v1/pages/" + slug, { token: writer, body: { markdown: "agent rewrite", expectedUpdated: read.data.updated } });
+    expect(stale.status).toBe(409);
+    const staleIfMatch = await worker.fetch(new Request("https://notes.test/api/v1/pages/" + slug, { method: "PATCH", headers: { authorization: "Bearer " + writer, "content-type": "text/markdown", "if-match": read.headers.get("etag")! }, body: "agent rewrite" }), env);
+    expect(staleIfMatch.status).toBe(409);
+    expect(texts()).toEqual(["one", "two", "사람이 고친 셋째 문단"]);
+
+    const fresh = await call("GET", "/api/v1/pages/" + slug, { token: writer });
+    const merged = await worker.fetch(new Request("https://notes.test/api/v1/pages/" + slug, { method: "PUT", headers: { authorization: "Bearer " + writer, "content-type": "text/markdown", "if-match": fresh.headers.get("etag")! }, body: "one\n\ntwo (agent)\n\n사람이 고친 셋째 문단\n" }), env);
+    expect(merged.status).toBe(200);
+    expect(texts()).toEqual(["one", "two (agent)", "사람이 고친 셋째 문단"]);
+    // The agent wrote last again, so its next blind update is allowed like before.
+    expect((await call("PUT", "/api/v1/pages/" + slug, { token: writer, body: { markdown: "one\n\ntwo (agent 2)\n\n사람이 고친 셋째 문단\n" } })).status).toBe(200);
+  });
+
+  test("a page no agent ever wrote is not overwritten without expectedUpdated", async () => {
+    const writer = await token(["read", "write"]);
+    sqlite.exec("INSERT INTO pages (slug, title, parent, ord, kind, updated, source) VALUES ('mine', 'Mine', NULL, 0, 'note', 5, 'editor')");
+    sqlite.exec("INSERT INTO blocks (page, id, ord, type, text, checked, indent) VALUES ('mine', 'b1', 0, 'paragraph', 'owner text', 0, 0)");
+    expect((await call("PUT", "/api/v1/pages/mine", { token: writer, body: { markdown: "agent text" } })).status).toBe(409);
+    expect((await call("PUT", "/api/v1/pages/mine", { token: writer, body: { markdown: "agent text", expectedUpdated: 5 } })).status).toBe(200);
   });
 
   test("unknown parent is rejected and nothing is created", async () => {
@@ -205,6 +285,46 @@ describe("human page view shows who wrote last", () => {
     sqlite.query("UPDATE pages SET updated = ? WHERE slug = ?").run(Date.now() + 60_000, slug);
     expect(await view(slug)).toBe("오너가 씀");
   });
+
+  // #39: a page address in another form goes to the page; a page that is not in this workspace says why instead of "Not Found".
+  test("the reader follows an NFD or double-encoded address and explains a page that is not in this workspace", async () => {
+    const writer = await token(["read", "write"], "Codex");
+    const slug = (await call("POST", "/api/v1/pages", { token: writer, markdown: "---\ntitle: 샘플프로젝트 구성도\n---\n본문\n" })).data.slug;
+    const open = async (path: string) => worker.fetch(new Request("https://notes.test" + path, { headers: { cookie: await gateCookie(), accept: "text/html" }, redirect: "manual" }), env);
+    for (const path of ["/" + encodeURIComponent(slug.normalize("NFD")) + "/", "/" + encodeURIComponent(encodeURIComponent(slug)) + "/"]) {
+      const moved = await open(path);
+      expect(moved.status).toBe(301);
+      expect(moved.headers.get("location")).toBe("/" + encodeURIComponent(slug) + "/");
+    }
+    const missing = await open("/" + encodeURIComponent("다른-워크스페이스-페이지") + "/");
+    expect(missing.status).toBe(404);
+    const html = await missing.text();
+    expect(html).toContain('data-missing="다른-워크스페이스-페이지"');
+    expect(html).toContain('href="/settings/agents/"');
+  });
+
+  // #44: the database pooler ran out of connections and the reader drew the static "없는 문서예요" 404 for a page that exists.
+  test("a database error on a page opens a retrying 503 page, never a not-found page", async () => {
+    const writer = await token(["read", "write"], "Codex");
+    const slug = (await call("POST", "/api/v1/pages", { token: writer, markdown: "---\ntitle: 모델링 구분표\n---\n본문\n" })).data.slug;
+    const busy = () => { throw Object.assign(new Error("(EMAXCONNSESSION) max clients reached in session mode - max clients are limited to pool_size: 15"), { code: "XX000" }); };
+    const open = async () => worker.fetch(new Request("https://notes.test/" + encodeURIComponent(slug) + "/", { headers: { cookie: await gateCookie(), accept: "text/html" } }), env);
+    const prepare = db.prepare;
+    env.ASSETS = { fetch: async () => new Response("<h1>없는 문서예요</h1>", { status: 404, headers: { "content-type": "text/html" } }) };
+    db.prepare = (sql: string) => (/FROM editor_trash|FROM pages/.test(sql) ? { bind: () => ({ first: busy, all: busy, run: busy }), first: busy, all: busy, run: busy } : prepare(sql)) as any;
+    const down = await open();
+    expect(down.status).toBe(503);
+    expect(down.headers.get("retry-after")).toBeTruthy();
+    const html = await down.text();
+    expect(html).not.toContain("없는 문서");
+    expect(html).not.toContain("없는 페이지");
+    expect(html).toContain("잠시 연결이 몰렸어요");
+    expect(html).toContain("data-retry");
+    db.prepare = prepare;
+    const up = await open();
+    expect(up.status).toBe(200);
+    expect(await up.text()).toContain("모델링 구분표");
+  });
 });
 
 describe("database rows through /api/v1", () => {
@@ -235,5 +355,42 @@ describe("database rows through /api/v1", () => {
 
     const missing = await call("PATCH", "/api/v1/databases/" + database.slug + "/rows/nope", { token: writer, body: { props: { [title.id]: "x" } } });
     expect(missing.status).toBe(404);
+  });
+
+  test("an agent's row update on a two-way relation shows on the other database too (notion-parity-5 C2)", async () => {
+    const writer = await token(["read", "write"], "Codex");
+    const cookie = await gateCookie();
+    const owner = async (method: string, path: string, body?: unknown) => (await worker.fetch(new Request("https://notes.test" + path, { method, headers: { cookie, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }), env)).json();
+    const trips = await owner("POST", "/api/db", { title: "여행" });
+    const plans = await owner("POST", "/api/db", { title: "일정" });
+    const rel = await owner("POST", "/api/db/" + plans.slug + "/properties", { name: "여행", type: "relation", config: { database: trips.slug, synced: true }, pairName: "일정" });
+    const trip = (await owner("POST", "/api/db/" + trips.slug + "/rows", { props: {} })).row;
+    const plan = (await owner("POST", "/api/db/" + plans.slug + "/rows", { props: {} })).row;
+    const updated = await call("PATCH", "/api/v1/databases/" + plans.slug + "/rows/" + plan.id, { token: writer, body: { props: { [rel.property.id]: [trip.id] } } });
+    expect(updated.status).toBe(200);
+    const tripRow = (await owner("GET", "/api/db/" + trips.slug)).rows.find((r: any) => r.id === trip.id);
+    expect(tripRow.props[rel.pair.id]).toEqual([plan.id]);
+    const bad = await call("PATCH", "/api/v1/databases/" + plans.slug + "/rows/" + plan.id, { token: writer, body: { props: { [rel.property.id]: ["no-such-row"] } } });
+    expect(bad.status).toBe(400);
+    expect((await owner("GET", "/api/db/" + trips.slug)).rows.find((r: any) => r.id === trip.id).props[rel.pair.id]).toEqual([plan.id]);
+  });
+
+  test("rows carry formula values, and a style() result is its plain text", async () => {
+    const writer = await token(["read", "write"], "Codex");
+    const expires = String(Math.floor(Date.now() / 1000) + 3600);
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("secret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = [...new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(expires)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const cookie = "dn_auth=" + expires + "." + mac;
+    const post = (path: string, body: unknown) => worker.fetch(new Request("https://notes.test/api" + path, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) }), env).then((r: Response) => r.json());
+    const database = await post("/db", { title: "Deadlines" });
+    const due = (await post("/db/" + database.slug + "/properties", { name: "마감", type: "date" })).property;
+    const state = (await post("/db/" + database.slug + "/properties", { name: "상태", type: "formula", config: { expression: 'if(prop("마감") < now(), "지남".style("red", "b"), "남음")' } })).property;
+    const schema = (await call("GET", "/api/v1/databases/" + database.slug + "/rows", { token: writer })).data;
+    const title = schema.properties.find((p: any) => p.type === "title");
+    await call("POST", "/api/v1/databases/" + database.slug + "/rows", { token: writer, body: { props: { [title.id]: "어제", [due.id]: "2020-01-01" } } });
+    await call("POST", "/api/v1/databases/" + database.slug + "/rows", { token: writer, body: { props: { [title.id]: "내일", [due.id]: "2999-01-01" } } });
+    const rows = (await call("GET", "/api/v1/databases/" + database.slug + "/rows", { token: writer })).data.rows;
+    const byTitle = Object.fromEntries(rows.map((r: any) => [r.title, r.props[state.id]]));
+    expect(byTitle).toEqual({ 어제: "지남", 내일: "남음" });
   });
 });

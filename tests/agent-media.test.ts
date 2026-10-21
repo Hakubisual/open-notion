@@ -5,6 +5,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAcardMcpServer, OperationFailure } from "../agents/mcp-tools";
 import { createAgentToken } from "../agent-api.js";
 import { assembleWorkerSource } from "./assemble-worker";
+import { setup } from "./db-harness";
+import { renderBlocks } from "../block-html.js";
+import { markdownToBlocks, blocksToMarkdown } from "../markdown-blocks";
 
 const source = assembleWorkerSource();
 const writer = { name: "Image agent", via: "token" as const, scopes: ["read", "write"] };
@@ -86,4 +89,28 @@ test("MCP upload_media takes base64 and sanitizes SVG", async () => {
   const bad = await client.callTool({ name: "upload_media", arguments: { page: "pics", data: Buffer.from(SVG).toString("base64") } });
   expect(bad.isError).not.toBe(true);
   expect(kv.size).toBe(2);
+});
+
+test("attach_images refuses missing captions, local paths the server cannot read, and pages without write scope", async () => {
+  const h: any = setup();
+  await h.call("GET", "/api/tree");
+  h.env.MEDIA = { put: async () => {} };
+  const writer = { name: "W", via: "token" as const, scopes: ["read", "write"] };
+  const reader = { name: "R", via: "token" as const, scopes: ["read"] };
+  const run = (op: string, input: unknown, who: any = writer) => h.worker.acardHost.run(h.env, who, op, input);
+  await run("createPage", { slug: "p", title: "p", markdown: "x" });
+  await expect(run("attachImages", { page: "p", images: [{ src: "/media/0123456789abcdef" }] })).rejects.toThrow(/caption/);
+  await expect(run("attachImages", { page: "p", images: [{ src: "C:/Users/me/shot.png", caption: "a" }] })).rejects.toThrow(/CLI/);
+  await expect(run("attachImages", { page: "p", images: [{ src: "pasted:1", caption: "a" }] })).rejects.toThrow(/붙여 넣은/);
+  await expect(run("attachImages", { page: "p", images: [{ data: Buffer.from(PNG).toString("base64"), caption: "a" }] }, reader)).rejects.toThrow();
+  await expect(run("attachVideo", { page: "p", note: "이 PC 에 ffmpeg 가 없어요" })).rejects.toThrow(/ffmpeg/);
+  expect((await run("readBlocks", { page: "p" })).blocks.length).toBe(1);
+});
+
+test("agent image tokens round-trip through markdown and old width-only images stay unchanged", () => {
+  const md = '![a](/media/abc "60 t=1:05 g=v1 agent")\n![b](/media/def "40")\n![c](/media/ghi)';
+  const blocks = markdownToBlocks(md);
+  expect(blocks.map((b: any) => b.meta)).toEqual([{ src: "/media/abc", width: 60, time: "1:05", group: "v1", agent: true }, { src: "/media/def", width: 40 }, { src: "/media/ghi", width: 100 }]);
+  expect(blocksToMarkdown(blocks)).toBe(md.split("\n").join("\n\n"));
+  expect(renderBlocks(markdownToBlocks("![c](/media/ghi)"), {})).not.toContain("<style>");
 });

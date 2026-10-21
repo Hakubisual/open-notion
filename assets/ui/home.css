@@ -6,7 +6,8 @@ body.home-custom #article { display: none; }
 .home-top .ui-btn svg { width: 16px; height: 16px; }
 .ui-card-head h2 a { color: inherit; text-decoration: none; }
 .home-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
-.home-split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.home-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.home-split > * { min-width: 0; }
 .home-recent, .home-agent { box-shadow: none; padding: 14px 16px; }
 .home-agent .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-agent-hint { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 6px; padding: 22px; }
@@ -16,7 +17,8 @@ body.home-custom #article { display: none; }
 .home-agent-hint .ui-btn { margin-top: 6px; }
 .home-empty { color: var(--fg-dim); font-size: var(--fs-14); margin: 6px 0; }
 .home-sub { font-size: var(--fs-13); color: var(--fg-dim); margin: 0 0 6px; font-weight: 600; }
-.home-capture { display: flex; gap: 8px; }
+.home-capture { display: flex; align-items: stretch; gap: 8px; }
+.home-capture .ui-btn { height: auto; min-height: 40px; }
 .home-capture-in { flex: 1; min-width: 0; height: 40px; border: var(--ui-border); border-radius: var(--ui-radius-item); padding: 0 12px; font: inherit; background: var(--surface); color: var(--fg); }
 .home-capture-msg { min-height: 18px; margin: 6px 0; font-size: var(--fs-13); color: var(--fg-dim); }
 .home-offer-sub { margin: -6px 0 12px; color: var(--fg-dim); font-size: var(--fs-14); }
@@ -28,8 +30,8 @@ body.home-custom #article { display: none; }
 @media (max-width: 760px) {
   .home-title { font-size: var(--fs-28); }
   .home-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .home-split, .home-offer-picks { grid-template-columns: 1fr 1fr; }
-  .home-split { grid-template-columns: 1fr; }
+  .home-split, .home-offer-picks { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .home-split { grid-template-columns: minmax(0, 1fr); }
 }
 
 .home-next .ui-list li { gap: 10px; }

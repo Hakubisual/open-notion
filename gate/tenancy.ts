@@ -11,9 +11,12 @@ type Kv = {
   delete(key: string): Promise<void>;
   list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<{ keys: { name: string }[]; list_complete: boolean; cursor?: string }>;
 };
+type PipeItem = { sql: string; params: unknown[]; mode: string } | { batch: { sql: string; params: unknown[] }[] };
+type PipeOut = { ok: true; value: any } | { ok: false; error: string };
 type StoreStub = {
   exec(sql: string, params: unknown[], mode: string): Promise<any>;
   batch(list: { sql: string; params: unknown[] }[]): Promise<any[]>;
+  pipe(items: PipeItem[]): Promise<PipeOut[]>;
   wipe(): Promise<unknown>;
   stats(): Promise<Record<string, number>>;
   hit(key: string, limit: number, period: number): Promise<boolean>;
@@ -45,22 +48,73 @@ export function storeFor(env: TenancyEnv, ws: string): StoreStub {
   return env.WORKSPACE.get(env.WORKSPACE.idFromName("ws:" + ws));
 }
 
+// Every call to the workspace store is a network round trip (5-60+ ms depending on where the Worker and the store run),
+// so a request costs (round trips x that delay). The adapter keeps that number small:
+// - statements started in the same tick (Promise.all) travel in one pipe() call;
+// - schema setup (CREATE ... IF NOT EXISTS, ALTER ... ADD COLUMN) is answered at once and sent ahead of the next real
+//   statement for this store, so a fresh isolate no longer pays ~30 serial round trips before its first read.
+const DDL = /^\s*(?:create\s+(?:unique\s+)?(?:virtual\s+)?(?:table|index|trigger)\s+if\s+not\s+exists|drop\s+(?:trigger|index)\s+if\s+exists|alter\s+table\s+\S+\s+add\s+column)\b/i;
+const DONE = { results: [], success: true, meta: { changes: 0 } };
+const pendingDdl = new Map<string, PipeItem[]>();
+const ddlInFlight = new Map<string, Promise<unknown>>();
+
 export function d1Adapter(stub: StoreStub, key: string) {
+  let queue: { item: PipeItem; resolve(value: any): void; reject(error: unknown): void }[] = [];
+  const flush = async () => {
+    const taken = queue;
+    queue = [];
+    const ddl = pendingDdl.get(key) ?? [];
+    pendingDdl.delete(key);
+    // A read must not overtake the call that creates its tables.
+    const before = ddlInFlight.get(key);
+    if (before) await before;
+    const sent = stub.pipe([...ddl, ...taken.map((t) => t.item)]);
+    if (ddl.length) {
+      const settled = sent.then(() => undefined, () => undefined);
+      ddlInFlight.set(key, settled);
+      void settled.then(() => { if (ddlInFlight.get(key) === settled) ddlInFlight.delete(key); });
+    }
+    let out: PipeOut[];
+    try {
+      out = await sent;
+    } catch (error) {
+      if (ddl.length) pendingDdl.set(key, [...ddl, ...(pendingDdl.get(key) ?? [])]);
+      for (const t of taken) t.reject(error);
+      return;
+    }
+    out.slice(0, ddl.length).forEach((r) => {
+      if (!r.ok && !/duplicate column/i.test(r.error)) console.error("acard workspace schema step failed", key, r.error);
+    });
+    out.slice(ddl.length).forEach((r, i) => (r.ok ? taken[i].resolve(r.value) : taken[i].reject(new Error(r.error))));
+  };
+  const send = (item: PipeItem) => new Promise<any>((resolve, reject) => {
+    if (!queue.length) queueMicrotask(() => void flush());
+    queue.push({ item, resolve, reject });
+  });
+  const defer = (item: PipeItem) => { pendingDdl.set(key, [...(pendingDdl.get(key) ?? []), item]); };
+  const exec = (sql: string, params: unknown[], mode: string) => {
+    if (DDL.test(sql)) { defer({ sql, params, mode }); return Promise.resolve(mode === "first" ? null : DONE); }
+    return send({ sql, params, mode });
+  };
   const statement = (sql: string, params: unknown[] = []): any => ({
     sql,
     params,
     bind: (...next: unknown[]) => statement(sql, next),
-    run: () => stub.exec(sql, params, "run"),
-    all: () => stub.exec(sql, params, "all"),
+    run: () => exec(sql, params, "run"),
+    all: () => exec(sql, params, "all"),
     first: async (column?: string) => {
-      const row = await stub.exec(sql, params, "first");
+      const row = await exec(sql, params, "first");
       return column ? (row ? row[column] ?? null : null) : row;
     },
   });
   return {
     acardKey: key,
     prepare: (sql: string) => statement(sql),
-    batch: (list: { sql: string; params: unknown[] }[]) => stub.batch(list.map((item) => ({ sql: item.sql, params: item.params }))),
+    batch: (list: { sql: string; params: unknown[] }[]) => {
+      const batch = list.map((item) => ({ sql: item.sql, params: item.params }));
+      if (batch.length && batch.every((item) => DDL.test(item.sql))) { defer({ batch }); return Promise.resolve(batch.map(() => DONE)); }
+      return send({ batch });
+    },
   };
 }
 
@@ -113,7 +167,7 @@ export function workspaceEnv<E extends TenancyEnv>(env: E, ws: string): E {
   };
 }
 
-export const MEMBER_SHARE = /^\/p\/m([0-9a-f]{32})(\/[A-Za-z0-9_-]{43}(?:\/media\/[0-9a-f]{16}|\/[^/]+\/?)?)$/;
+export const MEMBER_SHARE = /^\/p\/m([0-9a-f]{32})(\/[A-Za-z0-9_-]{43}(?:\/media\/[0-9a-f]{16}(?:\/(?:480|960|1440)\.(?:avif|webp))?|(?:\/[^/]+)?(?:\/frame\/[^/]+)?\/?)?)$/;
 
 export async function wipeWorkspace(env: TenancyEnv, ws: string): Promise<{ media: number }> {
   if (ws === OWNER_WS) throw new Error("refusing to wipe the owner workspace");
@@ -154,7 +208,7 @@ export function workspaceFromOauthUser(userId: string | undefined): string | nul
 
 const jwksCache = new Map<string, { at: number; keys: Map<string, CryptoKey> }>();
 
-function b64urlBytes(text: string): Uint8Array {
+function b64urlBytes(text: string): Uint8Array<ArrayBuffer> {
   const padded = text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4);
   return Uint8Array.from(atob(padded), (ch) => ch.charCodeAt(0));
 }
@@ -221,7 +275,7 @@ export function sessionCookies(session: { access_token: string; refresh_token: s
   return [setCookie(ACCESS_COOKIE, session.access_token, session.expires_in), setCookie(REFRESH_COOKIE, session.refresh_token, 60 * 60 * 24 * 30)];
 }
 
-export const clearSessionCookies = () => [setCookie(ACCESS_COOKIE, "", 0), setCookie(REFRESH_COOKIE, "", 0)];
+export const clearSessionCookies = () => [setCookie(ACCESS_COOKIE, "", 0), setCookie(REFRESH_COOKIE, "", 0), "acard_id=; Path=/; Secure; SameSite=Lax; Max-Age=0"];
 
 export type Session = { user: JwtUser; token: string; set: string[] };
 

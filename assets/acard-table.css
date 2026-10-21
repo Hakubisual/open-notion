@@ -4,7 +4,7 @@
 .reader article > .blocks:has(.table-section) { max-width: 1170px; }
 .reader main.wide article:has(> .page-head) > .dbbrowser[data-db] { max-width: 100%; }
 .reader .table-section, .reader .dbbrowser { min-width: 0; max-width: 100%; margin: 26px 0; }
-.reader .table-heading { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; padding: 14px 0 0; border-top: 1px solid var(--line); font-size: var(--fs-19); font-weight: 700; line-height: 1.5; }
+.reader .table-heading { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; padding: 14px 0 0; border-top: 1px solid var(--line); font-size: var(--fs-19); font-weight: 700; line-height: normal; }
 .reader .table-heading .ico { width: 22px; height: 22px; flex-basis: 22px; }
 .reader .page-top + .dbbrowser, .reader .page-top + .blocks > .table-section:first-child { margin-top: 0; }
 .reader .page-top + .dbbrowser .table-heading, .reader .page-top + .blocks > .table-section:first-child .table-heading { border-top: 0; padding-top: 0; }
@@ -67,7 +67,7 @@
 .reader .dbbrowser .dbnew-main { padding: 8px 10px; }
 .reader .dbbrowser .table-new-tail { margin: 0; min-height: 36px; border-left: 1px solid #ffffff38; }
 .reader .dbbrowser .dbstatus { position: absolute; margin: 3px 0; font-size: var(--fs-11); }
-.reader .table-check { margin: 0; accent-color: var(--accent); cursor: pointer; }
+.reader input.table-check { margin: 0; accent-color: var(--accent); cursor: pointer; }
 .reader span.table-check.on { background: var(--accent); border-color: var(--accent); }
 .reader span.table-check.on::after { content: "✓"; display: block; color: var(--on-accent); font-size: var(--fs-11); line-height: 13px; text-align: center; }
 .reader .dbbrowser .dbv-card { background: var(--surface); color: var(--fg); border-color: var(--line); }

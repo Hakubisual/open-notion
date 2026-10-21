@@ -5,14 +5,14 @@
   var editor = window.AcardEditor;
   if (!editor) return;
   var SLASH_ALIASES = {
-    paragraph: "글 문단 본문 text p", heading1: "제목 h1 헤딩 큰제목", heading2: "제목 h2 소제목", heading3: "제목 h3",
+    paragraph: "글 문단 본문 text p", heading1: "제목 h1 헤딩 큰제목", heading2: "제목 h2 소제목", heading3: "제목 h3", heading4: "제목 h4 가장작은제목",
     bulleted: "목록 글머리 리스트 불릿 ul -", numbered: "번호 순서 목록 ol 1.", to_do: "할일 체크 체크박스 todo 투두 할 일",
-    toggle: "토글 접기 펼치기", callout: "콜아웃 강조 박스 메모 주의", quote: "인용 따옴표 quote", code: "코드 code 프로그램",
+    toggle: "토글 접기 펼치기", toggle_heading1: "토글 제목 접히는 제목 h1", toggle_heading2: "토글 제목 접히는 제목 h2", toggle_heading3: "토글 제목 접히는 제목 h3", callout: "콜아웃 강조 박스 메모 주의", quote: "인용 따옴표 quote", code: "코드 code 프로그램",
     diagram: "다이어그램 흐름 흐름도 순서 단계 타임라인 마인드맵 조직도 플로우 diagram flow mermaid 그림", chart: "차트 그래프 막대 선 원 파이 통계 chart graph",
     visual: "시각 애니메이션 svg", html: "html 웹 데모", divider: "구분선 줄 선 hr ---", database: "표 데이터베이스 db 보드 칸반",
     image: "이미지 사진 그림 img 사진첨부", video: "영상 동영상 비디오 유튜브", audio: "오디오 소리 음악", file: "파일 첨부 문서",
     embed: "임베드 삽입 지도", bookmark: "북마크 링크 카드", columns: "열 나누기 단 컬럼", table: "표 테이블 간단표 엑셀 시트 table grid",
-    equation: "수식 수학 latex", toc: "목차", breadcrumb: "경로", button: "버튼", progress: "진행률 진행 퍼센트", db_ref: "데이터베이스 연결 db"
+    equation: "수식 수학 latex", subpage: "하위 페이지", toc: "목차", breadcrumb: "경로", button: "버튼", progress: "진행률 진행 퍼센트", db_ref: "데이터베이스 연결 db"
   };
   var RECENT_KEY = "acard-slash-recent";
   function recent() { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { return []; } }
@@ -21,7 +21,7 @@
     var recents = recent();
     var list = BLOCK_TYPES.filter(function (entry) {
       if (!q) return true;
-      var hay = (entry.label + " " + entry.hint + " " + (SLASH_ALIASES[entry.type] || "") + " " + entry.type).toLowerCase();
+      var hay = (entry.label + " " + entry.hint + " " + (SLASH_ALIASES[entry.type] || entry.aliases || "") + " " + entry.type).toLowerCase();
       return hay.replace(/\s+/g, "").indexOf(q) >= 0 || hay.split(/\s+/).some(function (word) { return word && word.indexOf(q) === 0; });
     });
     return list.map(function (entry, i) {
@@ -37,7 +37,7 @@
     try { localStorage.setItem(RECENT_KEY, JSON.stringify([type].concat(recent().filter(function (t) { return t !== type; })).slice(0, 6))); } catch (e) {}
   }
   var MD_SHORTCUTS = [
-    [/^###$/, "heading3"], [/^##$/, "heading2"], [/^#$/, "heading1"], [/^[-*+]$/, "bulleted"], [/^1[.)]$/, "numbered"],
+    [/^####$/, "heading4"], [/^###$/, "heading3"], [/^##$/, "heading2"], [/^#$/, "heading1"], [/^[-*+]$/, "bulleted"], [/^1[.)]$/, "numbered"],
     [/^\[[ xX]?\]$/, "to_do"], [/^>$/, "quote"], [/^```[\w-]*$/, "code"]
   ];
   // contenteditable turns the typed trailing space into U+00A0.

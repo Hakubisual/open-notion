@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { loadTemplates } from "../features/templates.build";
 import { assembleWorkerSource } from "./assemble-worker";
+import { runInNewContext } from "node:vm";
 
 const templates = await loadTemplates(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const source = assembleWorkerSource();
@@ -11,7 +12,7 @@ beforeEach(async () => {
   sqlite = new Database(":memory:");
   const statement = (sql: string, params: any[] = []) => ({
     bind: (...values: any[]) => statement(sql, values),
-    execute: () => sqlite.query(sql).run(...params),
+    execute: () => ({ success: true, meta: { changes: sqlite.query(sql).run(...params).changes } }),
     run: async () => ({ success: true, meta: { changes: sqlite.query(sql).run(...params).changes } }),
     all: async () => ({ results: sqlite.query(sql).all(...params) }),
     first: async () => sqlite.query(sql).get(...params) ?? null,
@@ -40,6 +41,27 @@ function call(path: string, method = "GET", body?: unknown, anonymous = false) {
 }
 const content = (blocks: any[]) => blocks.map(({ type, text, indent = 0, checked = false, meta = null }) => ({ type, text, indent, checked, meta }));
 
+test("template client keeps the creation version when a conflict is retried", async () => {
+  const source = await Bun.file(new URL("../assets/features/lazy/templates.js", import.meta.url)).text();
+  const create = source.slice(source.indexOf("  async function create("), source.indexOf("  async function open("));
+  const puts: any[] = [];
+  let creates = 0;
+  const context: any = { creating: false, pendingPage: null, location: {}, JSON, encodeURIComponent,
+    dialog: { querySelectorAll: () => [] }, fail: () => {},
+    editor: { save: async () => {}, api: async (path: string, options: any) => {
+      if (path === "/pages") { creates++; return { slug: "new", updated: 17 }; }
+      puts.push(JSON.parse(options.body)); throw Error("conflict");
+    } },
+  };
+  runInNewContext(create + "\nthis.create = create;", context);
+  const template = { name: "Template", blocks: [{ id: "b1", type: "paragraph", text: "content" }] };
+  await context.create(template);
+  await context.create(template);
+  expect(creates).toBe(1);
+  expect(puts).toEqual([0, 1].map(() => ({ title: template.name, blocks: template.blocks, base_updated: 17 })));
+  expect(context.location.href).toBeUndefined();
+});
+
 test("curated catalog is bounded and every markdown template produces editable blocks", async () => {
   expect(templates.length).toBeGreaterThan(0);
   expect(templates.length).toBeLessThanOrEqual(10);
@@ -57,7 +79,7 @@ test("curated catalog is bounded and every markdown template produces editable b
 test("create from every curated template uses POST pages then PUT without losing blocks", async () => {
   for (const template of templates) {
     const page = await (await call("/pages", "POST", { title: template.name })).json();
-    expect((await call("/page/" + encodeURIComponent(page.slug), "PUT", { title: template.name, blocks: template.blocks })).status).toBe(200);
+    expect((await call("/page/" + encodeURIComponent(page.slug), "PUT", { title: template.name, base_updated: page.updated, blocks: template.blocks })).status).toBe(200);
     const saved = await (await call("/page/" + encodeURIComponent(page.slug))).json();
     expect(saved.page.title).toBe(template.name);
     expect(content(saved.blocks)).toEqual(content(template.blocks));
@@ -67,7 +89,7 @@ test("create from every curated template uses POST pages then PUT without losing
 test("personal templates appear with previews and retain the original application API", async () => {
   const page = await (await call("/pages", "POST", { title: "Personal" })).json();
   const blocks = [{ id: "todo", type: "to_do", text: "Keep", checked: true, meta: { richText: [{ text: "Keep", bold: true }] } }];
-  await call("/page/" + page.slug, "PUT", { blocks });
+  await call("/page/" + page.slug, "PUT", { blocks, base_updated: page.updated });
   const saved = await (await call("/editor/templates", "POST", { slug: page.slug, name: "Mine" })).json();
   const catalog = await (await call("/templates")).json();
   expect(catalog.personal[0]).toMatchObject({ id: saved.template.id, name: "Mine", blocks: [{ type: "to_do", text: "Keep", checked: true }] });

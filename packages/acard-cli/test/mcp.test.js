@@ -23,6 +23,13 @@ function buildRemoteServer() {
     { description: "append", inputSchema: { slug: z.string(), markdown: z.string() } },
     async ({ markdown }) => ({ content: [{ type: "text", text: markdown }] }),
   );
+  for (const name of ["attach_images", "attach_video"]) {
+    server.registerTool(
+      name,
+      { description: name, inputSchema: { page: z.string(), images: z.array(z.any()).optional(), frames: z.array(z.any()).optional(), video: z.any().optional(), note: z.string().optional(), path: z.string().optional(), count: z.number().optional(), upload_video: z.boolean().optional() } },
+      async (args) => ({ content: [{ type: "text", text: JSON.stringify(args) }] }),
+    );
+  }
   server.registerTool(
     "echo",
     { description: "Echo text back", inputSchema: { text: z.string() } },
@@ -61,8 +68,8 @@ test("acard mcp proxies tools/list and tools/call over stdio", async () => {
   try {
     expect(client.getServerVersion()?.name).toBe("acard-remote-fake");
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(["create_page", "append_to_page", "echo"]);
-    expect(tools[2].inputSchema.properties.text.type).toBe("string");
+    expect(tools.map((t) => t.name)).toEqual(["create_page", "append_to_page", "attach_images", "attach_video", "echo"]);
+    expect(tools[4].inputSchema.properties.text.type).toBe("string");
     const result = await client.callTool({ name: "echo", arguments: { text: "안녕" } });
     expect(result.content).toEqual([{ type: "text", text: "echo: 안녕" }]);
     expect(seenAuth.length).toBeGreaterThan(0);
@@ -93,4 +100,49 @@ test("acard mcp uploads local image paths before forwarding a write and rewrites
     await client.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("attach_images uploads local paths and the image the user pasted (from the chat transcript); attach_video sends ffmpeg keyframes with times", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "acard-att-"));
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
+  writeFileSync(join(dir, "shot.png"), png);
+  const transcript = join(dir, "t.jsonl");
+  const pasted = (b) => JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: "봐" }, { type: "image", source: { type: "base64", media_type: "image/png", data: b.toString("base64") } }] } });
+  writeFileSync(transcript, pasted(png) + "\n" + pasted(Buffer.concat([png, Buffer.from([9, 9, 9])])) + "\n");
+  let ffmpeg = true;
+  try { execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "testsrc=duration=4:size=160x120:rate=10", "-pix_fmt", "yuv420p", "-y", join(dir, "clip.mp4")], { stdio: "ignore" }); } catch { ffmpeg = false; }
+  const start = uploads.length;
+  const env = { ...process.env, ACARD_TOKEN: TOKEN, ACARD_URL: `http://localhost:${remote.port}`, ACARD_TRANSCRIPT: transcript };
+  const client = new Client({ name: "test-client", version: "1.0.0" });
+  await client.connect(new StdioClientTransport({ command: "node", args: [BIN, "mcp"], env, cwd: dir, stderr: "pipe" }));
+  try {
+    const raw = await client.callTool({ name: "attach_images", arguments: { page: "bug", images: [{ src: "./shot.png", caption: "화면" }, { src: "pasted:1", caption: "붙인 것" }] } });
+    if (raw.isError) throw new Error(raw.content.map((c) => c.text).join(" | "));
+    const att = JSON.parse(raw.content[0].text);
+    expect(att.images.map((i) => i.src)).toEqual([expect.stringMatching(/^\/media\//), expect.stringMatching(/^\/media\//)]);
+    expect(uploads.slice(start).map((u) => [u.search, u.size])).toEqual([["?page=bug&name=shot.png", 10], ["?page=bug&name=pasted-1.png", 13]]);
+    const vid = JSON.parse((await client.callTool({ name: "attach_video", arguments: { page: "bug", path: "./clip.mp4", count: 3 } })).content[0].text);
+    expect(vid.path).toBeUndefined();
+    if (ffmpeg) {
+      expect(vid.frames.map((f) => f.time)).toEqual(["0:00", "0:02", "0:03"]);
+      expect(uploads.slice(start + 2).every((u) => u.type === "image/jpeg")).toBe(true);
+    } else expect(vid.note).toContain("ffmpeg");
+    const none = JSON.parse((await client.callTool({ name: "attach_video", arguments: { page: "bug", path: "./missing.mp4" } })).content[0].text);
+    expect(none.note).toContain("missing.mp4");
+  } finally {
+    await client.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("without ffmpeg attach_video sends a clear note instead of frames", async () => {
+  const { extractFrames } = await import("../src/local-images.js");
+  const prev = process.env.ACARD_FFPROBE;
+  process.env.ACARD_FFPROBE = "acard-no-such-ffprobe";
+  try { expect(extractFrames(import.meta.path, 4)).toEqual({ frames: [], note: expect.stringContaining("ffmpeg") }); }
+  finally { if (prev === undefined) delete process.env.ACARD_FFPROBE; else process.env.ACARD_FFPROBE = prev; }
 });

@@ -1,11 +1,11 @@
 {
   "unit": "bytes",
   "caps": {
-    "readerRaw": 107000,
-    "readerGzip": 28000,
+    "readerRaw": 111000,
+    "readerGzip": 29400,
     "editorRaw": 366000,
-    "editorGzip": 88800,
-    "totalRaw": 1490000,
-    "lazyMaxRaw": 40000
+    "editorGzip": 101600,
+    "totalRaw": 1700000,
+    "lazyMaxRaw": 46000
   }
 }

@@ -2,11 +2,33 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { markdownToBlocks } from "../markdown-blocks.ts";
+import "../assets/editor-model.js";
+import "../assets/columns-model.js";
 import { renderBlocks, navTree, introSplit } from "../block-html.js";
 
 const ROOT = join(import.meta.dir, "..");
 
 describe("renderBlocks", () => {
+  test("a link button renders exactly as before; an action button is a <button data-button> that loads the buttons chunk once and is disabled on a read-only page (notion-parity C3)", () => {
+    const links = renderBlocks([
+      { id: "b1", type: "button", text: "이동", meta: { url: "https://example.com/?a=1&b=2" } },
+      { id: "b2", type: "button", text: "", meta: { url: "/home/" } },
+      { id: "b3", type: "button", text: "없음", meta: {} },
+    ]);
+    expect(links).toBe('<span id="block-b1"></span>\n<p class="btnrow"><a class="btn" href="https://example.com/?a=1&amp;b=2">이동</a></p>\n<span id="block-b2"></span>\n<p class="btnrow"><a class="btn" href="/home/">이동</a></p>');
+    const actions = [{ type: "confirm", message: "만들까요?" }, { type: "create_row", database: "todo", values: {} }, { type: "open", target: "created" }];
+    const live = renderBlocks([
+      { id: "a1", type: "button", text: "할 일 추가", meta: { actions, icon: "➕", color: "blue", url: "https://ignored.dev" } },
+      { id: "a2", type: "button", text: "둘째", meta: { actions: [{ type: "create_row", database: "todo" }] } },
+    ], { page: {} });
+    expect(live).toContain('<button type="button" class="btn act btn-blue" data-button="a1" data-confirm="만들까요?"><span class="btn-ico" aria-hidden="true">➕</span>할 일 추가</button>');
+    expect(live).toContain('data-button="a2">둘째</button>');
+    expect(live).not.toContain("ignored.dev");
+    expect(live.match(/\/lazy\/buttons\.js/g)).toHaveLength(1);
+    const readOnly = renderBlocks([{ id: "a1", type: "button", text: "추가", meta: { actions } }], { page: { readOnly: true } });
+    expect(readOnly).toContain('data-button="a1" data-confirm="만들까요?" disabled>');
+    expect(readOnly).not.toContain("/lazy/buttons.js");
+  });
   test("source links have escaped stable anchors on paragraphs, headings and nested list items", () => {
     const html = renderBlocks([
       { id: 'p"1', type: "paragraph", text: "본문" },
@@ -30,6 +52,37 @@ describe("renderBlocks", () => {
     expect(html).toContain('<h4 id="백업">백업</h4>');
   });
 
+  test("제목 4는 h5 로 그리고 목차에 4단계로 들어간다 (notion-parity C16)", () => {
+    const html = renderBlocks(markdownToBlocks("- [toc]\n\n## 위\n\n#### 소제목"));
+    expect(html).toContain('<h5 id="소제목">소제목</h5>');
+    expect(html).toContain('<li class="lvl5"><a href="#소제목">소제목</a></li>');
+    expect(html.match(/\.blocks h5\{/g)!.length).toBe(1);
+    expect(renderBlocks(markdownToBlocks("### 셋"))).not.toContain("<style>");
+  });
+
+  test("접히는 제목: 자식은 details 안에 한 번만, 접기 끈 제목은 그대로 (notion-parity C7)", () => {
+    const blocks = [
+      { id: "h", type: "heading2", text: "묶음", meta: { toggle: true } },
+      { id: "c1", type: "paragraph", text: "첫 자식", indent: 1 },
+      { id: "c2", type: "bulleted", text: "둘째 자식", indent: 1 },
+      { id: "n", type: "paragraph", text: "다음" },
+    ];
+    const html = renderBlocks(blocks as any);
+    expect(html).toContain('<details class="toggle heading"><summary><h3 id="묶음">묶음</h3></summary>');
+    expect(html.split("첫 자식").length - 1).toBe(1);
+    expect(html.split("둘째 자식").length - 1).toBe(1);
+    expect(html).not.toContain("block-children");
+    expect(html.indexOf("둘째 자식")).toBeLessThan(html.indexOf("</details>"));
+    expect(html.indexOf("</details>")).toBeLessThan(html.indexOf("<p>다음</p>"));
+    expect(renderBlocks([{ ...blocks[0], meta: { toggle: true, open: true } }] as any)).toContain('<details class="toggle heading" open>');
+    const plain = renderBlocks([{ ...blocks[0], meta: {} }, blocks[1]] as any);
+    expect(plain).not.toContain("<details");
+    expect(plain).toContain('<div class="block-children">');
+    expect(renderBlocks([{ id: "t", type: "toc", text: "" }, ...blocks] as any)).toContain('<li class="lvl3"><a href="#묶음">묶음</a></li>');
+    const colored = renderBlocks([{ ...blocks[0], meta: { toggle: true, color: "red_background" } }] as any);
+    expect(colored).toContain('<details class="bc-red_background toggle heading">');
+  });
+
   test("같은 제목이 두 번이면 뒤엣것에 번호를 붙인다", () => {
     const html = renderBlocks(markdownToBlocks("## 메모\n\n## 메모"));
     expect(html).toContain('id="메모"');
@@ -40,6 +93,32 @@ describe("renderBlocks", () => {
     const html = renderBlocks(markdownToBlocks("- [x] 끝난 일\n- [ ] 남은 일"));
     expect(html).toContain('<div class="todo on">');
     expect(html).toContain('<div class="todo">');
+  });
+
+  test("할 일 상자와 [ ] 표 칸은 읽기 화면에서 누를 수 있고, 일반 표에는 가짜 선택 상자가 없다 (#34)", () => {
+    const todo = renderBlocks(markdownToBlocks("- [ ] 남은 일"));
+    expect(todo).toMatch(/<span class="box" role="checkbox" aria-checked="false" tabindex="0" data-check="[^"]+">/);
+    const table = renderBlocks(markdownToBlocks("| 완료 | 과목 | 마감 |\n| --- | --- | --- |\n| [ ] | 게임테스트실무 | 10-21 |\n| [x] | 게임UI/UX기획 | 11-02 |"));
+    expect(table).not.toContain("table-select");
+    expect(table).not.toContain("table-check");
+    expect(table.match(/class="cellcheck"[^>]*data-r="0" data-c="0"/)).not.toBeNull();
+    expect(table.match(/class="cellcheck on"[^>]*aria-checked="true"[^>]*data-r="1" data-c="0"/)).not.toBeNull();
+    expect(renderBlocks(markdownToBlocks("| 과목 | 마감 |\n| --- | --- |\n| 게임테스트실무 | 10-21 |"))).not.toContain("table-check");
+  });
+
+  test("체크 칸이 없는 일반 표도 행마다 누를 수 있는 상자가 있고, 읽기 전용 화면에는 없다 (#73)", () => {
+    const md = "| 과목 | 마감 |\n| --- | --- |\n| 게임테스트실무 | 10-21 |\n| 게임UI/UX기획 | 11-02 |";
+    const html = renderBlocks(markdownToBlocks(md));
+    expect(html.match(/<tr>/g)?.length).toBe(3);
+    expect(html.match(/class="cellcheck" role="checkbox" aria-checked="false"[^>]*data-c="new"/g)?.length).toBe(2);
+    expect(html).toContain('data-r="1" data-c="new"');
+    expect(renderBlocks(markdownToBlocks(md), { page: { kind: "note" } })).toContain("/lazy/checks.js");
+    expect(renderBlocks(markdownToBlocks(md), { page: { readOnly: true } })).not.toContain("data-check");
+    const shared = renderBlocks(markdownToBlocks("- [x] 끝난 일\n\n| 완료 | 과목 |\n| --- | --- |\n| [x] | a |"), { page: { readOnly: true } });
+    expect(shared).toContain('class="cellcheck on"');
+    expect(shared).toContain('<div class="todo on">');
+    expect(shared).not.toContain("data-check");
+    expect(renderBlocks(markdownToBlocks("| 완료 | 과목 |\n| --- | --- |\n| [ ] | a |"))).not.toContain('data-c="new"');
   });
 
   test("콜아웃과 토글과 표를 노션식 마크업으로 그린다", () => {
@@ -94,6 +173,11 @@ describe("renderBlocks", () => {
     const html = renderBlocks(markdownToBlocks("[[infra]] 도 봐"));
     expect(html).toContain('<a href="/infra/">infra</a>');
   });
+  test("같은 페이지 제목으로 가는 [글](#id) 링크를 만든다", () => {
+    const html = renderBlocks(markdownToBlocks("- [1. 현재 상태](#1-현재-상태)\n\n## 1. 현재 상태"));
+    expect(html).toContain('<a href="#1-현재-상태">1. 현재 상태</a>');
+    expect(html).toContain('id="1-현재-상태"');
+  });
 });
 
 describe("navTree", () => {
@@ -137,4 +221,111 @@ describe("home slug alias", () => {
     expect(home).toBe(index);
     expect(home).toContain("Next up");
   }, 120000);
+});
+
+describe("block color and callout icon (notion-parity C6)", () => {
+  const strip = (h: string) => h.replace(/<span id="block-[^"]*"><\/span>\n?/g, "").replace(/<style>[^<]*<\/style>\n?/g, "");
+  test("a colored paragraph, heading and list item carry the bc- class on their own element", () => {
+    const html = strip(renderBlocks([
+      { id: "a", type: "paragraph", text: "빨강", meta: { color: "red" } },
+      { id: "b", type: "heading2", text: "노랑 배경", meta: { color: "yellow_background" } },
+      { id: "c", type: "bulleted", text: "파랑", meta: { color: "blue" } },
+      { id: "d", type: "toggle", text: "접기", meta: { color: "gray_background" } },
+    ] as any));
+    expect(html).toContain('<p class="bc-red">빨강</p>');
+    expect(html).toContain('<h3 class="bc-yellow_background" id="노랑-배경">');
+    expect(html).toContain('<li class="bc-blue">파랑</li>');
+    expect(html).toContain('<details class="bc-gray_background toggle">');
+  });
+  test("the color rules ride along once per page, only when a block uses a color or icon", () => {
+    const ctx: any = {};
+    const a = renderBlocks([{ id: "a", type: "paragraph", text: "1", meta: { color: "red" } }, { id: "b", type: "toggle", text: "t" }, { id: "c", type: "paragraph", text: "2", indent: 1, meta: { color: "blue_background" } }] as any, ctx);
+    const b = renderBlocks([{ id: "d", type: "callout", text: "3", meta: { icon: "🔥" } }] as any, ctx);
+    expect((a + b).match(/<style>/g)!.length).toBe(1);
+    expect(a).toContain(".bc-blue_background,.blocks .bc-blue_background,.blocks .callout.bc-blue_background{background:var(--tag-blue-bg)}");
+    expect(renderBlocks([{ id: "x", type: "paragraph", text: "글" }] as any)).not.toContain("<style>");
+    expect(renderBlocks([{ id: "x", type: "bulleted", text: "글", meta: { color: "red" } }] as any)).toContain('<li class="bc-red"><style>');
+  });
+  test("a callout icon replaces the default line icon", () => {
+    const html = renderBlocks([{ id: "x", type: "callout", text: "불", meta: { tone: "note", icon: "🔥", color: "orange_background" } }] as any);
+    expect(html).toContain('<span class="callout-ico" aria-hidden="true">🔥</span>');
+    expect(html).not.toContain("sparkles");
+    expect(html).toContain('class="bc-orange_background callout note"');
+  });
+  test("an unknown or hostile color name never becomes a class", () => {
+    for (const color of ["<script>", 'red" onclick="x', "chartreuse", "default", "red_backgroundx", 7]) {
+      const html = renderBlocks([{ id: "x", type: "paragraph", text: "글", meta: { color } }] as any);
+      expect(html).not.toContain("bc-");
+      expect(html).toContain("<p>글</p>");
+    }
+    const icon = renderBlocks([{ id: "x", type: "callout", text: "글", meta: { icon: "<img src=x onerror=alert(1)>" } }] as any);
+    expect(icon).not.toContain("<img");
+  });
+  test("a callout with only a tone and pages without color render exactly as before", () => {
+    const blocks = markdownToBlocks("> [!warning] 조심\n\n> [!note] 메모\n\n## 제목\n\n- 하나\n- [toggle] 접기\n  - 안\n\n본문");
+    const html = renderBlocks(blocks);
+    expect(html).toContain('<div class="callout warning">');
+    expect(html).toContain('<div class="callout warning"><svg class="ico callout-ico"');
+    expect(html).toContain('<div class="callout note"><svg class="ico callout-ico"');
+    expect(html).not.toContain("bc-");
+    expect(html).toContain("<p>본문</p>");
+  });
+  test("every block color text token reads at 4.5:1 or more on the page background, light and dark", () => {
+    const { BLOCK_COLOR_CSS } = require("../block-html.js");
+    const css = readFileSync(join(ROOT, "assets/tokens.css"), "utf8") + "\n" + BLOCK_COLOR_CSS.replace(/\}/g, "}\n").replace(/^html\[/gm, "\nhtml[").replace(/(^|\n)(:root|html\[data-theme="dark"\])\{/g, "\n$2 {");
+    const lum = (hex: string) => { const n = hex.replace("#", ""); const c = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+    const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+    // Every top-level rule body of one selector, merged in file order (later blocks add tokens such as brown).
+    const block = (sel: string) => css.split("\n" + sel + " {").slice(1).map((part) => part.slice(0, part.indexOf("}"))).join("\n");
+    const pick = (src: string, name: string) => (new RegExp("--" + name + ":\\s*(#[0-9a-f]{6})", "i").exec(src) || [])[1];
+    for (const [theme, src] of [["light", block(":root")], ["dark", block('html[data-theme="dark"]')]] as const) {
+      const bg = pick(src, "bg")!; const fg = pick(src, "fg")!;
+      for (const c of ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"]) {
+        const text = pick(src, "tag-" + c + "-fg")!; const soft = pick(src, "tag-" + c + "-bg")!;
+        expect([theme, c, ratio(text, bg) >= 4.5]).toEqual([theme, c, true]);
+        expect([theme, c + "_background", ratio(fg, soft) >= 4.5]).toEqual([theme, c + "_background", true]);
+      }
+    }
+  });
+});
+
+describe("columns and callouts hold blocks (notion-parity C13)", () => {
+  const b = (id: string, type: string, indent: number, text = "", meta: any = null) => ({ id, type, text, checked: false, indent, meta });
+  const strip = (html: string) => html.replace(/<span id="block-[^"]*"><\/span>\n?/g, "").replace(/\n/g, "");
+  test("a callout, a db_ref and a heading render inside their .col", () => {
+    const html = strip(renderBlocks([
+      b("cs", "columns", 0, "", { widths: [0.6, 0.4] }),
+      b("c1", "column", 1), b("co", "callout", 2, "안내"), b("h", "heading2", 2, "왼쪽 제목"),
+      b("c2", "column", 1), b("db", "db_ref", 2, "", { database: "x", html: '<div class="db">표</div>' }),
+      b("after", "paragraph", 0, "다음"),
+    ]));
+    const grid = /<div class="cols cols2" style="--cols:0\.6fr 0\.4fr">(.*?)<\/div><p>다음<\/p>/.exec(html);
+    expect(grid).not.toBeNull();
+    const cols = grid![1].split('<div class="col">').slice(1);
+    expect(cols).toHaveLength(2);
+    expect(cols[0]).toContain('<div class="callout note">');
+    expect(cols[0]).toContain("왼쪽 제목</h3>");
+    expect(cols[1]).toContain('<div class="db">표</div>');
+    expect(html).not.toContain("block-children");
+  });
+  test("old text-only columns draw the same text as paragraphs inside .col", () => {
+    const html = strip(renderBlocks([b("k", "columns", 0, "", { columns: [{ text: "가\n나" }, { text: "다" }] })]));
+    expect(html).toContain('<div class="cols cols2" style="--cols:0.5fr 0.5fr"><div class="col"><p>가</p><p>나</p></div><div class="col"><p>다</p></div></div>');
+  });
+  test("old columns are converted on read: a block under them lands in the last column", () => {
+    const html = strip(renderBlocks([b("k", "columns", 0, "", { columns: [{ text: "가" }, { text: "다" }] }), b("kid", "callout", 1, "안쪽"), b("next", "paragraph", 0, "밖")]));
+    const cols = /<div class="cols cols2"[^>]*>(.*?)<\/div><p>밖<\/p>/.exec(html)![1].split('<div class="col">').slice(1);
+    expect(cols[1]).toContain("<p>다</p>");
+    expect(cols[1]).toContain("안쪽");
+    expect(html).not.toContain("block-children");
+  });
+  test("blocks indented under a callout render inside its callout-body, not after it", () => {
+    const html = strip(renderBlocks([b("co", "callout", 0, "상자"), b("l1", "bulleted", 1, "하나"), b("l2", "bulleted", 1, "둘"),
+      b("db", "db_ref", 1, "", { html: '<div class="db">표</div>' }), b("next", "paragraph", 0, "밖")]));
+    const body = /<div class="callout-body">(.*?)<\/div><\/div><p>밖<\/p>/.exec(html);
+    expect(body).not.toBeNull();
+    expect(body![1]).toContain("<ul><li>하나</li><li>둘</li></ul>");
+    expect(body![1]).toContain('<div class="db">표</div>');
+    expect(html).not.toContain("block-children");
+  });
 });

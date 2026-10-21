@@ -163,9 +163,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 34px 0; }
 .blocks .bookmark .btitle { display: block; font-weight: 600; }
 .blocks .bookmark .bdesc { display: block; color: var(--fg-dim); font-size: var(--fs-14); margin-top: 2px; }
 .blocks .bookmark .bsite { display: block; color: var(--fg-dim); font-size: var(--fs-12); margin-top: 6px; }
-.blocks .cols { display: grid; gap: 14px; margin: 18px 0; }
-.blocks .cols2 { grid-template-columns: 1fr 1fr; }
-.blocks .cols3 { grid-template-columns: 1fr 1fr 1fr; }
+.blocks .cols { display: grid; grid-template-columns: var(--cols); gap: 14px; margin: 18px 0; }
 .blocks .col { border: 1px solid var(--line); border-radius: 12px; padding: 4px 14px; min-width: 0; }
 .blocks .col p { margin: 12px 0; }
 .blocks .stable table { margin: 16px 0; }
@@ -190,6 +188,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 34px 0; }
 .blocks .btnrow { margin: 18px 0; }
 .blocks .btn { display: inline-block; padding: 10px 22px; font-weight: 600; }
 .blocks .btn:hover { text-decoration: none; filter: brightness(1.08); }
+.blocks .btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
 .blocks .progress { margin: 16px 0; }
 .blocks .progress .phead { display: flex; justify-content: space-between; font-size: var(--fs-14); margin-bottom: 5px; }
 .blocks .progress .pval { font-variant-numeric: tabular-nums; color: var(--fg-dim); }
@@ -206,7 +205,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 34px 0; }
 .math .mtext { font-style: normal; }
 .math .mbf { font-weight: 700; }
 .math .munk { color: #c0392b; font-size: .8em; font-style: normal; }
-@media (max-width: 700px) { .blocks .cols2, .blocks .cols3 { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .blocks .cols { grid-template-columns: 1fr; } }
 .lightbox { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(0,0,0,.82); opacity: 0; pointer-events: none; transition: opacity .15s ease; }
 .lightbox.on { opacity: 1; pointer-events: auto; cursor: zoom-out; }
 .lightbox img { max-width: 94vw; max-height: 92vh; border-radius: 10px; }
@@ -266,9 +265,12 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 34px 0; }
 .palette-list .pnone, .pnone { color: var(--fg-dim); font-size: var(--fs-14); padding: 8px 2px; }
 
 /* 사이드바 접기 (데스크톱) */
-#collapse { display: none; }
+#collapse, #side-open { display: none; }
 @media (min-width: 900px) {
   #collapse { display: inline-flex; }
+  html.side-collapsed #side-open { display: inline-flex; position: fixed; top: 12px; left: 12px; z-index: 30; width: 40px; height: 40px; min-width: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--raised); color: var(--fg); box-shadow: 0 2px 8px rgba(30, 28, 50, .12); }
+  html.side-collapsed .editing #side-open { top: 66px; }
+  html.side-collapsed .editing .shell > main { padding-left: 64px; }
   html.side-collapsed .shell { grid-template-columns: minmax(0, 1fr); }
   html.side-collapsed .sidebar { display: none; }
 }
@@ -414,5 +416,8 @@ button{transition:background-color var(--dur-1),color var(--dur-1),transform var
 .page-cover { width: 100%; max-height: 220px; object-fit: cover; border-radius: 0; margin-bottom: 0; }
 .page-cover[hidden] { display: none; }
 
+/* Icon + text rows (#65): a tall line box puts Pretendard's cap height below the centre the row aligns to (1-1.5px at
+   1.5 line-height), so rows that centre an icon with one line of text use the font's own line height. */
+.byline > span, .thname, .table-person, .side-search { line-height: normal; }
 .brand svg.wordmark { display: block; height: 36px; aspect-ratio: 171/110; color: var(--fg); overflow: visible }
 .side-brand .brand svg.wordmark { height: 40px; }

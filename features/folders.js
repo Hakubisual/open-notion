@@ -14,11 +14,15 @@
   const COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
   const JOURNAL_ROOT = "agent-journal";
   const PREFS_KEY = "folders:prefs";
-  const ready = new WeakSet();
+  // A member workspace gets a new D1-shaped adapter on every request, so the schema is remembered by its store key
+  // (as gate/_worker.js ensureSchema does); otherwise every request re-ran the CREATE ... IF NOT EXISTS list as
+  // round trips to the workspace Durable Object before its first read (#17).
+  const ready = new WeakSet(), readyKeys = new Set();
   async function schema(db) {
-    if (ready.has(db)) return;
+    if (ready.has(db) || (db.acardKey && readyKeys.has(db.acardKey))) return;
     for (const sql of SCHEMA) await db.prepare(sql).run();
     ready.add(db);
+    if (db.acardKey) readyKeys.add(db.acardKey);
   }
   const fail = (message, status = 400) => Object.assign(new Error(message), { status });
   const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);

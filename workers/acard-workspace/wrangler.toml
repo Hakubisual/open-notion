@@ -3,6 +3,12 @@ main = "index.js"
 compatibility_date = "2026-10-15"
 workers_dev = false
 
+[vars]
+SITE_URL = "https://notes.example.com"
+
+[triggers]
+crons = ["*/15 * * * *"]
+
 [[durable_objects.bindings]]
 name = "WORKSPACE"
 class_name = "WorkspaceStore"

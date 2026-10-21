@@ -95,7 +95,7 @@ test("schema hooks run once when initialization requests overlap", async () => {
 
 test("afterSave observes committed blocks and the current page", async () => {
   const page = await (await call("/api/pages", "POST", { title: "Fixture" })).json();
-  const response = await call("/api/page/" + page.slug, "PUT", { title: "Saved title", blocks: [{ id: "b1", type: "paragraph", text: "saved word" }] });
+  const response = await call("/api/page/" + page.slug, "PUT", { title: "Saved title", base_updated: page.updated, blocks: [{ id: "b1", type: "paragraph", text: "saved word" }] });
   expect(response.status).toBe(200);
   expect(sqlite.query("SELECT text FROM blocks WHERE page = ?").get(page.slug)).toEqual({ text: "saved word" });
   expect(sqlite.query("SELECT title FROM fixture_events WHERE slug = ? AND text = 'saved word'").get(page.slug)).toEqual({ title: "Saved title" });
@@ -106,7 +106,7 @@ test("a throwing afterSave never fails a save or skips later hooks", async () =>
   sqlite.exec("DELETE FROM fixture_events");
   const logged = spyOn(console, "error").mockImplementation(() => {});
   try {
-    expect((await call("/api/page/" + page.slug, "PUT", { blocks: [{ id: "b1", type: "paragraph", text: "throw" }] })).status).toBe(200);
+    expect((await call("/api/page/" + page.slug, "PUT", { base_updated: page.updated, blocks: [{ id: "b1", type: "paragraph", text: "throw" }] })).status).toBe(200);
     expect(logged).toHaveBeenCalledTimes(1);
     expect(sqlite.query("SELECT text FROM blocks WHERE page = ?").get(page.slug)).toEqual({ text: "throw" });
     expect(sqlite.query("SELECT text FROM fixture_events WHERE slug = ?").all(page.slug)).toEqual([{ text: "last-hook" }]);

@@ -523,6 +523,37 @@
     }
   }
 
+  // ===== 5. 개인 지침 한 줄 (예전 /connect 페이지에 있던 것) =====
+  var rule = $("mcp-rule");
+  if (rule) {
+    rule.value = "Acard 커넥터가 연결돼 있으면 묻지 말고 모든 대화를 기록해: 대화를 시작할 때 journal_start, 매 답변 뒤에 journal_log로 1-3문장 요약, 남길 만한 내용은 Acard 노트 페이지를 만들거나 고쳐서 정리해.";
+    $("mcp-rule-copy").addEventListener("click", function () { copyText(rule.value, this); });
+  }
+
+  // ===== 6. 고급: 채팅 응답 속도 (개발자용, 펼칠 때만 부른다) =====
+  function sec(ms) { return ms == null ? "-" : (ms / 1000).toFixed(2) + "초"; }
+  function loadLatency() {
+    var t = $("latency");
+    api("GET", "/api/agent/latency").then(function (d) {
+      clear(t);
+      var models = Array.isArray(d.models) ? d.models : [];
+      if (!models.length) { t.appendChild(el("tr", {}, [el("td", { text: "아직 기록이 없어요." })])); return; }
+      t.appendChild(el("tr", {}, ["모델", "횟수", "첫 글자 p50", "p95", "전체 p50"].map(function (h) { return el("th", { text: h }); })));
+      models.forEach(function (m) { t.appendChild(el("tr", {}, [m.model, String(m.n), sec(m.p50Ttft), sec(m.p95Ttft), sec(m.p50Total)].map(function (v) { return el("td", { text: v }); }))); });
+      t.appendChild(el("tr", { className: "ag-lat-all" }, ["전체", String(d.n), sec(d.p50Ttft), sec(d.p95Ttft), ""].map(function (v) { return el("td", { text: v }); })));
+    }, function (err) {
+      clear(t);
+      t.appendChild(el("tr", {}, [el("td", { className: "ag-error", text: "불러오지 못했어요: " + err.message })]));
+    });
+  }
+  var advanced = $("advanced");
+  if (advanced) {
+    var latencyLoaded = false;
+    advanced.addEventListener("toggle", function () {
+      if (advanced.open && !latencyLoaded) { latencyLoaded = true; loadLatency(); }
+    });
+  }
+
   // ----- 시작 -----
   loadTokens();
   loadGrants();

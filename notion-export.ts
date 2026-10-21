@@ -1,5 +1,6 @@
 // 저장된 블록을 마크다운 / 독립 HTML / 워크스페이스 ZIP으로 되돌린다.
 // 워커 안에서 돌아야 하므로 Node API도 npm 패키지도 쓰지 않는다.
+import "./assets/columns-model.js";
 import { renderBlocks } from "./block-html.js";
 import type { Block } from "./markdown-blocks.ts";
 
@@ -20,6 +21,8 @@ function notionExportBlock(block: Block): string[] {
       return ["## " + text, ""];
     case "heading3":
       return ["### " + text, ""];
+    case "heading4":
+      return ["#### " + text, ""];
     case "bulleted":
       return [pad + "- " + text];
     case "numbered":
@@ -59,9 +62,17 @@ function notionExportBlock(block: Block): string[] {
   }
 }
 
+// Notion's markdown import has no columns, so they are laid out one after another (on purpose lossy, notion-parity C13):
+// the columns and column rows write nothing and their blocks lose the 2 levels each enclosing columns adds.
 export function notionBlocksToMarkdown(title: string, blocks: Block[]): string {
   const lines: string[] = ["# " + title, ""];
-  for (const block of blocks) lines.push(...notionExportBlock(block));
+  const model = (globalThis as any).ColumnsModel;
+  const flat = model ? model.columnsFromLegacy(blocks) as Block[] : blocks;
+  const levels: number[] = model ? model.columnsLevels(flat) : flat.map(() => 0);
+  flat.forEach((block, index) => {
+    if (block.type === "columns" && !Array.isArray(block.meta?.columns) || block.type === "column") return;
+    lines.push(...notionExportBlock(levels[index] ? { ...block, indent: Math.max(0, (block.indent || 0) - levels[index] * 2) } : block));
+  });
   while (lines.length > 2 && lines[lines.length - 1] === "") lines.pop();
   return lines.join("\n") + "\n";
 }

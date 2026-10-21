@@ -4,7 +4,9 @@
   var slug = decodeURIComponent((location.pathname.match(/^\/(?:edit\/)?([^/]+)\/?$/) || [])[1] || "index");
   var last = Number(sessionStorage.getItem("acard-live-id") || 0);
   var socket = null, retry = 0, timer = null, hideTimer = null, lastInput = 0, bar = null, pending = false;
-  var channel = window.BroadcastChannel ? new BroadcastChannel("acard-live") : null;
+  var identity = (document.querySelector('meta[name="acard-id"]') || {}).content || "";
+  var channel = null, suspended = false, heartbeat = null;
+  if (slug === "home") slug = "index";
   var CID = "c" + Math.random().toString(36).slice(2, 12);
   var api = { events: [], status: "idle", client: CID };
   window.AcardLive = api;
@@ -25,14 +27,45 @@
     }).catch(function () {});
   }
 
+  // One tree read in flight, at most one queued behind it. The read goes past the service worker's stale copy and a
+  // read that never settles is given up after 8 s: before this, one hung read left treeBusy set forever, every later
+  // notice only queued, and the sidebar stopped following live changes (#17: burst p95 104 s, offline catch-up, restore).
   var treeBusy = null, treeAgain = false;
   function reloadFolders() {
     if (!window.AcardFolders || !window.AcardFolders.reload) { document.dispatchEvent(new CustomEvent("acard:tree-fresh")); return; }
     if (treeBusy) { treeAgain = true; return; }
-    treeBusy = Promise.resolve(window.AcardFolders.reload()).catch(function () {}).then(function () {
+    // A query string makes the service worker go to the network instead of answering with its stale copy; the read is
+    // aborted after 8 s. Most tree reads answer in ~100 ms but a single one now and then stalls for 0.5-2.5 s on the
+    // server, so a read with no answer after 400 ms gets a second copy and the first answer wins.
+    var ctl = window.AbortController ? new AbortController() : null, guard, hedge;
+    var get = function () {
+      return fetch("/api/folders/tree?fresh=" + Date.now() + Math.random().toString(36).slice(2, 6), { cache: "no-store", credentials: "same-origin", signal: ctl ? ctl.signal : undefined })
+        .then(function (r) { if (!r.ok) throw new Error("tree " + r.status); return r.json(); });
+    };
+    var read = new Promise(function (ok, bad) {
+      var inflight = 0, hedged = false, done = false;
+      var fire = function () {
+        inflight += 1;
+        get().then(function (d) { if (!done) { done = true; clearTimeout(hedge); ok(d); } }, function (e) {
+          inflight -= 1;
+          if (done) return;
+          if (!hedged) { hedged = true; clearTimeout(hedge); fire(); } else if (!inflight) { done = true; bad(e); }
+        });
+      };
+      fire();
+      hedge = setTimeout(function () { if (!hedged) { hedged = true; fire(); } }, 400);
+    });
+    read.then(function () { if (ctl) ctl.abort(); }, function () {});
+    var run = Promise.race([
+      Promise.resolve().then(function () { return window.AcardFolders.reload(read); }),
+      new Promise(function (ok) { guard = setTimeout(function () { if (ctl) ctl.abort(); ok(); }, 8000); }),
+    ]).catch(function () {}).then(function () {
+      clearTimeout(guard);
+      if (treeBusy !== run) return;
       treeBusy = null;
       if (treeAgain) { treeAgain = false; reloadFolders(); }
     });
+    treeBusy = run;
   }
   function refreshTree() {
     reloadFolders();
@@ -48,19 +81,7 @@
   }
 
   function swapReader() {
-    if (document.activeElement && document.activeElement.isContentEditable) return;
-    fetch(location.pathname + "?live=" + Date.now(), { credentials: "same-origin", cache: "no-store" }).then(function (r) { return r.ok ? r.text() : null; }).then(function (html) {
-      if (!html) return;
-      var next = new DOMParser().parseFromString(html, "text/html");
-      var main = document.getElementById("main"), fresh = next.getElementById("main");
-      if (main && fresh && main.innerHTML !== fresh.innerHTML) {
-        var y = window.scrollY;
-        main.innerHTML = fresh.innerHTML;
-        window.scrollTo(0, y);
-        if (next.title) document.title = next.title;
-        document.dispatchEvent(new CustomEvent("acard:page-fresh"));
-      }
-    }).catch(function () {});
+    if (window.AcardReader && window.AcardReader.refresh) window.AcardReader.refresh();
   }
 
   function editorState() { return window.AcardEditor && window.AcardEditor.state; }
@@ -116,21 +137,36 @@
   }
   function hideBar() { if (bar) bar.hidden = true; pending = null; }
 
+  // Notices that arrive together (a burst of agent writes, the backlog replayed after a reconnect) are applied as one
+  // batch on the next frame: one cache sweep, one tree read and at most one page re-read for the whole batch.
+  // Notices carry no titles or text by design, so the batch re-reads through the permission-checked APIs.
+  var batch = null;
   function handle(event, local) {
     api.events.push({ id: event.id, t: event.t, at: Date.now(), kinds: event.kinds, slugs: event.slugs });
     if (api.events.length > 100) api.events.shift();
     document.dispatchEvent(new CustomEvent("acard:live", { detail: event }));
-    var mine = (event.slugs || []).indexOf(slug) >= 0 && event.src !== CID;
-    var kinds = event.kinds || [];
-    var treeish = kinds.some(function (k) { return k === "tree" || k === "title" || k === "tags" || k === "journal" || k === "deleted"; });
-    dropCachedViews();
-    if (treeish || kinds.indexOf("page") >= 0) refreshTree();
-    if (!mine && !(kinds.indexOf("page") >= 0 && !(event.slugs || []).length)) return;
-    if (editor) refreshEditor(); else swapReader();
     if (!local && channel) channel.postMessage(event);
+    var kinds = event.kinds || [];
+    if (!batch) { batch = { tree: false, page: false }; setTimeout(flush, 16); }
+    if (kinds.some(function (k) { return k === "tree" || k === "title" || k === "tags" || k === "journal" || k === "deleted" || k === "page"; })) batch.tree = true;
+    var mine = (event.slugs || []).indexOf(slug) >= 0 && event.src !== CID;
+    if (mine || (kinds.indexOf("page") >= 0 && !(event.slugs || []).length)) batch.page = true;
+  }
+  function flush() {
+    var b = batch; batch = null;
+    if (!b) return;
+    // The live re-reads below all go past the service worker cache (query string / no-store), so they start at once
+    // while the cached reader copies are dropped beside them.
+    dropCachedViews();
+    if (b.tree) refreshTree();
+    if (b.page) { if (editor) refreshEditor(); else swapReader(); }
   }
 
-  if (channel) channel.onmessage = function (m) { if (m.data && m.data.id > last) { last = m.data.id; sessionStorage.setItem("acard-live-id", String(last)); } handle(m.data || {}, true); };
+  function openChannel() {
+    if (channel || !window.BroadcastChannel || !identity) return;
+    channel = new BroadcastChannel("acard-live:" + identity);
+    channel.onmessage = function (m) { if (m.data && m.data.id > last) { last = m.data.id; sessionStorage.setItem("acard-live-id", String(last)); } handle(m.data || {}, true); };
+  }
 
   function catchUp() {
     handle({ id: last, t: Date.now(), kinds: ["tree", "page"], slugs: [slug] }, true);
@@ -138,7 +174,7 @@
 
   function open() {
     clearTimeout(timer);
-    if (socket || document.hidden) return;
+    if (socket || document.hidden || suspended) return;
     api.status = "connecting";
     var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/live?since=" + last;
     var ws;
@@ -146,16 +182,20 @@
     socket = ws;
     var reconnecting = retry > 0;
     ws.onmessage = function (m) {
+      if (socket !== ws || suspended) return;
       if (m.data === "pong") return;
       var msg; try { msg = JSON.parse(m.data); } catch (e) { return; }
       if (msg.type === "hello") {
         retry = 0;
         api.status = "open";
-        var gap = msg.reset || (reconnecting && !msg.missed.length && msg.id > last);
-        last = msg.id;
+        // Resume: the socket asked for ?since=<last seen id>; the feed replays what we missed from its backlog, or
+        // says reset when the gap is past the backlog, and then this tab does one full refresh.
+        var missed = msg.missed || [];
+        var gap = msg.reset || (reconnecting && !missed.length && msg.id > last);
+        last = Math.max(last, msg.id);
         sessionStorage.setItem("acard-live-id", String(last));
         if (gap) catchUp();
-        (msg.missed || []).forEach(function (e) { handle(e); });
+        missed.forEach(function (e) { handle(e); });
         return;
       }
       if (msg.type === "change") {
@@ -170,7 +210,7 @@
   }
 
   function schedule() {
-    if (document.hidden) return;
+    if (document.hidden || suspended) return;
     retry += 1;
     var wait = Math.min(30000, 500 * Math.pow(2, Math.min(retry, 6))) * (0.7 + Math.random() * 0.6);
     timer = setTimeout(open, wait);
@@ -179,7 +219,7 @@
   function close() {
     clearTimeout(timer);
     var ws = socket; socket = null;
-    if (ws) try { ws.close(1000, "background"); } catch (e) {}
+    if (ws) { ws.onmessage = ws.onclose = ws.onerror = null; try { ws.close(1000, "background"); } catch (e) {} }
     api.status = "paused";
   }
 
@@ -188,20 +228,36 @@
     if (document.hidden) hideTimer = setTimeout(close, 30000);
     else if (!socket) { retry = 1; open(); }
   });
-  window.addEventListener("online", function () { if (!socket) { retry = 1; open(); } });
+  // Back online: a socket that looks open may be a dead one from before the drop, so always start a fresh one that
+  // resumes from the last seen id.
+  window.addEventListener("online", function () { if (socket) close(); retry = 1; open(); });
   window.addEventListener("offline", close);
-  setInterval(function () { if (socket && socket.readyState === 1) try { socket.send("ping"); } catch (e) {} }, 45000);
-
-  if (window.AcardEditor && window.AcardEditor.transport) {
-    window.AcardEditor.transport = function (pageSlug, payload) {
-      return fetch("/api/page/" + encodeURIComponent(pageSlug), { method: "PUT", headers: { "content-type": "application/json", "x-acard-client": CID }, body: JSON.stringify(payload) });
-    };
+  function resume() {
+    suspended = false; openChannel();
+    if (!heartbeat) heartbeat = setInterval(function () { if (socket && socket.readyState === 1) try { socket.send("ping"); } catch (e) {} }, 45000);
+    open();
   }
+  window.addEventListener("pagehide", function () {
+    suspended = true; clearTimeout(hideTimer); close();
+    clearInterval(heartbeat); heartbeat = null;
+    if (channel) { channel.onmessage = null; channel.close(); channel = null; }
+  });
+  window.addEventListener("pageshow", resume);
+  document.addEventListener("acard:navigated", function (e) {
+    if (editor || slug === e.detail.slug) return;
+    slug = e.detail.slug; hideBar();
+    // The server socket is workspace-scoped; reconnect to renew its authorized subscription on a page change.
+    close(); retry = 1; open();
+  });
+
+  // Only the client id is handed to the editor: its saves keep going through save-queue and changed-blocks. Replacing
+  // editor.transport here gave the tab a second, unqueued sender, and a stale queued draft could land after a newer save.
+  if (window.AcardEditor) window.AcardEditor.clientId = CID;
   if (window.AcardEditor && window.AcardEditor.on) window.AcardEditor.on("saved", function () {
     if (channel) channel.postMessage({ id: 0, t: Date.now(), kinds: ["page", "title"], slugs: [slug] });
   });
 
   api.open = open;
   api.close = close;
-  open();
+  resume();
 })();

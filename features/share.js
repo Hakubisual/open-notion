@@ -15,7 +15,11 @@
     // Existing public links become 게시 rules; old /p/<token> URLs keep resolving. Idempotent, never revives a revoked rule.
     "INSERT OR IGNORE INTO share_rules (id, page, principal, role, expires, created, revoked, token_hash) SELECT 'pl-' || token_hash, page, 'publish', 'read', NULL, COALESCE(created, 0), NULL, token_hash FROM share_links WHERE revoked IS NULL",
   ];
-  const INVITE_MS = 15 * 60 * 1000;
+  // Invite codes last 24 hours because invite mail is not wired yet and the owner hands links and codes over by hand
+  // (owner call 2026-10-20). Revisit (back toward 15 minutes) once share invites are mailed. Wrong-code lockout stays
+  // MAX_TRIES per invite and the per-IP verify limit keeps its own 15-minute window.
+  const INVITE_MS = 24 * 60 * 60 * 1000;
+  const VERIFY_WINDOW_MS = 15 * 60 * 1000;
   const SV_BASE_CSS = "html{scrollbar-width:thin;scrollbar-color:transparent transparent}html:hover{scrollbar-color:color-mix(in srgb,var(--fg) 26%,transparent) transparent}" +
     "body.sv{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:var(--fs-16);line-height:1.8}.sv-tt{position:fixed;opacity:0;pointer-events:none;width:1px;height:1px}" +
     ".sv-bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:14px;height:52px;padding:0 20px;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}" +
@@ -34,13 +38,14 @@
     ".sv-toc{position:sticky;top:76px;align-self:start;margin-top:28px;max-height:calc(100dvh - 96px);overflow:auto;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);font-size:var(--fs-14)}" +
     ".sv-toc summary{cursor:pointer;font-weight:700;font-size:var(--fs-16);list-style:none;display:flex;justify-content:space-between}.sv-toc summary::after{content:'\\2303';color:var(--fg-dim)}.sv-toc details:not([open]) summary::after{content:'\\2304'}" +
     ".sv-toc ol{list-style:none;margin:10px 0 0;padding:0}.sv-toc li a{display:flex;gap:10px;align-items:center;padding:7px 8px;border-radius:8px;color:var(--fg);text-decoration:none;line-height:1.4}.sv-toc li a:hover{background:var(--accent-soft);color:var(--accent-strong)}" +
-    ".sv-toc .n{flex:0 0 22px;height:22px;display:grid;place-items:center;border-radius:6px;background:var(--bg-soft);color:var(--fg-dim);font-size:var(--fs-12)}.sv-toc .l3 a{padding-left:20px}.sv-toc .l4 a{padding-left:32px}" +
+    ".sv-toc .n{flex:0 0 22px;height:22px;display:grid;place-items:center;border-radius:6px;background:var(--bg-soft);color:var(--fg-dim);font-size:var(--fs-12)}.sv-toc .l3 a{padding-left:20px}.sv-toc .l4 a{padding-left:32px}.sv-toc .l5 a{padding-left:44px}" +
     ".sv-subs{margin-top:48px;padding-top:28px;border-top:1px solid var(--line)}.sv-subs h2{margin:0 0 14px;font-size:var(--fs-21)}.sv-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}" +
     ".sv-card{display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--fg);text-decoration:none;transition:border-color .15s,box-shadow .15s}.sv-card:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(30,28,50,.08)}" +
     ".sv-cico{flex:0 0 40px;height:40px;display:grid;place-items:center;border-radius:10px;background:var(--accent-soft);color:var(--accent)}.sv-cico img,.sv-cico svg{width:22px;height:22px}.sv-ct{display:flex;flex-direction:column;gap:3px;min-width:0}.sv-ct b{font-size:var(--fs-15)}.sv-ct small{color:var(--fg-dim);font-size:var(--fs-13);line-height:1.5}" +
     ".sv-foot{display:flex;justify-content:center;padding:28px 0 40px;border-top:1px solid var(--line)}.sv-foot a{display:inline-flex;gap:8px;align-items:center;color:var(--fg-dim);font-size:var(--fs-13);text-decoration:none}" +
-    ".sv-main [id]{scroll-margin-top:72px}.sv-toc-narrow{display:none}html{scroll-padding-top:72px}@media (max-width:1099px){.sv-toc-narrow{display:block}.sv-toc-wide{display:none}.sv-wrap.has-toc{grid-template-columns:minmax(0,760px)}.sv-toc{position:static;max-height:none;margin:0 0 8px}}" +
-    "@media (max-width:640px){.sv-bar{padding:0 12px;gap:8px}.sv-made span{display:none}.sv-cover .pagecover{height:140px}.sv-cover .brandcover img{width:90px;height:90px;top:20px}.sv-wrap{padding:0 18px 56px}.sv-icon{width:72px;height:72px;margin-top:-36px}.sv-title{font-size:var(--fs-32)}}" +
+    ".sv-main [id]{scroll-margin-top:72px}.sv-toc-narrow{display:none}html{scroll-padding-top:72px}.sv-wrap.sv-normal{grid-template-columns:minmax(0,1170px)}.sv-wrap.sv-normal.has-toc{grid-template-columns:minmax(0,1170px) 240px}.sv-wrap.sv-full{grid-template-columns:minmax(0,1fr);padding:0 48px 72px}.sv-wrap.sv-full.has-toc{grid-template-columns:minmax(0,1fr) 240px}@media (max-width:1099px){.sv-toc-narrow{display:block}.sv-wrap.sv-normal.has-toc,.sv-wrap.sv-full.has-toc{grid-template-columns:minmax(0,1fr)}.sv-toc-wide{display:none}.sv-wrap.has-toc{grid-template-columns:minmax(0,760px)}.sv-toc{position:static;max-height:none;margin:0 0 8px}}" +
+    "@media (max-width:640px){.sv-wrap.sv-full{padding:0 18px 56px}.sv-bar{padding:0 12px;gap:8px}.sv-made span{display:none}.sv-cover .pagecover{height:140px}.sv-cover .brandcover img{width:90px;height:90px;top:20px}.sv-wrap{padding:0 18px 56px}.sv-icon{width:72px;height:72px;margin-top:-36px}.sv-title{font-size:var(--fs-32)}}" +
+    ".blocks figure.img picture{display:block}.blocks figure.img img[height]{height:auto}.sv-cover .pagecover picture{display:contents}" +
     "@media print{.sv-bar,.sv-toc,.sv-foot,.sv-tt{display:none!important}.sv-cover .pagecover{height:120px;-webkit-print-color-adjust:exact;print-color-adjust:exact}.sv-wrap{display:block;padding:0}.sv-card{break-inside:avoid}a{color:inherit}}";
   const SESSION_S = 30 * 24 * 60 * 60;
   const MAX_TRIES = 5;
@@ -132,6 +137,7 @@
     ["GET|HEAD", /^\/edit\/([^/]+)\/?$/, "edit"],
     ["GET|HEAD", /^\/print\/(.+?)\/?$/, "export"],
     ["GET|HEAD", /^\/media\/([0-9a-f]{16})\/?$/, "media"],
+    ["GET", /^\/api\/media\/([0-9a-f]{16})\/meta\/?$/, "media"],
     ["GET", /^\/api\/(?:tree|search|db\/list)$/, "list"],
     ["GET", /^\/api\/backlinks$/, "read", url => url.searchParams.get("slug")],
     ["POST", /^\/api\/pages$/, "create"],
@@ -141,6 +147,7 @@
     ["POST", new RegExp(P + "\\/rename$"), "edit"],
     ["POST", new RegExp(P + "\\/move$"), "move"],
     ["PATCH", new RegExp(P + "\\/blocks$"), "edit"],
+    ["POST", new RegExp(P + "\\/button\\/[^/]+$"), "edit"],
     ["GET", new RegExp(P + "\\/settings$"), "read"],
     ["PUT", new RegExp(P + "\\/settings$"), "edit"],
     ["GET", new RegExp(P + "\\/comments$"), "read"],
@@ -155,6 +162,8 @@
     ["PATCH", /^\/api\/db\/([^/]+)$/, "edit"],
     ["DELETE", /^\/api\/db\/([^/]+)$/, "delete"],
     ["POST|PATCH|DELETE", /^\/api\/db\/([^/]+)\/(?:rows|properties|views|templates)(?:\/[^/]+)?$/, "edit"],
+    ["POST", /^\/api\/db\/([^/]+)\/rows\/[^/]+\/button\/[^/]+$/, "edit"],
+    ["GET", /^\/api\/db\/([^/]+)\/people$/, "edit"],
     ["GET", /^\/api\/export$/, "export", url => url.searchParams.get("slug")],
     ["GET|HEAD", /^\/([^/]+)\/?$/, "read"],
   ];
@@ -213,7 +222,7 @@
         if (roots.length) return new Response(null, { status: 302, headers: { ...noStore, location: "/" + encodeURIComponent(roots[0]) + "/" } });
         return page401("아직 공유받은 페이지가 없어요.");
       }
-      case "media": return (await mediaReadable(db, path.split("/")[2], visible)) ? pass() : denied();
+      case "media": return (await mediaReadable(db, route.slug, visible)) ? pass() : denied();
       case "any": return pass();
       case "create": {
         const body = await request.clone().json().catch(() => ({}));
@@ -462,7 +471,7 @@
   }
 
   function inviteForm(action, message, values = {}) {
-    return shell("공유 초대", '<h1>공유된 페이지 열기</h1><p>초대받은 이메일과 받은 6자리 코드를 넣어 주세요. 코드는 15분 동안만 쓸 수 있어요.</p>' +
+    return shell("공유 초대", '<h1>공유된 페이지 열기</h1><p>초대받은 이메일과 받은 6자리 코드를 넣어 주세요. 코드는 24시간 동안 쓸 수 있어요.</p>' +
       (message ? '<p class="err" role="alert">' + escapeHtml(message) + "</p>" : "") +
       '<form method="post" action="' + escapeHtml(action) + '"><label for="email">이메일</label><input id="email" name="email" type="email" autocomplete="email" required value="' + escapeHtml(values.email || "") + '">' +
       '<label for="code">코드</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>' +
@@ -470,7 +479,7 @@
   }
 
   function html(body, status = 200, extra = {}) {
-    return new Response(body, { status, headers: { ...noStore, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", "referrer-policy": "same-origin", ...extra } });
+    return new Response(body, { status, headers: { ...noStore, "clear-site-data": '"cache"', "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", "referrer-policy": "same-origin", ...extra } });
   }
 
   async function shareRoutes({ path, method, request, db, env }) {
@@ -485,7 +494,7 @@
       const email = String(form?.get("email") || "").trim().toLowerCase();
       const code = String(form?.get("code") || "").trim();
       const ip = request.headers.get("cf-connecting-ip") || "local";
-      if (!(await hit(db, "verify:" + ip, 20, INVITE_MS))) return html(inviteForm(action, "시도가 너무 많아요. 15분 뒤에 다시 해 주세요.", { email }), 429);
+      if (!(await hit(db, "verify:" + ip, 20, VERIFY_WINDOW_MS))) return html(inviteForm(action, "시도가 너무 많아요. 15분 뒤에 다시 해 주세요.", { email }), 429);
       const idHash = await sha(invite[1]);
       const row = await db.prepare("SELECT i.id_hash, i.rule, i.email, i.code_hash, i.expires, i.tries, i.used, r.page FROM share_invites i JOIN share_rules r ON r.id = i.rule AND r.revoked IS NULL WHERE i.id_hash = ?").bind(idHash).first();
       if (!row || row.used !== null || Number(row.expires) <= Date.now() || Number(row.tries) >= MAX_TRIES) return html(inviteForm(action, "코드가 끝났거나 맞지 않아요. 공유한 사람에게 새 코드를 받아 주세요.", { email }), 401);
@@ -497,7 +506,7 @@
         db.prepare("UPDATE share_invites SET used = ? WHERE id_hash = ?").bind(now, idHash),
         db.prepare("INSERT INTO share_sessions (token_hash, email, links, created, expires) VALUES (?, ?, '[]', ?, ?)").bind(await sha(token), email, now, now + SESSION_S * 1000),
       ]);
-      return new Response(null, { status: 303, headers: { ...noStore, location: "/" + encodeURIComponent(String(row.page)) + "/", "set-cookie": COOKIE + "=" + wsTag(env) + "." + token + "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=" + SESSION_S } });
+      return new Response(null, { status: 303, headers: { ...noStore, "clear-site-data": '"cache"', location: "/" + encodeURIComponent(String(row.page)) + "/", "set-cookie": COOKIE + "=" + wsTag(env) + "." + token + "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=" + SESSION_S } });
     }
     const ask = /^\/s\/r\/([^/]+)$/.exec(path);
     if (ask) {
@@ -523,12 +532,16 @@
       return html(shell("권한 요청", "<h1>요청을 보냈어요</h1><p>공유한 사람이 승인하면 초대 링크와 코드를 받을 수 있어요.</p>"));
     }
     if (path === "/s/logout" && method === "POST") {
-      return new Response(null, { status: 303, headers: { ...noStore, location: "/", "set-cookie": clearCookie } });
+      return new Response(null, { status: 303, headers: { ...noStore, "clear-site-data": '"cache"', location: "/", "set-cookie": clearCookie } });
     }
     return html(shell("공유", "<h1>없는 페이지예요</h1>"), 404);
   }
 
   const PUBLIC_HEADERS = { "cache-control": "private, no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" };
+  // The only script a shared page runs (allowed by its hash): size each sandboxed HTML-block frame to the height it reports.
+  const SV_FRAME_RESIZE = 'addEventListener("message",function(e){var h=e.data&&+e.data.acvH;if(!(h>0))return;document.querySelectorAll("iframe.acv-frame").forEach(function(f){if(f.contentWindow===e.source)f.style.height=Math.min(20000,h)+"px"})})';
+  let svFrameResizeHashValue = null;
+  const svFrameResizeHash = async () => svFrameResizeHashValue || (svFrameResizeHashValue = "sha256-" + btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(SV_FRAME_RESIZE))))));
   const SV_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
   const SV_MOON = SV_ICON + '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>';
   const svPage = (title, inner, extraHead = "") => '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>' + title + '</title>' + extraHead + '</head><body class="sv">' +
@@ -552,12 +565,123 @@
     return ids;
   }
 
-  async function publicPage({ path, method, db, env, request }) {
+  // #61: shared pages send resized AVIF/WebP copies of their images (the acard-image Worker over the IMAGE_RESIZER service
+  // binding) at these widths; the original stays the link target for download. imginfo/<id> in MEDIA keeps each image's
+  // size and a 24 px placeholder so the markup carries width/height (no layout shift).
+  const VARIANT_WIDTHS = [480, 960, 1440];
+  const VARIANT_TYPES = { avif: "image/avif", webp: "image/webp" };
+  const RESIZABLE = /^image\/(?:png|jpeg|webp|avif)$/;
+  const VARIANT_CACHE = "private, max-age=31536000, immutable";
+  const SHARE_CACHE_SECONDS = 300;
+
+  // Attributes for one shared image: WebP srcset on the <img> (AVIF goes in a <source> before it), the size so the box is
+  // reserved before the bytes arrive, lazy below the first image, and on the first one a tiny blurred placeholder.
+  function variantMarkup(base, id, info, sizes, first) {
+    const original = base + "/media/" + id;
+    const attrs = { src: original, decoding: "async", loading: first ? "eager" : "lazy" };
+    if (first) attrs.fetchpriority = "high";
+    if (!info || info.skip || !info.w || !info.h) return { attrs, avif: "" };
+    const steps = VARIANT_WIDTHS.filter(w => w < info.w).map(w => [w, w]);
+    const above = VARIANT_WIDTHS.find(w => w >= info.w);
+    if (above) steps.push([above, info.w]);
+    const set = type => steps.map(([w, real]) => original + "/" + w + "." + type + " " + real + "w").join(", ");
+    attrs.src = original + "/" + steps[Math.min(1, steps.length - 1)][0] + ".webp";
+    attrs.srcset = set("webp");
+    attrs.sizes = sizes;
+    attrs.width = String(info.w);
+    attrs.height = String(info.h);
+    if (first && info.lqip) attrs.style = "background:url(" + info.lqip + ") center/cover no-repeat";
+    return { attrs, avif: set("avif") };
+  }
+
+  async function imageInfo(env, id) {
+    const store = env.MEDIA;
+    if (!store) return null;
+    const known = await store.get("imginfo/" + id, { type: "json", cacheTtl: 86400 }).catch(() => null);
+    if (known) return known;
+    if (!env.IMAGE_RESIZER) return null;
+    const found = await store.getWithMetadata("media/" + id, { type: "arrayBuffer", cacheTtl: 86400 }).catch(() => null);
+    if (!found || found.value === null) return null;
+    let info = { skip: true };
+    if (RESIZABLE.test(String(found.metadata?.mime || ""))) {
+      const res = await env.IMAGE_RESIZER.fetch("https://acard-image/meta", { method: "POST", body: found.value }).catch(() => null);
+      const meta = res && res.ok ? await res.json().catch(() => null) : null;
+      if (!meta || !meta.width || !meta.height) return null;
+      // A placeholder would show through transparent pixels, so only opaque JPEGs get one.
+      info = { w: meta.width, h: meta.height, lqip: meta.format === "image/jpeg" && typeof meta.lqip === "string" && meta.lqip.length < 2000 ? meta.lqip : "" };
+    }
+    await store.put("imginfo/" + id, JSON.stringify(info)).catch(() => {});
+    return info;
+  }
+
+  async function serveVariant(env, id, width, type) {
+    const original = () => serveMedia(env, id);
+    if (!env.IMAGE_RESIZER || !env.MEDIA) return original();
+    const cacheKey = new Request("https://acard-variant.internal/" + (env.ACARD_WORKSPACE || "owner") + "/" + id + "/" + width + "." + type);
+    const cache = typeof caches !== "undefined" ? caches.default : null;
+    const hit = cache ? await cache.match(cacheKey).catch(() => null) : null;
+    if (hit) return hit;
+    const found = await env.MEDIA.getWithMetadata("media/" + id, { type: "arrayBuffer", cacheTtl: 86400 }).catch(() => null);
+    if (!found || found.value === null || !RESIZABLE.test(String(found.metadata?.mime || ""))) return original();
+    const res = await env.IMAGE_RESIZER.fetch("https://acard-image/resize?w=" + width + "&f=" + type, { method: "POST", body: found.value }).catch(() => null);
+    if (!res || !res.ok) return original();
+    const bytes = await res.arrayBuffer();
+    const variant = () => new Response(bytes, { headers: { "content-type": VARIANT_TYPES[type], "cache-control": VARIANT_CACHE, "x-content-type-options": "nosniff" } });
+    if (cache) await cache.put(cacheKey, variant()).catch(() => {});
+    return variant();
+  }
+
+  // The shared HTML is edge-cached under the workspace's live-feed number (workers/acard-live): every committed write
+  // the app tracks (pages, blocks, settings, share rules, media) publishes a notice that moves it, so an edit is a miss.
+  async function liveSeq(env) {
+    if (!env.LIVE || typeof caches === "undefined") return null;
+    const ws = env.ACARD_WORKSPACE || "owner";
+    const res = await env.LIVE.get(env.LIVE.idFromName("live:" + ws)).fetch("https://live/seq").catch(() => null);
+    const body = res && res.ok ? await res.json().catch(() => null) : null;
+    return body && Number.isFinite(body.id) ? body.id : null;
+  }
+
+  function shareCacheKey(env, request, path, seq) {
+    const build = (globalThis.ACARD_BUILD && globalThis.ACARD_BUILD.sha) || "dev";
+    return new Request("https://acard-share.internal/" + new URL(request.url).host + "/" + (env.ACARD_WORKSPACE || "owner") + path + "?v=" + seq + "&b=" + encodeURIComponent(build));
+  }
+
+  async function publicPage(ctx) {
+    const { path, method, request, env } = ctx;
     if (!path.startsWith("/p/")) return null;
+    const cacheable = method === "GET" && !/(?:^|;\s*)acard_guest=/.test(request.headers.get("cookie") || "") && !/\/media\/|\/frame\//.test(path);
+    const seq = cacheable ? await liveSeq(env) : null;
+    const key = seq === null ? null : shareCacheKey(env, request, path, seq);
+    if (key) {
+      const hit = await caches.default.match(key).catch(() => null);
+      // A link that runs out by time changes no row, so the copy carries the link's end and stops being served then.
+      const ends = hit ? Number(hit.headers.get("x-acard-link-ends") || 0) : 0;
+      if (hit && (!ends || ends > Date.now())) {
+        const headers = new Headers(hit.headers);
+        headers.set("cache-control", PUBLIC_HEADERS["cache-control"]);
+        headers.set("x-acard-share-cache", "hit");
+        return new Response(hit.body, { headers });
+      }
+    }
+    const response = await renderPublicPage(ctx);
+    if (!key || !response || response.status !== 200 || !/^text\/html/.test(response.headers.get("content-type") || "")) return response;
+    const html = await response.text();
+    const stored = new Headers(response.headers);
+    stored.set("cache-control", "public, max-age=" + SHARE_CACHE_SECONDS);
+    const put = caches.default.put(key, new Response(html, { headers: stored })).catch(() => {});
+    if (env.ACARD_WAIT) env.ACARD_WAIT(put); else await put;
+    const headers = new Headers(response.headers);
+    headers.set("x-acard-share-cache", "miss");
+    return new Response(html, { headers });
+  }
+
+  async function renderPublicPage({ path, method, db, env, request }) {
     if (method !== "GET" && method !== "HEAD") return new Response(null, { status: 405, headers: { ...PUBLIC_HEADERS, "x-robots-tag": "noindex, nofollow", allow: "GET, HEAD" } });
     // A canonical unpadded base64url encoding of 32 bytes has 43 characters.
-    const match = /^\/p\/([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])(?:\/media\/([0-9a-f]{16})|\/([^/]+)\/?)?$/.exec(path);
+    const match = /^\/p\/([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])(?:\/media\/([0-9a-f]{16})(?:\/(480|960|1440)\.(avif|webp))?|(?:\/(?!frame\/[^/])([^/]+))?(?:\/frame\/([^/]{1,120}))?\/?)$/.exec(path);
     if (!match || !db) return missing(method);
+    // Groups 3-4 are the variant width/type; the rest of the function reads the sub-page as [3] and the frame as [4].
+    const [variantWidth, variantType] = match.splice(3, 2);
     const rule = await db.prepare("SELECT id, page, principal, role, expires, revoked FROM share_rules WHERE token_hash = ? AND principal IN ('link', 'publish')").bind(await sha(match[1])).first();
     if (!rule) return missing(method);
     const now = Date.now();
@@ -568,7 +692,7 @@
     if (match[3]) { try { slug = resolveSlug(decodeURIComponent(match[3])); } catch { return missing(method); } }
     if (shareRole(model, slug, { kind: "token", rule: token }) === "none") return missing(method);
     const guestCookie = /(?:^|;\s*)acard_guest=(o|[0-9a-f]{32})\.([A-Za-z0-9_-]{43})/.exec(request.headers.get("cookie") || "");
-    if (rule.principal === "link" && rule.role !== "read" && guestCookie && guestCookie[1] === wsTag(env) && !match[2]) {
+    if (rule.principal === "link" && rule.role !== "read" && guestCookie && guestCookie[1] === wsTag(env) && !match[2] && !match[4]) {
       const session = await readSession(db, guestCookie[2]);
       if (session) {
         session.links.add(String(rule.id));
@@ -579,33 +703,83 @@
     const found = await readPage(db, slug);
     if (!found) return missing(method);
     const base = sharePrefix(env) + match[1];
+    // HTML/visual blocks load from their own URL: a srcdoc frame would inherit this page's script-free CSP.
+    if (match[4]) {
+      let blockId;
+      try { blockId = decodeURIComponent(match[4]); } catch { return missing(method); }
+      const block = found.blocks.find(item => (item.type === "html" || item.type === "visual" || item.type === "part") && String(item.id) === blockId);
+      const source = block ? String(block.text || "") : "";
+      if (!block || new TextEncoder().encode(source).length > VISUAL_MAX_BYTES) return missing(method);
+      const frameHeaders = { ...PUBLIC_HEADERS, "x-robots-tag": "noindex, nofollow", "content-type": "text/html; charset=utf-8", "content-security-policy": VISUAL_CSP + "; sandbox allow-scripts; frame-ancestors 'self'; base-uri 'none'; form-action 'none'" };
+      if (block.type !== "part") return new Response(method === "HEAD" ? null : visualSrcdoc(source), { headers: frameHeaders });
+      // #38: a shared page runs no page script, so the part's code goes into its frame document (same sandbox and CSP).
+      const partId = String(block.meta?.part || "");
+      const registered = PART_DEFAULT_IDS.has(partId) ? null : await db.prepare("SELECT code FROM parts WHERE id = ?").bind(partId).first().catch(() => null);
+      const themeId = String(block.meta?.theme || "");
+      const builtinTheme = PART_THEMES.find((t) => t.id === themeId);
+      const themeRow = !builtinTheme && themeId ? await db.prepare("SELECT light, dark FROM part_themes WHERE id = ?").bind(themeId).first().catch(() => null) : null;
+      const themeCss = builtinTheme ? partThemeCss(builtinTheme) : themeRow ? partThemeCss({ light: themeRow.light ? JSON.parse(themeRow.light) : undefined, dark: themeRow.dark ? JSON.parse(themeRow.dark) : undefined }) : "";
+      return new Response(method === "HEAD" ? null : partSrcdoc(partId, source, registered ? { html: String(registered.code) } : { code: PART_RUNTIME }, themeId, themeCss), { headers: frameHeaders });
+    }
     const ids = referencedMedia(found.blocks);
     const coverMedia = /^\/media\/([0-9a-f]{16})$/.exec(String(found.settings?.cover || "").trim());
     if (coverMedia) ids.add(coverMedia[1]);
+    const iconMedia = /^\/media\/([0-9a-f]{16})$/.exec(String(found.settings?.icon || "").trim());
+    if (iconMedia) ids.add(iconMedia[1]);
+    const shareIcon = html => iconMedia ? html.replace('src="/media/' + iconMedia[1] + '"', () => 'src="' + base + "/media/" + iconMedia[1] + '"') : html;
     const settings = await db.prepare("SELECT allow_index, site_title FROM share_pages WHERE page = ?").bind(String(rule.page)).first();
     const indexable = rule.principal === "publish" && Number(settings?.allow_index) === 1 && !String(rule.id).startsWith("pl-");
     const robots = indexable ? "index, follow" : "noindex, nofollow";
     if (match[2]) {
       if (!ids.has(match[2])) return missing(method);
-      const media = await serveMedia(env, match[2]);
+      const media = variantWidth ? await serveVariant(env, match[2], Number(variantWidth), variantType) : await serveMedia(env, match[2]);
       if (!media.ok) return missing(method);
       const safeHeaders = new Headers(media.headers);
       for (const [name, value] of Object.entries(PUBLIC_HEADERS)) safeHeaders.set(name, value);
+      if (variantWidth && media.headers.get("cache-control") === VARIANT_CACHE) safeHeaders.set("cache-control", VARIANT_CACHE);
       safeHeaders.set("x-robots-tag", "noindex, nofollow");
       safeHeaders.set("content-security-policy", "default-src 'none'; sandbox");
       safeHeaders.delete("set-cookie");
       return new Response(method === "HEAD" ? null : media.body, { headers: safeHeaders });
     }
-    const contentHeaders = { ...PUBLIC_HEADERS, "x-robots-tag": robots, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src 'self'; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" };
+    const contentHeaders = { ...PUBLIC_HEADERS, "x-robots-tag": robots, "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src 'self'; frame-src 'self'; script-src '" + await svFrameResizeHash() + "'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'", ...(token.expires !== null ? { "x-acard-link-ends": String(token.expires) } : {}) };
     if (method === "HEAD") return new Response(null, { headers: contentHeaders });
     const reachable = slugValue => shareRole(model, slugValue, { kind: "token", rule: token }) !== "none";
     const children = [...model.parents].filter(([child, parent]) => parent === slug && reachable(child)).map(([child]) => child);
     const titles = children.length ? await db.prepare("SELECT slug, title FROM pages WHERE slug IN (" + children.map(() => "?").join(",") + ") AND kind != 'db_row' ORDER BY ord, title").bind(...children).all() : { results: [] };
     // Never ask pageShell, database expansion, tree, comments or backlinks for data.
     const blocks = found.blocks.filter(block => !["breadcrumb", "db_ref", "embed"].includes(block.type));
+    const pagePath = base + (slug !== String(rule.page) ? "/" + encodeURIComponent(slug) : "");
+    const frameBlocks = new Map(blocks.filter(block => (block.type === "html" || block.type === "visual" || block.type === "part") && block.id).map(block => ["acv-f" + String(block.id).replace(/[^\w-]/g, ""), String(block.id)]));
+    const imageIds = [...new Set(blocks.filter(block => block.type === "image").map(block => (/^\/media\/([0-9a-f]{16})$/.exec(String(block.meta?.src || "")) || [])[1]).filter(id => id && ids.has(id)).concat(coverMedia ? [coverMedia[1]] : []))];
+    const infos = new Map(await Promise.all(imageIds.map(async id => [id, await imageInfo(env, id).catch(() => null)])));
+    let firstImage = !coverMedia;
+    let figureShare = 1;
+    const column = found.settings?.width === "full" ? "100vw" : found.settings?.width === "normal" ? "1170px" : "760px";
     const content = new HTMLRewriter().on("*", {
       element(element) {
-        if (element.tagName === "iframe" && element.getAttribute("sandbox") === "allow-scripts" && element.hasAttribute("srcdoc") && !element.hasAttribute("src")) return;
+        if (element.tagName === "figure") figureShare = Math.min(1, Number(/width:\s*(\d+(?:\.\d+)?)%/.exec(element.getAttribute("style") || "")?.[1] || 100) / 100);
+        if (element.tagName === "img") {
+          const media = /^\/media\/([0-9a-f]{16})$/.exec(element.getAttribute("src") || "");
+          if (media && ids.has(media[1])) {
+            const markup = variantMarkup(base, media[1], infos.get(media[1]), "(max-width: 800px) calc(" + figureShare + " * (100vw - 36px)), calc(" + figureShare + " * " + column + ")", firstImage);
+            firstImage = false;
+            // The reader's srcset names /media/<id>?w=, which is cookie-gated; a link visitor only reaches the token routes.
+            for (const name of ["srcset", "sizes", "fetchpriority", "style"]) element.removeAttribute(name);
+            for (const [name, value] of Object.entries(markup.attrs)) element.setAttribute(name, value);
+            if (markup.avif) { element.before('<picture><source type="image/avif" srcset="' + markup.avif + '" sizes="' + markup.attrs.sizes + '">', { html: true }); element.after("</picture>", { html: true }); }
+            element.removeAttribute("data-page");
+            return;
+          }
+        }
+        if (element.tagName === "iframe" && !element.hasAttribute("loading")) element.setAttribute("loading", "lazy");
+        if (element.tagName === "iframe" && element.getAttribute("sandbox") === "allow-scripts" && element.hasAttribute("srcdoc") && !element.hasAttribute("src")) {
+          const frameBlock = frameBlocks.get(element.getAttribute("id") || "");
+          if (!frameBlock) { element.remove(); return; }
+          element.removeAttribute("srcdoc");
+          element.setAttribute("src", pagePath + "/frame/" + encodeURIComponent(frameBlock));
+          return;
+        }
         if (["iframe", "script", "style", "link", "object", "embed"].includes(element.tagName)) { element.remove(); return; }
         for (const name of ["src", "href"]) {
           const value = element.getAttribute(name);
@@ -623,9 +797,10 @@
         }
         element.removeAttribute("data-page");
       },
-    }).transform(new Response(renderBlocks(blocks)));
+    }).transform(new Response(renderBlocks(blocks, { page: { readOnly: true } })));
     // Inline existing reader styles: private static asset routes remain cookie-gated.
-    const styles = await Promise.all(["tokens.css", "style.css"].map(async name => {
+    // #73: lazy/checks.css draws "[ ]" table cells; a link visitor gets no checks chunk, so it rides inline.
+    const styles = await Promise.all(["tokens.css", "style.css", "lazy/checks.css"].map(async name => {
       const asset = await env.ASSETS.fetch(new Request(new URL("/" + name, request.url)));
       return asset.ok ? (await asset.text()).replace(/@import\s+[^;]+;/g, "") : "";
     }));
@@ -644,33 +819,41 @@
     }
     const pageSettings = found.settings || {};
     const bodyHtml = await content.text();
-    const headings = [...bodyHtml.matchAll(/<h([234]) id="([^"]+)">([\s\S]*?)<\/h\1>/g)].map(m => ({ level: Number(m[1]), id: m[2], text: m[3].replace(/<[^>]+>/g, "").trim() })).filter(h => h.text);
+    const headings = [...bodyHtml.matchAll(/<h([2345]) id="([^"]+)">([\s\S]*?)<\/h\1>/g)].map(m => ({ level: Number(m[1]), id: m[2], text: m[3].replace(/<[^>]+>/g, "").trim() })).filter(h => h.text);
     const firstText = (found.blocks.find(block => block.type === "paragraph" && String(block.text || "").trim()) || {}).text || "";
     const description = String(firstText).replace(/\s+/g, " ").trim().slice(0, 160) || (siteTitle || "Acard") + "에서 공유한 페이지예요.";
     const origin = new URL(request.url).origin;
     const pageUrl = origin + base + (slug !== String(rule.page) ? "/" + encodeURIComponent(slug) + "/" : "");
     let cover = coverHtml(found.page, pageSettings);
-    if (coverMedia) cover = cover.replace("/media/" + coverMedia[1], base + "/media/" + coverMedia[1]);
+    if (coverMedia) {
+      const markup = variantMarkup(base, coverMedia[1], infos.get(coverMedia[1]), "100vw", true);
+      const attrs = Object.entries(markup.attrs).map(([name, value]) => " " + name + '="' + escapeHtml(value) + '"').join("");
+      const img = '<img alt=""' + attrs + ">";
+      cover = cover.replace(/<img [^>]*>/, () => markup.avif ? '<picture><source type="image/avif" srcset="' + markup.avif + '" sizes="100vw">' + img + "</picture>" : img);
+    }
     else if (/^https?:/.test(String(pageSettings.cover || "").trim())) cover = coverHtml(found.page, { ...pageSettings, cover: "" });
     const updated = found.page.updated ? new Date(Number(found.page.updated)).toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Seoul" }) + "에 수정됨" : "";
     const stamp = rule.principal === "link" ? "공유 링크 · 읽기 전용" : siteTitle ? escapeHtml(siteTitle) : "공개 페이지 · 읽기 전용";
-    const crumb = '<a class="sv-crumb" href="' + base + '"><span class="sv-ico">' + pageIconHtml(rootRow ? { slug: String(rule.page) } : found.page, rootRow ? {} : pageSettings, 20) + '</span><span>' + escapeHtml(String(rootRow ? rootRow.title : found.page.title)) + "</span></a>" +
+    const crumb = '<a class="sv-crumb" href="' + base + '"><span class="sv-ico">' + (rootRow ? pageIconHtml({ slug: String(rule.page) }, {}, 20) : shareIcon(pageIconHtml(found.page, pageSettings, 20))) + '</span><span>' + escapeHtml(String(rootRow ? rootRow.title : found.page.title)) + "</span></a>" +
       (rootRow ? '<span class="sv-sep">/</span><span class="sv-here">' + escapeHtml(found.page.title) + "</span>" : "");
     const toc = headings.length >= 2 ? '<aside class="sv-toc" aria-label="목차"><details open><summary>목차</summary><ol>' + headings.map((h, i) => '<li class="l' + h.level + '"><a href="#' + escapeHtml(h.id) + '"><span class="n">' + (i + 1) + "</span>" + escapeHtml(h.text) + "</a></li>").join("") + "</ol></details></aside>" : "";
     const cards = subRows.length ? '<section class="sv-subs" aria-label="하위 페이지"><h2>하위 페이지</h2><div class="sv-cards">' + subRows.map(row => {
       const meta = subMeta.get(String(row.slug)) || {};
-      return '<a class="sv-card" href="' + base + "/" + encodeURIComponent(String(row.slug)) + '/"><span class="sv-cico">' + pageIconHtml({ slug: String(row.slug), ws: "member" }, { icon: meta.icon || "" }, 24) + '</span><span class="sv-ct"><b>' + escapeHtml(String(row.title)) + "</b>" + (meta.text ? "<small>" + escapeHtml(String(meta.text).replace(/\s+/g, " ").slice(0, 70)) + "</small>" : "") + "</span></a>";
+      return '<a class="sv-card" href="' + base + "/" + encodeURIComponent(String(row.slug)) + '/"><span class="sv-cico">' + pageIconHtml({ slug: String(row.slug), ws: "member" }, { icon: /^\/media\//.test(String(meta.icon || "")) ? "" : meta.icon || "" }, 24) + '</span><span class="sv-ct"><b>' + escapeHtml(String(row.title)) + "</b>" + (meta.text ? "<small>" + escapeHtml(String(meta.text).replace(/\s+/g, " ").slice(0, 70)) + "</small>" : "") + "</span></a>";
     }).join("") + "</div></section>" : "";
     const title = escapeHtml(found.page.title) + (siteTitle ? " · " + escapeHtml(siteTitle) : "");
     const og = '<meta name="robots" content="' + (indexable ? "index" : "noindex") + '"><meta name="description" content="' + escapeHtml(description) + '">' +
       '<meta property="og:type" content="article"><meta property="og:site_name" content="' + escapeHtml(siteTitle || "Acard") + '"><meta property="og:title" content="' + escapeHtml(found.page.title) + '"><meta property="og:description" content="' + escapeHtml(description) + '">' +
       '<meta property="og:url" content="' + escapeHtml(pageUrl) + '"><meta property="og:image" content="' + origin + '/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:locale" content="ko_KR">' +
       '<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="' + escapeHtml(found.page.title) + '"><meta name="twitter:description" content="' + escapeHtml(description) + '"><meta name="twitter:image" content="' + origin + '/og.png">' +
-      '<link rel="icon" href="/favicon.svg" type="image/svg+xml"><style>' + styles.join("\n") + "\n" + VISUAL_CSS + "\n" + SV_BASE_CSS + SV_PAGE_CSS + "</style>";
+      (frameBlocks.size ? "<script>" + SV_FRAME_RESIZE + "</script>" : "") + '<link rel="icon" href="/favicon.svg" type="image/svg+xml"><style>' + styles.join("\n") + "\n" + VISUAL_CSS + "\n" +
+      // notion-parity-1: block colors, heading 4 and toggle headings ride inline in reader pages; the sanitizer above drops
+      // inline <style> from the body, so the shared page carries the same rules here (CSP and sanitizing unchanged).
+      BLOCK_COLOR_CSS + HEADING4_CSS + TOGGLE_HEADING_CSS + componentCss() + "\n" + SV_BASE_CSS + SV_PAGE_CSS + "</style>";
     const html = svPage(title,
       '<header class="sv-bar"><nav class="sv-path" aria-label="위치">' + crumb + '</nav><span class="sv-grow"></span><a class="sv-made" href="/" aria-label="Acard로 만들었어요"><svg class="wordmark sv-wm" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg><span>로 만들었어요</span></a><label for="sv-tt" class="sv-theme" title="테마 바꾸기">' + SV_MOON + "</label></header>" +
       '<div class="sv-cover">' + cover + "</div>" +
-      '<div class="sv-wrap' + (toc ? " has-toc" : "") + '"><main class="sv-main"><article><div class="sv-icon" aria-hidden="true">' + pageIconHtml(found.page, pageSettings, 88) + "</div>" +
+      '<div class="sv-wrap' + (toc ? " has-toc" : "") + (pageSettings.width === "full" ? " sv-full" : pageSettings.width === "normal" ? " sv-normal" : "") + '"><main class="sv-main"><article><div class="sv-icon" aria-hidden="true">' + shareIcon(pageIconHtml(found.page, pageSettings, 88)) + "</div>" +
       '<h1 class="sv-title">' + escapeHtml(found.page.title) + '</h1><p class="sv-meta"><span>' + stamp + "</span>" + (updated ? "<span>" + updated + "</span>" : "") + "</p>" +
       '<div class="sv-toc-narrow">' + toc + '</div><div class="blocks">' + bodyHtml + "</div>" + cards + "</article></main>" + toc.replace('class="sv-toc"', 'class="sv-toc sv-toc-wide"') + "</div>" +
       '<footer class="sv-foot"><a href="/"><img src="/logo.svg" alt="" width="16" height="16">Acard로 만들었어요</a></footer>', og);
@@ -683,7 +866,18 @@
     return "name:" + principal.name;
   }
 
-  async function hasAgentRules(db, key) {
+  // Asked several times per agent request (scope narrowing, then the operation); the db object lives for one request.
+  const agentRuleSeen = new WeakMap();
+  function hasAgentRules(db, key, principal) {
+    // A token principal already says whether it has rules (agent-api.js principalFromToken reads it with the token).
+    if (principal && typeof principal.agentRules === "boolean" && key === "token:" + principal.tokenId) return principal.agentRules;
+    let seen = agentRuleSeen.get(db);
+    if (!seen) agentRuleSeen.set(db, (seen = new Map()));
+    if (!seen.has(key)) seen.set(key, agentRuleLookup(db, key));
+    return seen.get(key);
+  }
+
+  async function agentRuleLookup(db, key) {
     return Boolean(await db.prepare("SELECT 1 AS x FROM share_rules WHERE principal = ? AND revoked IS NULL LIMIT 1").bind("agent:" + key).first());
   }
 
@@ -695,14 +889,27 @@
       guestFetch,
       async agentScopes(db, principal, slug) {
         const key = agentKey(principal);
-        if (!slug || !(await hasAgentRules(db, key))) return principal.scopes;
+        if (!slug || !(await hasAgentRules(db, key, principal))) return principal.scopes;
         return agentScopes(await loadModel(db), slug, key, principal.scopes);
       },
       async agentReadable(db, principal, slugs) {
         const key = agentKey(principal);
-        if (!(await hasAgentRules(db, key))) return null;
+        if (!(await hasAgentRules(db, key, principal))) return null;
         const model = await loadModel(db);
         return new Set(slugs.filter(slug => agentScopes(model, slug, key, principal.scopes).includes("read")));
+      },
+      // 사람 속성(C10) 후보: 이 페이지(또는 조상)에 걸린 활성 이메일 공유 규칙의 이메일과 역할. 다른 페이지의 초대는 들어가지 않는다.
+      async dbPeople(db, slug) {
+        const model = await loadModel(db);
+        const chain = new Set(shareChain(model, slug));
+        const best = new Map();
+        for (const rule of model.rules) {
+          if (!chain.has(rule.page) || !rule.principal.startsWith("email:") || !ruleActive(rule, model.now)) continue;
+          const email = rule.principal.slice(6).toLowerCase();
+          const known = best.get(email);
+          if (!known || shareRank(rule.role) > shareRank(known)) best.set(email, rule.role);
+        }
+        return [...best].map(([email, role]) => ({ email, role })).sort((a, b) => a.email.localeCompare(b.email));
       },
       async shareMoveCheck(db, slug, parent, confirmed) {
         if (confirmed) return null;

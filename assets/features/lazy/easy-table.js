@@ -82,6 +82,7 @@
       [
         ["↑ 오름차순 정렬", function () { sortBy(ci, 1); }],
         ["↓ 내림차순 정렬", function () { sortBy(ci, -1); }],
+        ["☑ 체크박스 열로", function () { checkCol(ci); }],
         ["← 왼쪽에 열 넣기", function () { addCol(ci); }],
         ["→ 오른쪽에 열 넣기", function () { addCol(ci + 1); }],
         ["열 지우기", function () { removeCol(ci); }, "danger"]
@@ -104,6 +105,12 @@
         if (allNum) return ((numeric(a[ci]) || 0) - (numeric(b[ci]) || 0)) * dir;
         return String(a[ci]).localeCompare(String(b[ci]), "ko") * dir;
       });
+      commit(true);
+    }
+    // #34: a cell holding "[ ]" / "[x]" is a checkbox (markdown keeps the text, the reader toggles it too).
+    var CHECK = /^\[( |x|X)?\]$/;
+    function checkCol(ci) {
+      meta.rows.forEach(function (r) { if (!CHECK.test(String(r[ci]).trim())) r[ci] = "[ ]"; });
       commit(true);
     }
     function addCol(at) {
@@ -146,6 +153,19 @@
     }
 
     function cell(r, c, value) {
+      if (r >= 0 && CHECK.test(String(value).trim())) {
+        var box = doc.createElement("button");
+        var on = /x/i.test(value);
+        box.type = "button"; box.className = "cell et-check" + (on ? " on" : "");
+        box.dataset.r = String(r); box.dataset.c = String(c);
+        box.setAttribute("role", "checkbox"); box.setAttribute("aria-checked", String(on));
+        box.setAttribute("aria-label", (r + 1) + "행 " + cols()[c]);
+        box.addEventListener("click", function () { meta.rows[r][c] = on ? "[ ]" : "[x]"; commit(true); });
+        box.addEventListener("keydown", function (ev) {
+          if (ev.key === "Backspace" || ev.key === "Delete") { ev.preventDefault(); meta.rows[r][c] = ""; pendingFocus[block.id] = [r, c]; commit(true); }
+        });
+        return box;
+      }
       var el = doc.createElement("div");
       el.className = "cell";
       el.contentEditable = "true";

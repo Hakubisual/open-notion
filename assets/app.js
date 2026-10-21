@@ -4,10 +4,11 @@
     var form = event.target;
     if (new URL(form.action).pathname !== "/__logout" || !window.caches || !navigator.locks) return;
     event.preventDefault();
-    localStorage.setItem("acard-cache-epoch", String(Date.now()));
-    navigator.locks.request("acard-recent-cache", function () {
+    var id = (document.querySelector('meta[name="acard-id"]') || {}).content;
+    if (id) localStorage.setItem("acard-cache-epoch:" + id, String(Date.now()));
+    Promise.race([navigator.locks.request("acard-recent-cache", function () {
       return caches.delete("acard-recent-cache");
-    }).then(function () { form.submit(); });
+    }), new Promise(function (r) { setTimeout(r, 2000); })]).finally(function () { form.submit(); });
   }, true);
   var ready = document.readyState !== "loading";
   var listeners = [];
@@ -28,15 +29,36 @@
     listeners.splice(0).forEach(notify);
   }, { once: true });
 })();
+// Reading position (#40): a reader page opened again (closed and reopened tab, window or app) goes back to where it was
+// left; the last 50 pages are kept. A link inside Acard opens at the top as before; #anchors, reload and back/forward keep
+// the browser's own position.
+(function () {
+  var id = (document.querySelector('meta[name="acard-id"]') || {}).content;
+  if (!id) return;
+  var K = "acard-pos:" + id, p = location.pathname, n = performance.getEntriesByType("navigation")[0], m;
+  function read() { try { m = JSON.parse(localStorage[K]); } catch (e) {} return m || {}; }
+  function save() {
+    m = read(); delete m[p];
+    if (scrollY) m[p] = Math.round(scrollY);
+    var k = Object.keys(m); if (k.length > 50) delete m[k[0]];
+    try { localStorage[K] = JSON.stringify(m); } catch (e) {}
+  }
+  if (!document.body.classList.contains("reader")) return;
+  if (read()[p] && !location.hash && (!n || n.type == "navigate") && document.referrer.indexOf(location.origin)) scrollTo({ top: m[p], behavior: "instant" });
+  addEventListener("pagehide", save);
+  document.addEventListener("visibilitychange", function () { document.hidden && save(); });
+  document.addEventListener("acard:before-navigate", save);
+  document.addEventListener("acard:navigated", function () { p = location.pathname; });
+})();
 (function () {
   var root = document.documentElement;
-  var KEY = "dori-notes-theme";
-  var SIDE_KEY = "dori-notes-sidebar";
-  var RECENT_KEY = "dori-notes-recent";
+  var id = (document.querySelector('meta[name="acard-id"]') || {}).content;
+  var KEY = id && "dori-notes-theme:" + id;
+  var SIDE_KEY = id && "dori-notes-sidebar:" + id;
+  var RECENT_KEY = id && "dori-notes-recent:" + id;
   var stored = null;
-  try { stored = localStorage.getItem(KEY); } catch (e) { stored = null; }
+  try { stored = KEY && localStorage.getItem(KEY); } catch (e) { stored = null; }
   root.setAttribute("data-theme", stored === "light" || stored === "dark" ? stored : "auto");
-
   // 테마: auto -> light -> dark -> auto (시스템 설정을 따르는 상태 포함)
   function themeLabel(mode) {
     return mode === "light" ? "라이트" : mode === "dark" ? "다크" : "시스템";
@@ -55,14 +77,14 @@
       var current = root.getAttribute("data-theme") || "auto";
       var next = current === "auto" ? "light" : current === "dark" ? "auto" : "dark";
       root.setAttribute("data-theme", next);
-      try { localStorage.setItem(KEY, next); } catch (e) {}
+      try { if (KEY) localStorage.setItem(KEY, next); } catch (e) {}
       paintTheme();
     });
   }
 
   // 사이드바 접기 (데스크톱). 모바일 드로어는 그대로 남겨 둔다.
   var collapsed = null;
-  try { collapsed = localStorage.getItem(SIDE_KEY); } catch (e) { collapsed = null; }
+  try { collapsed = SIDE_KEY && localStorage.getItem(SIDE_KEY); } catch (e) { collapsed = null; }
   function paintCollapse() {
     var btn = document.getElementById("collapse");
     if (!btn) return;
@@ -73,24 +95,41 @@
     btn.title = isCollapsed ? "사이드바 펴기 (Ctrl+B)" : "사이드바 접기 (Ctrl+B)";
     btn.textContent = isCollapsed ? "⟩" : "⟨";
   }
+  // Reopen button for the collapsed desktop sidebar (#27): made here, outside #main, so live re-renders keep it.
+  var collapseBtn = document.getElementById("collapse"), sideOpen = null;
+  if (collapseBtn) {
+    sideOpen = document.createElement("button");
+    sideOpen.type = "button"; sideOpen.className = "icon"; sideOpen.id = "side-open";
+    sideOpen.setAttribute("aria-label", "사이드바 열기"); sideOpen.setAttribute("aria-controls", "sidebar"); sideOpen.title = "사이드바 열기 (Ctrl+B)";
+    var ico = document.querySelector("#menu .ico");
+    if (ico) { ico = ico.cloneNode(false); ico.innerHTML = '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18m5-12 3 3-3 3"/>'; sideOpen.appendChild(ico); }
+    document.body.appendChild(sideOpen);
+  }
   function toggleCollapse() {
+    var a = document.activeElement;
     collapsed = collapsed === "1" ? "0" : "1";
-    try { localStorage.setItem(SIDE_KEY, collapsed); } catch (e) {}
+    try { if (SIDE_KEY) localStorage.setItem(SIDE_KEY, collapsed); } catch (e) {}
     paintCollapse();
+    // Keep keyboard focus on the button that is visible now (#27).
+    if (a && (a === collapseBtn || a === sideOpen)) (collapsed === "1" ? sideOpen : collapseBtn).focus();
   }
   paintCollapse();
-  var collapseBtn = document.getElementById("collapse");
   if (collapseBtn) collapseBtn.addEventListener("click", toggleCollapse);
+  if (sideOpen) sideOpen.addEventListener("click", toggleCollapse);
 
   // 열어 본 페이지 기록 (빠른 검색 팔레트에 쓴다)
-  var here = location.pathname.replace(/^\//, "").replace(/\/$/, "") || "index";
-  var title = (document.querySelector("#article h1") || {}).textContent || here;
   var recents = [];
-  try { recents = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { recents = []; }
-  recents = recents.filter(function (r) { return r && r.slug && r.slug !== here; });
-  recents.unshift({ slug: here, title: String(title).trim() || here });
-  recents = recents.slice(0, 8);
-  try { localStorage.setItem(RECENT_KEY, JSON.stringify(recents)); } catch (e) {}
+  function remember() {
+    var here = window.AcardReader.slug;
+    var title = (document.querySelector("#article h1") || {}).textContent || here;
+    try { recents = JSON.parse(RECENT_KEY && localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { recents = []; }
+    recents = recents.filter(function (r) { return r && r.slug && r.slug !== here; });
+    recents.unshift({ slug: here, title: String(title).trim() || here });
+    recents = recents.slice(0, 8);
+    try { if (RECENT_KEY) localStorage.setItem(RECENT_KEY, JSON.stringify(recents)); } catch (e) {}
+  }
+  remember();
+  document.addEventListener("acard:navigated", remember);
 
   function openOverlay(id) {
     var el = document.getElementById(id);
@@ -115,11 +154,10 @@
 
   function itemHtml(item, selected) {
     return '<a role="option" href="/' + (item.slug === "index" ? "" : encodeURIComponent(item.slug) + "/") + '"' +
-      (item.slug === "index" ? ' href="/"' : "") +
       (selected ? ' class="on"' : "") + ">" +
-      "<span class=\"pt\">" + (item.title || item.slug) + "</span>" +
+      "<span class=\"pt\">" + esc(item.title || item.slug) + "</span>" +
       (item.kind === "db" ? '<span class=\"dbmark\">표</span>' : "") +
-      (item.snippet ? '<span class=\"ps\">' + item.snippet + "</span>" : "") +
+      (item.snippet ? '<span class=\"ps\">' + esc(item.snippet) + "</span>" : "") +
       "</a>";
   }
   function renderPalette() {
@@ -152,11 +190,12 @@
     if (!paletteTree) fetch("/api/tree").then(function (r) { return r.ok ? r.json() : { pages: [] }; }).then(function (d) { paletteTree = d.pages || []; if (asked === searchSeq) search(q, true); }).catch(function () { paletteTree = []; });
     if (timer) clearTimeout(timer);
     if (!remote) { timer = setTimeout(function () { if (asked === searchSeq) search(q, true); }, 150); return; }
-    fetch("/api/search?q=" + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { results: [] }; }).then(function (data) {
+    fetch("/api/search?q=" + encodeURIComponent(q)).then(function (r) { if (!r.ok) throw Error(String(r.status)); return r.json(); }).then(function (data) {
       if (asked !== searchSeq) return;
       var seen = {};
       paletteItems.forEach(function (item) { seen[item.slug] = true; });
-      var hits = (data.results || []).filter(function (hit) { return !seen[hit.slug] && match((hit.title || "") + " " + (hit.hit || "")); }).map(function (hit) {
+      // The server already matched every word against the whole page; the snippet shows only the first word's spot.
+      var hits = (data.results || []).filter(function (hit) { return !seen[hit.slug]; }).map(function (hit) {
         var text = hit.hit || "";
         return { slug: hit.slug, title: hit.title, snippet: text.length > 90 ? text.slice(0, 90) + "…" : text };
       });
@@ -190,7 +229,9 @@
   function followSelected() {
     var item = paletteItems[paletteSel];
     if (!item) return;
-    location.href = "/" + (item.slug === "index" ? "" : encodeURIComponent(item.slug) + "/");
+    closePalette();
+    var url = "/" + (item.slug === "index" ? "" : encodeURIComponent(item.slug) + "/");
+    if (window.AcardReader.navigate) window.AcardReader.navigate(url); else location.href = url;
   }
   var paletteOpenBtn = document.getElementById("palette-open");
   if (paletteOpenBtn) paletteOpenBtn.addEventListener("click", openPalette);
@@ -208,42 +249,50 @@
   if (paletteList) paletteList.addEventListener("click", function (ev) {
     var a = ev.target && ev.target.closest ? ev.target.closest("a") : null;
     if (!a) return;
-    ev.preventDefault();
-    location.href = a.getAttribute("href");
+    closePalette();
   });
   if (palette) palette.addEventListener("mousedown", function (ev) {
     if (ev.target === palette) closePalette();
   });
 
-  // 더보기 메뉴
-  var moreBtn = document.getElementById("more");
-  var moreMenu = document.getElementById("more-menu");
-  if (moreBtn && moreMenu) {
-    moreBtn.addEventListener("click", function () {
-      var open = moreMenu.hidden;
-      moreMenu.hidden = !open;
-      moreBtn.setAttribute("aria-expanded", open ? "true" : "false");
-    });
-    moreBtn.parentNode.addEventListener("keydown", function (ev) {
-      var k = ev.key, items = [].slice.call(moreMenu.children), i = items.indexOf(document.activeElement);
-      if (moreMenu.hidden) return;
-      if (k == "Escape") { moreBtn.click(); moreBtn.focus(); }
-      if (k == "ArrowDown" || k == "ArrowUp") { ev.preventDefault(); items[(i + (k == "ArrowUp" ? items.length - 1 : 1)) % items.length].focus(); }
-    });
-    document.addEventListener("click", function (ev) {
-      if (moreMenu.hidden) return;
-      if (!moreBtn.contains(ev.target) && !moreMenu.contains(ev.target)) {
-        moreMenu.hidden = true;
-        moreBtn.setAttribute("aria-expanded", "false");
-      }
-    });
+  // Trash actions, the home view tabs and the ⋯ page width live in /lazy/reader-tools.js and load on first use.
+  function tools(fn) {
+    if (window.AcardTools) return fn(window.AcardTools);
+    document.head.append(Object.assign(document.createElement("link"), { rel: "stylesheet", href: "/lazy/reader-tools.css?v=__READER_TOOLS_CSS__" }));
+    document.head.append(Object.assign(document.createElement("script"), { src: "/lazy/reader-tools.js?v=__READER_TOOLS__", onload: function () { fn(window.AcardTools); } }));
   }
+  window.AcardReaderTools = tools;
+
+  // 더보기 메뉴. The reader's ⋯ sits in #main, which live.js swapReader() replaces, so look the button up on
+  // every event instead of binding to the first copy (#24).
+  function moreEls() { return { btn: document.getElementById("more"), menu: document.getElementById("more-menu") }; }
+  document.addEventListener("click", function (ev) {
+    var m = moreEls();
+    if (!m.btn || !m.menu) return;
+    if (m.btn.contains(ev.target)) {
+      var open = m.menu.hidden;
+      if (open) tools(function (t) { t.width(m.menu); });
+      m.menu.hidden = !open;
+      m.btn.setAttribute("aria-expanded", open ? "true" : "false");
+    } else if (!m.menu.hidden && !m.menu.contains(ev.target)) {
+      m.menu.hidden = true;
+      m.btn.setAttribute("aria-expanded", "false");
+    }
+  });
+  document.addEventListener("keydown", function (ev) {
+    var m = moreEls(), k = ev.key;
+    if (!m.btn || !m.menu || m.menu.hidden || !m.btn.parentNode.contains(ev.target)) return;
+    var items = [].slice.call(m.menu.children), i = items.indexOf(document.activeElement);
+    if (k == "Escape") { m.btn.click(); m.btn.focus(); }
+    if (k == "ArrowDown" || k == "ArrowUp") { ev.preventDefault(); items[(i + (k == "ArrowUp" ? items.length - 1 : 1)) % items.length].focus(); }
+  });
 
   var shortcutsEl = document.getElementById("shortcuts");
-  var shortcutsOpen = document.getElementById("shortcuts-open");
   var shortcutsClose = document.getElementById("shortcuts-close");
-  if (shortcutsOpen) shortcutsOpen.addEventListener("click", function () {
-    if (moreMenu) moreMenu.hidden = true;
+  document.addEventListener("click", function (ev) {
+    if (!ev.target.closest || !ev.target.closest("#shortcuts-open")) return;
+    var menu = moreEls().menu;
+    if (menu) menu.hidden = true;
     openOverlay("shortcuts");
   });
   if (shortcutsClose) shortcutsClose.addEventListener("click", function () { closeOverlay("shortcuts"); });
@@ -265,7 +314,7 @@
       if (shortcutsEl && !shortcutsEl.hidden) closeOverlay("shortcuts"); else openOverlay("shortcuts");
       return;
     }
-    if (mod && (ev.key === "b" || ev.key === "B")) {
+    if (mod && (ev.key === "b" || ev.key === "B" || ev.key === "\\")) {
       ev.preventDefault();
       toggleCollapse();
       return;
@@ -294,7 +343,6 @@
     drawerClose.textContent = "×";
     drawerClose.setAttribute("aria-label", "메뉴 닫기");
     sidebar.querySelector(".side-brand").appendChild(drawerClose);
-    var behindDrawer = document.querySelectorAll(".reader .mbar, .reader .shell > main, .reader .thumbbar");
     var drawerScroll = 0;
     var drawerOpener = menu;
     function setDrawer(open, restoreFocus) {
@@ -312,7 +360,7 @@
       document.body.classList.toggle("drawer-open", open);
       menu.setAttribute("aria-expanded", String(open));
       if (thumbPages) thumbPages.setAttribute("aria-expanded", String(open));
-      behindDrawer.forEach(function (el) { el.inert = open; });
+      document.querySelectorAll(".reader .mbar, .reader .shell > main, .reader .thumbbar").forEach(function (el) { el.inert = open; });
       if (open) drawerClose.focus({ preventScroll: true });
       else if (wasOpen) {
         document.body.style.removeProperty("--drawer-scroll-top");
@@ -344,6 +392,7 @@
       else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
     });
     phone.addEventListener("change", function () { setDrawer(false, false); });
+    document.addEventListener("acard:before-navigate", function () { setDrawer(false, false); });
     setDrawer(false, false);
   } else if (menu && sidebar) {
     var toggleSidebar = function () {
@@ -417,79 +466,6 @@
   input.addEventListener("input", function () { render(input.value); });
   input.addEventListener("keydown", function (ev) { if (ev.key === "Escape") { input.value = ""; render(""); input.blur(); } });
 })();
-(function () {
-  var bar = document.querySelector('.home-tasks [role="tablist"]');
-  if (!bar) return;
-  // AcardReaderTools is set later in this file: defer so a /?view= load does not call it too early.
-  function go(tab, push) { setTimeout(function () { AcardReaderTools(function (t) { t.homeTab(bar, tab, push); }); }); }
-  bar.addEventListener("click", function (ev) { var tab = ev.target.closest('[role="tab"]'); if (tab && tab.getAttribute("aria-selected") !== "true") go(tab, true); });
-  var wanted = new URLSearchParams(location.search).get("view");
-  var start = wanted && bar.querySelector('[data-view="' + wanted.replace(/\W/g, "") + '"]');
-  if (start && start.getAttribute("aria-selected") !== "true") go(start, false);
-})();
-(function () {
-  var box = document.getElementById("backlinks");
-  if (!box) return;
-  var slug = location.pathname.replace(/^\//, "").replace(/\/$/, "") || "index";
-  fetch("/api/backlinks?slug=" + encodeURIComponent(slug)).then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
-    var list = data && data.backlinks ? data.backlinks : [];
-    if (!list.length) return;
-    box.innerHTML = "<h3>이 페이지를 가리키는 곳</h3>" + list.map(function (b) {
-      return '<a href="/' + b.slug + '/">' + (b.title || b.slug) + "</a>";
-    }).join("");
-    box.hidden = false;
-  }).catch(function () {});
-})();
-(function () {
-  var overlay = null;
-  document.addEventListener("click", function (ev) {
-    var link = ev.target.closest ? ev.target.closest("a.imgview") : null;
-    if (!link) return;
-    var img = link.querySelector("img");
-    if (!img) return;
-    ev.preventDefault();
-    if (!overlay) {
-      overlay = document.createElement("div");
-      overlay.className = "lightbox";
-      overlay.addEventListener("click", function () { overlay.classList.remove("on"); });
-      document.addEventListener("keydown", function (e) { if (e.key === "Escape") overlay.classList.remove("on"); });
-      document.body.appendChild(overlay);
-    }
-    overlay.innerHTML = "";
-    var big = document.createElement("img");
-    big.src = img.src;
-    big.alt = img.alt || "";
-    overlay.appendChild(big);
-    overlay.classList.add("on");
-  });
-})();
-
-(function () {
-  var links = Array.prototype.slice.call(document.querySelectorAll(".toc a"));
-  if (!links.length || !("IntersectionObserver" in window)) return;
-  var byId = {};
-  var targets = [];
-  links.forEach(function (a) {
-    var id = decodeURIComponent((a.getAttribute("href") || "").slice(1));
-    var el = id ? document.getElementById(id) : null;
-    if (!el) return;
-    byId[id] = a;
-    targets.push(el);
-  });
-  if (!targets.length) return;
-  var visible = {};
-  function paint() {
-    var current = null;
-    for (var i = 0; i < targets.length; i++) { if (visible[targets[i].id]) { current = targets[i].id; break; } }
-    links.forEach(function (a) { a.classList.remove("on"); });
-    if (current && byId[current]) byId[current].classList.add("on");
-  }
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting; });
-    paint();
-  }, { rootMargin: "-80px 0px -65% 0px", threshold: 0 });
-  targets.forEach(function (t) { io.observe(t); });
-})();
 
 (function () {
   var side = document.getElementById("sidebar");
@@ -550,24 +526,18 @@
     });
     else if (act === "trash") tools(function (t) { t.trash(show, list, esc, when); });
     else if (act === "new") {
-      // Untitled page, cursor in the title field - no blocking window.prompt (#18).
-      fetch("/api/pages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "제목 없음" }) })
-        .then(function (r) { return r.json(); }).then(function (p) { if (p && p.slug) location.href = "/edit/" + encodeURIComponent(p.slug) + "/?new"; });
+      // Untitled page, cursor in the title field (#18); the editor creates it, so the click never waits (#30).
+      location.href = "/edit/" + ("page-" + Math.random().toString(36).slice(2, 8)) + "/?new&create";
     }
   });
-  // Trash actions and the home view tabs live in /lazy/reader-tools.js and load on first use.
-  function tools(fn) {
-    if (window.AcardTools) return fn(window.AcardTools);
-    document.head.append(Object.assign(document.createElement("link"), { rel: "stylesheet", href: "/lazy/reader-tools.css?v=__READER_TOOLS_CSS__" }));
-    document.head.append(Object.assign(document.createElement("script"), { src: "/lazy/reader-tools.js?v=__READER_TOOLS__", onload: function () { fn(window.AcardTools); } }));
-  }
-  window.AcardReaderTools = tools;
+  var tools = window.AcardReaderTools;
   setTimeout(function () { document.head.append(Object.assign(document.createElement("script"), { src: "/lazy/scrollbars.js?v=__SCROLLBARS__" })); }, 600);
   var close = document.getElementById("sidepanel-close");
   if (close) close.addEventListener("click", function () { panel.hidden = true; });
   if (panel) panel.addEventListener("mousedown", function (ev) { if (ev.target === panel) panel.hidden = true; });
   document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && panel) panel.hidden = true; });
 
+  function mountPageActions() {
   var share = document.getElementById("share");
   // The build stamps the lazy share dialog's content hash into __SHARE_DIALOG__.
   if (share) share.onclick = function () {
@@ -585,4 +555,33 @@
       fetch(base, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ favorite: next }) }).then(function (r) { if (!r.ok) paint(!next); }).catch(function () { paint(!next); });
     });
   }
+  }
+  mountPageActions();
+  document.addEventListener("acard:page-fresh", mountPageActions);
+})();
+
+// Navigation is a non-blocking chunk; clicks during its load wait for the same singleton.
+(function () {
+  if (!document.body.classList.contains("reader")) return;
+  var pending;
+  function load() {
+    return pending || (pending = new Promise(function (resolve, reject) {
+      var script = document.createElement("script");
+      script.src = "/lazy/reader-navigation.js?v=__READER_NAVIGATION__";
+      script.onload = function () { document.removeEventListener("click", first, true); resolve(); };
+      script.onerror = reject;
+      document.head.appendChild(script);
+    }));
+  }
+  function first(e) {
+    var a = e.target.closest && e.target.closest("a[href]"), u = a && new URL(a.href, location.href);
+    if (!a || e.defaultPrevented || e.button > 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.hasAttribute("download") || a.target && a.target !== "_self" || u.origin !== location.origin || !(/^\/(?!edit\/|p\/|s\/|api\/|__|login\/|signup\/|onboarding\/|settings\/|connect\/|admin\/)[^/.]+\/$/.test(u.pathname) || u.pathname === "/") || u.pathname === location.pathname && u.search === location.search && u.hash) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    load().then(function () { window.AcardReader.navigate(u.href); }, function () { location.assign(u.href); });
+  }
+  document.addEventListener("click", first, true);
+  window.AcardReader.on("ready", function () {
+    document.head.appendChild(Object.assign(document.createElement("script"), { src: "/lazy/reader-enhancements.js?v=__READER_ENHANCEMENTS__" }));
+    load().catch(function () {});
+  });
 })();

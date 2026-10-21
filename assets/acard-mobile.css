@@ -25,7 +25,7 @@ html[data-theme="dark"] .reader .page-head .pageicon img:not(.mark) { filter: in
     display: flex; width: min(320px, calc(100vw - 48px)); max-height: none;
     padding: calc(18px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
     border-radius: 0; border-top: 0; overscroll-behavior: contain;
-    visibility: hidden; transition: transform var(--dur-3) var(--ease-out), visibility 180ms;
+    visibility: hidden; transition: transform var(--dur-3) var(--ease-out), visibility var(--dur-3);
   }
   .reader .sidebar.open, html.side-collapsed .reader .sidebar.open { visibility: visible; }
   .reader .sidebar.open::after { content: none; }

@@ -1,7 +1,9 @@
 /* Page header from the draft, with the owner's gradient covers instead of photos. StyleGallery frame (cover slot), imposter (icon over the cover edge), cluster (meta row). */
 .reader article, .reader .blocks, .reader .backlinks, .reader .foot, .reader .toc, .reader .results { max-width: none; }
 .reader article > :not(.page-head):not(.overview):not(.page-top):not(.blocks) { max-width: 940px; }
-.reader .blocks { max-width: 1170px; }
+.reader .blocks { max-width: 760px; }
+.reader .blocks:has([data-part=dag]){max-width:1170px}
+#main.width-normal .blocks, .reader .wide .blocks, .reader .home-tasks { max-width: 1170px; }
 .reader .page-head { position: relative; margin: 0 calc(-1 * var(--page-pad-right)) 0 calc(-1 * var(--page-pad)); }
 .reader .page-head .pagecover { position: relative; height: 198px; margin: 0; overflow: clip; }
 .reader .page-head .pagecover:not(.grad) { background: var(--cover); }

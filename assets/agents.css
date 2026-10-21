@@ -92,6 +92,7 @@ html[data-theme="dark"] { color-scheme: dark; --ag-ok: #7fc48a; --ag-err: #e8857
 .ag-token-box { margin-top: 14px; padding: 16px 18px 14px; border: 1px solid var(--accent); border-radius: 14px; background: var(--accent-soft); }
 .ag-token-box h3 { margin: 0 0 10px; font-size: var(--fs-16); font-weight: 700; color: var(--accent); letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .ag-token-row { display: flex; gap: 10px; align-items: center; }
+.ag-token-row .ag-btn { min-height: 44px; }
 .ag-token {
   flex: 1; min-width: 0; height: 44px; padding: 0 14px; font-family: var(--ag-mono); font-size: var(--fs-14);
   color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
@@ -151,6 +152,22 @@ html[data-theme="dark"] { color-scheme: dark; --ag-ok: #7fc48a; --ag-err: #e8857
 }
 .ag-docs { margin: 12px 0 0; color: var(--fg-dim); font-size: var(--fs-13); line-height: 1.7; }
 .ag-docs a { margin-left: 4px; }
+
+/* 개인 지침 한 줄 · 고급 (예전 /connect 페이지에서 옮김) */
+.ag-where { margin: 12px 0 0; padding-left: 18px; }
+.ag-where li { margin: 2px 0; }
+.ag-where b { font-weight: 600; margin-right: 6px; color: var(--fg); }
+.ag-advanced > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; }
+.ag-advanced > summary::-webkit-details-marker { display: none; }
+.ag-advanced > summary::before { content: "▸"; font-size: .8em; color: var(--fg-dim); transition: transform .15s ease; }
+.ag-advanced[open] > summary::before { transform: rotate(90deg); }
+.ag-lat-h { margin: 6px 0 8px; font-size: var(--fs-15); font-weight: 700; }
+.ag-lat-h small { font-weight: 400; color: var(--fg-dim); font-size: var(--fs-12); }
+.ag-lat { width: 100%; border-collapse: collapse; font-size: var(--fs-13); font-variant-numeric: tabular-nums; }
+.ag-lat th, .ag-lat td { padding: 6px 6px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.ag-lat th:first-child, .ag-lat td:first-child { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.ag-lat th { color: var(--fg-dim); font-weight: 600; }
+.ag-lat-all td { font-weight: 700; }
 
 /* 알림 */
 .ag-toast {

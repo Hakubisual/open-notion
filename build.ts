@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import "./assets/editor-model.js";
+import "./assets/columns-model.js";
 import { mkdir, rm, readdir, readFile, writeFile, cp, stat } from "node:fs/promises";
 import { markdownToBlocks, blocksHash, type Block } from "./markdown-blocks.ts";
 import { renderBlocks, pageHeadHtml, bylineHtml, overviewHtml, thumbBarHtml, sideNavHtml, sideFootHtml, mobileBarHtml, sidePanelHtml, pageActionsHtml, sideImageHtml, introSplit } from "./block-html.js";
@@ -127,7 +128,7 @@ function shortcutsHtml(): string {
     "<dt>/ · K</dt><dd>빠른 검색 (입력 중 제외)</dd><dt>N · Q · ?</dt><dd>새 페이지 · 빠른 메모 · 도움말 (입력 중 제외)</dd><dt>G → H / T</dt><dd>홈 / 휴지통 (입력 중 제외)</dd><dt>Ctrl/Cmd + Enter</dt><dd>빠른 메모 저장</dd>",
     "<dt>Ctrl/Cmd + K</dt><dd>빠른 검색</dd>",
     "<dt>Ctrl/Cmd + /</dt><dd>이 단축키 목록</dd>",
-    "<dt>Ctrl/Cmd + B</dt><dd>사이드바 접기·펴기</dd>",
+    "<dt>Ctrl/Cmd + B · \\</dt><dd>사이드바 접기·펴기</dd>",
     "<dt>Esc</dt><dd>열려 있는 창 닫기</dd>",
     "<dt>/</dt><dd>편집기에서 블록 종류 메뉴</dd>",
     "<dt>Tab / Shift+Tab</dt><dd>편집기에서 들여쓰기·내어쓰기</dd>",
@@ -148,8 +149,9 @@ function moreMenuHtml(slug: string): string {
     "<div class=\"menuwrap\">",
     "<button class=\"icon\" id=\"more\" aria-label=\"더보기\" aria-expanded=\"false\" title=\"더보기\">⋯</button>",
     "<div class=\"menu\" id=\"more-menu\" hidden>",
+    "<div class=\"menu-width\"></div>",
     "<a href=\"/print/" + encodeURIComponent(slug) + "/\" target=\"_blank\" rel=\"noopener\">인쇄 · PDF로 저장</a>",
-    "<a href=\"/api/export?slug=" + encodeURIComponent(slug) + "&format=md\" download=\"" + file + ".md\">마크다운으로 내보내기</a>",
+    "<a href=\"/api/export?slug=" + encodeURIComponent(slug) + "&format=acard-md\" download=\"" + file + ".md\">마크다운으로 내보내기</a>",
     "<a href=\"/api/export?slug=" + encodeURIComponent(slug) + "&format=html\" download=\"" + file + ".html\">HTML로 내보내기</a>",
     "<a href=\"/api/export?scope=all&format=zip\" download=\"acard.zip\">전체 노트 내보내기 (zip)</a>",
     "<button type=\"button\" class=\"menuitem\" id=\"shortcuts-open\">키보드 단축키</button>",
@@ -276,10 +278,26 @@ await rm(DIST, { recursive: true, force: true });
 await mkdir(DIST, { recursive: true });
 await cp(ASSETS, DIST, { recursive: true });
 // Editor first-screen scripts ship whitespace-minified (classic scripts, behaviour unchanged) to stay under the editor cap.
-for (const name of ["db.js", "editor-pages-ui.js", "editor.js"]) await writeFile(join(DIST, name), new Bun.Transpiler({ minifyWhitespace: true }).transformSync(await readFile(join(ASSETS, name), "utf8")));
+// The block models load on the editor first screen, so they get full minify like editor.js.
+for (const name of ["editor-model.js", "columns-model.js"]) {
+  const built = await Bun.build({ entrypoints: [join(ASSETS, name)], minify: true, format: "iife" });
+  if (!built.success) throw new Error(name + " build failed:\n" + built.logs.map(String).join("\n"));
+  await writeFile(join(DIST, name), await built.outputs[0].text());
+}
+// db.js and db-views.js are single IIFEs that talk to the page only through window.*, so they get full minify like editor.js.
+for (const name of ["db.js", "db-views.js", "editor-pages-ui.js"]) {
+  const built = await Bun.build({ entrypoints: [join(ASSETS, name)], minify: true, format: "iife" });
+  if (!built.success) throw new AggregateError(built.logs, name + " minify failed");
+  await writeFile(join(DIST, name), await built.outputs[0].text());
+}
+// editor.js is one IIFE that talks to the page only through window.*, so it gets full minify (local names too) like app.js:
+// -2 KB gzip on the editor first screen, which leaves room for the block color/icon entries (notion-parity C6) under the same cap.
+const editorBuild = await Bun.build({ entrypoints: [join(ASSETS, "editor.js")], minify: true, format: "iife" });
+if (!editorBuild.success) throw new AggregateError(editorBuild.logs, "editor.js minify failed");
+await writeFile(join(DIST, "editor.js"), await editorBuild.outputs[0].text());
 // Keep reader delivery under the fixed first-screen cap as features accumulate.
 // 읽기 화면 CSS 는 주석과 공백만 걷어 낸다(규칙 순서와 값은 그대로).
-for (const name of ["style.css", "tokens.css", ...UI_CSS, "acard-table.css"]) {
+for (const name of ["style.css", "tokens.css", ...UI_CSS, "acard-table.css", "editor.css", "db.css"]) {
   const css = await readFile(join(ASSETS, name), "utf8");
   await writeFile(join(DIST, name), minifyCss(css) + "\n", "utf8");
 }
@@ -293,14 +311,23 @@ for (const name of ["kit.css", "home.css", "home.js"]) {
   uiVersions[name] = Bun.hash(bytes).toString(36).slice(0, 8);
 }
 await writeFile(join(DIST, "acard-table-static.css"), staticTableCss(minifyCss(await readFile(join(ASSETS, "acard-table.css"), "utf8"))) + "\n", "utf8");
+// ds10 component registry + every components/*.js (sorted): inlined into the worker and into the editor's lazy
+// "components" chunk (assets/features/lazy/components.js carries the //__COMPONENT_SOURCE__ marker).
+const componentFiles = ["component-registry.js", ...(await readdir(join(ROOT, "components"))).filter((name) => name.endsWith(".js") && name !== "index.js").sort().map((name) => "components/" + name)];
+const componentSource = (await Promise.all(componentFiles.map(async (name) => (await readFile(join(ROOT, name), "utf8")).replace(/^import[^\n]*\n/gm, "").replace(/^export /gm, "").trim()))).join("\n");
 const lazyVersions: Record<string, Record<string, string>> = Object.create(null);
 const lazyDir = join(ASSETS, "features", "lazy");
 for (const file of (await readdir(lazyDir).catch(() => [] as string[])).sort()) {
   const match = /^([a-z0-9-]+)\.(js|css)$/.exec(file);
   if (!match) continue;
-  const source = await readFile(join(lazyDir, file), "utf8");
+  const source = (await readFile(join(lazyDir, file), "utf8")).replace("//__COMPONENT_SOURCE__", () => componentSource);
   // Lazy chunks ship whitespace-minified (behaviour unchanged); the chat panel chunk also gets syntax minify (its loader rides on every page).
-  const bytes = Buffer.from(match[2] === "js" ? new Bun.Transpiler({ minifyWhitespace: true, minifySyntax: match[1] === "agent-chat" }).transformSync(source) : minifyCss(source) + "\n");
+  let bytes: Buffer;
+  if (["reader-navigation", "reader-enhancements"].includes(match[1]) && match[2] === "js") {
+    const built = await Bun.build({ entrypoints: [join(lazyDir, file)], minify: true, format: "iife" });
+    if (!built.success) throw new AggregateError(built.logs, "reader navigation minify failed");
+    bytes = Buffer.from(await built.outputs[0].text());
+  } else bytes = Buffer.from(match[2] === "js" ? new Bun.Transpiler({ minifyWhitespace: true, minifySyntax: match[1] === "agent-chat" }).transformSync(source) : minifyCss(source) + "\n");
   await mkdir(join(DIST, "lazy"), { recursive: true });
   await writeFile(join(DIST, "lazy", file), bytes);
   (lazyVersions[match[1]] ||= {})[match[2]] = Bun.hash(bytes).toString(36).slice(0, 8);
@@ -308,11 +335,13 @@ for (const file of (await readdir(lazyDir).catch(() => [] as string[])).sort()) 
 for (const [name, versions] of Object.entries(lazyVersions)) {
   if (!versions.js) throw new Error("Lazy feature needs JavaScript: " + name);
 }
+// db.js is built before the lazy chunks; its button cells load /lazy/buttons and /lazy/button-editor by these hashes.
+await writeFile(join(DIST, "db.js"), (await readFile(join(DIST, "db.js"), "utf8")).replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0").replaceAll("__BUTTON_EDITOR_JS__", lazyVersions["button-editor"]?.js ?? "0").replaceAll("__BUTTON_EDITOR_CSS__", lazyVersions["button-editor"]?.css ?? "0"));
 // The reader share button loads /lazy/share-dialog.js; app.js carries its content hash.
 // Full minify (names + syntax) keeps the reader first screen under its gzip cap; app.js is one classic IIFE script.
 const appBuild = await Bun.build({ entrypoints: [join(ASSETS, "app.js")], minify: true, format: "iife" });
 if (!appBuild.success) throw new AggregateError(appBuild.logs, "app.js minify failed");
-await writeFile(join(DIST, "app.js"), (await appBuild.outputs[0].text()).replace("__SHARE_DIALOG__", lazyVersions["share-dialog"]?.js ?? "0").replace("__READER_TOOLS__", lazyVersions["reader-tools"]?.js ?? "0").replace("__READER_TOOLS_CSS__", lazyVersions["reader-tools"]?.css ?? "0").replace("__SCROLLBARS__", lazyVersions.scrollbars?.js ?? "0"));
+await writeFile(join(DIST, "app.js"), (await appBuild.outputs[0].text()).replace("__SHARE_DIALOG__", lazyVersions["share-dialog"]?.js ?? "0").replace("__READER_TOOLS__", lazyVersions["reader-tools"]?.js ?? "0").replace("__READER_TOOLS_CSS__", lazyVersions["reader-tools"]?.css ?? "0").replace("__SCROLLBARS__", lazyVersions.scrollbars?.js ?? "0").replace("__READER_NAVIGATION__", lazyVersions["reader-navigation"]?.js ?? "0").replace("__READER_ENHANCEMENTS__", lazyVersions["reader-enhancements"]?.js ?? "0"));
 const readerFeatures = { js: false, css: false };
 for (const ext of ["js", "css"] as const) {
   const names = (await readdir(join(ASSETS, "features"))).filter((name) => name.endsWith("." + ext)).sort();
@@ -323,16 +352,21 @@ for (const ext of ["js", "css"] as const) {
     const parts = await Promise.all(selected.map((name) => readFile(join(ASSETS, "features", name), "utf8")));
     const manifest = !reader && ext === "js" && Object.keys(lazyVersions).length
       ? "window.AcardLazy = " + JSON.stringify(lazyVersions) + ";\n" : "";
-    const content = (manifest + parts.filter((part) => part.trim()).join(ext === "js" ? "\n;\n" : "\n")).replace("__AGENT_CHAT_JS__", lazyVersions["agent-chat"]?.js ?? "0").replace("__AGENT_CHAT_CSS__", lazyVersions["agent-chat"]?.css ?? "0");
+    const content = (manifest + parts.filter((part) => part.trim()).join(ext === "js" ? "\n;\n" : "\n")).replace("__AGENT_CHAT_JS__", lazyVersions["agent-chat"]?.js ?? "0").replace("__AGENT_CHAT_CSS__", lazyVersions["agent-chat"]?.css ?? "0").replace('"/lazy/quick-note.js"', '"/lazy/quick-note.js?v=' + (lazyVersions["quick-note"]?.js ?? "0") + '"');
     if (reader) readerFeatures[ext] = content.length > 0;
-    await writeFile(join(DIST, "features" + (reader ? "-reader" : "") + "." + ext), reader && ext === "js" && content ? new Bun.Transpiler({ minifyWhitespace: true }).transformSync(content) : content, "utf8");
+    let output = content;
+    if (reader && ext === "js" && content) {
+      const built = await Bun.build({ entrypoints: ["features-reader.js"], files: { "features-reader.js": content }, minify: { whitespace: true, identifiers: true, syntax: false }, format: "esm" });
+      if (!built.success) throw new AggregateError(built.logs, "reader features minify failed");
+      output = (await built.outputs[0].text()).trimEnd();
+    }
+    await writeFile(join(DIST, "features" + (reader ? "-reader" : "") + "." + ext), output, "utf8");
   }
 }
 await rm(join(DIST, "features"), { recursive: true, force: true });
 const siteNameHtml = SITE.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 await writeFile(join(DIST, "editor.html"), (await readFile(join(ASSETS, "editor.html"), "utf8")).replaceAll("__SITE_NAME__", siteNameHtml), "utf8");
 await writeFile(join(DIST, "agents.html"), (await readFile(join(ASSETS, "agents.html"), "utf8")).replaceAll("__SITE_NAME__", siteNameHtml).replaceAll("__PROJECTS_JS__", lazyVersions.projects?.js ?? "0").replaceAll("__PROJECTS_CSS__", lazyVersions.projects?.css ?? "0"), "utf8");
-await writeFile(join(DIST, "connect.html"), (await readFile(join(ASSETS, "connect.html"), "utf8")).replaceAll("__SITE_NAME__", siteNameHtml), "utf8");
 await writeFile(join(DIST, "gallery.html"), (await readFile(join(ASSETS, "gallery.html"), "utf8")).replaceAll("__SITE_NAME__", siteNameHtml), "utf8");
 await writeFile(join(DIST, "site-config.js"), "window.DoriSite = " + JSON.stringify(siteConfig).replace(/</g, "\\u003c") + ";\n", "utf8");
 const manifest = { ...JSON.parse(await readFile(join(ASSETS, "site.webmanifest"), "utf8")), name: SITE, short_name: SITE };
@@ -346,7 +380,13 @@ for (const shared of ["db-model.js", "db-formula.js"]) {
   const source = await readFile(join(ROOT, shared), "utf8");
   const names = [...source.matchAll(/^export (?:function|const) (\w+)/gm)].map((match) => match[1]);
   const globalName = shared === "db-model.js" ? "DoriDBModel" : "DoriFormula";
-  await writeFile(join(DIST, shared), stripModule(source) + "\nwindow." + globalName + " = {" + names.join(",") + "};\n", "utf8");
+  // The shared model is wrapped in an IIFE so its top-level names stay local, then fully minified; window.<global> is its only output.
+  const tmp = join(DIST, "__" + shared);
+  await writeFile(tmp, "(function(){\n" + stripModule(source) + "\nwindow." + globalName + " = {" + names.join(",") + "};\n})();\n", "utf8");
+  const built = await Bun.build({ entrypoints: [tmp], minify: true, format: "iife" });
+  await rm(tmp);
+  if (!built.success) throw new AggregateError(built.logs, shared + " minify failed");
+  await writeFile(join(DIST, shared), await built.outputs[0].text(), "utf8");
 }
 for (const p of pages) {
   const dir = p.slug === "index" ? DIST : join(DIST, p.slug);
@@ -407,8 +447,8 @@ const inlines: Record<string, string> = {
   "//__READER_FEATURE_CSS__": readerFeatures.css ? "'<link rel=\"stylesheet\" href=\"/features-reader.css\">'," : "",
   "//__READER_FEATURE_JS__": readerFeatures.js ? "'<script src=\"/features-reader.js\"></script>'," : "",
   "//__FEATURES__": (await Promise.all(featureFiles.map((name) => inline("features/" + name)))).join("\n;\n"),
-  "//__EQUATION_HTML__": stripModule(equationSource).trim() + "\n" + await inline("visual-html.js"),
-  "//__BLOCK_HTML__": (await readFile(join(ROOT, "assets/editor-model.js"), "utf8")) + "\n" + await inline("block-html.js"),
+  "//__EQUATION_HTML__": stripModule(equationSource).trim() + "\n" + await inline("visual-html.js") + "\n" + await inline("part-html.js") + "\n" + componentSource,
+  "//__BLOCK_HTML__": (await readFile(join(ROOT, "assets/editor-model.js"), "utf8")) + "\n" + (await readFile(join(ROOT, "assets/columns-model.js"), "utf8")) + "\n" + await inline("block-html.js"),
   "//__EDITOR_PAGES__": await inline("editor-pages.js"),
   "//__AGENT_API__": await inline("agent-api.js"),
   "//__DB_MODEL__": await inline("db-model.js"),
@@ -424,30 +464,75 @@ workerOut = workerOut.replaceAll("__FOLDERS_JS__", lazyVersions.folders?.js ?? "
 workerOut = workerOut.replaceAll("__HOME_JS__", uiVersions["home.js"]).replaceAll("__HOME_CSS__", uiVersions["home.css"]).replaceAll("__UI_KIT_CSS__", uiVersions["kit.css"]);
 workerOut = workerOut.replaceAll("__PROJECTS_JS__", lazyVersions.projects?.js ?? "0").replaceAll("__PROJECTS_CSS__", lazyVersions.projects?.css ?? "0");
 workerOut = workerOut.replaceAll("__JOURNAL_JS__", lazyVersions.journal?.js ?? "0").replaceAll("__JOURNAL_CSS__", lazyVersions.journal?.css ?? "0");
+const stampChecks = (text: string) => text.replaceAll("__CHECKS_JS__", lazyVersions.checks?.js ?? "0").replaceAll("__CHECKS_CSS__", lazyVersions.checks?.css ?? "0").replaceAll("__PARTS_JS__", lazyVersions.parts?.js ?? "0").replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0");
+workerOut = stampChecks(workerOut);
 for (const [marker, code] of Object.entries(inlines)) {
   if (!workerOut.includes(marker)) throw new Error("gate/_worker.js is missing the " + marker + " marker");
   workerOut = workerOut.replace(marker, () => code);
 }
 // 편집기 미리보기는 같은 소스를 브라우저 전역으로 노출한 사본을 쓴다 (단일 소스 규칙, README 참고).
 await writeFile(join(DIST, "equation-html.js"), equationSource.replace(/^export /gm, "") + "\nwindow.EquationHtml = { renderLatex, equationHtml };\n", "utf8");
+// Files in fonts/ and _site/ (and the font and image URLs inside CSS, and the font CSS paths in app.js) get a content-hash ?v=
+// too, so every static file a page loads is served immutable (gate/static-cache.ts). Leaves are hashed first, then CSS/JS are
+// stamped and re-hashed until stable, so a font change changes fonts.css?v= and a tokens.css change changes style.css?v=.
+const nestedVersion = new Map<string, string>();
+const hashOf = async (rel: string) => Bun.hash(await readFile(join(DIST, rel))).toString(36).slice(0, 8);
+const nestedFiles: string[] = [];
+for (const dir of ["fonts", "_site"]) {
+  for await (const file of new Bun.Glob("**/*.{css,js,svg,png,woff2}").scan({ cwd: join(DIST, dir) })) nestedFiles.push(dir + "/" + file.replaceAll("\\", "/"));
+}
+for (const rel of nestedFiles) nestedVersion.set(rel, await hashOf(rel));
+const leafVersion = new Map<string, string>();
+for (const name of await readdir(DIST)) if (/\.(svg|png|ico)$/.test(name)) leafVersion.set(name, await hashOf(name));
+const NESTED_REF = /((?:href|src|content)=\\?["']|url\(\\?["']?|["'])\/((?:fonts|_site)\/[\w./-]+\.(?:css|js|svg|png|woff2))(?=\\?["')])/g;
+const LEAF_REF = /(url\(\\?["']?)\/([\w.-]+\.(?:svg|png|ico))(?=\\?["')])/g;
+const stampNested = (text: string) => text.replace(NESTED_REF, (all, lead: string, path: string) => (nestedVersion.has(path) ? lead + "/" + path + "?v=" + nestedVersion.get(path) : all));
+const styleFiles = [...nestedFiles.filter((f) => f.endsWith(".css")), ...(await readdir(DIST)).filter((f) => f.endsWith(".css"))];
+for (let round = 0; round < 3; round++) {
+  for (const rel of styleFiles) {
+    const text = await readFile(join(DIST, rel), "utf8");
+    const next = stampNested(text).replace(LEAF_REF, (all, lead: string, name: string) => (leafVersion.has(name) ? lead + "/" + name + "?v=" + leafVersion.get(name) : all));
+    if (next !== text) await writeFile(join(DIST, rel), next, "utf8");
+    if (nestedVersion.has(rel)) nestedVersion.set(rel, await hashOf(rel));
+  }
+}
+for (const name of ["app.js", "editor-pages-ui.js"]) await writeFile(join(DIST, name), stampNested(await readFile(join(DIST, name), "utf8")), "utf8");
 // Assets are cached for hours without a versioned URL, so stamp each local .css/.js and brand image reference with its content hash.
 const assetVersion = new Map<string, string>();
 for (const name of await readdir(DIST)) {
-  if (/\.(css|js|svg|png|ico|webmanifest)$/.test(name) && name !== "_worker.js") assetVersion.set(name, Bun.hash(await readFile(join(DIST, name))).toString(36).slice(0, 8));
+  if (/\.(css|js|svg|png|ico|webmanifest)$/.test(name) && name !== "_worker.js" && name !== "sw.js") assetVersion.set(name, Bun.hash(await readFile(join(DIST, name))).toString(36).slice(0, 8));
 }
-const stampAssets = (text: string) => text.replace(/((?:href|src|content)=\\?["']|url\(\\?["']?)\/([\w.-]+\.(?:css|js|svg|png|ico|webmanifest))(?=\\?["')])/g, (all, lead: string, name: string) => assetVersion.has(name) ? lead + "/" + name + "?v=" + assetVersion.get(name) : all);
+// A #fragment (<use href="/wordmark-symbol.svg#w">) stays after the version.
+const stampAssets = (text: string) => stampNested(text.replace(/((?:href|src|content)=\\?["']|url\(\\?["']?)\/([\w.-]+\.(?:css|js|svg|png|ico|webmanifest))(?=(?:#[\w-]+)?\\?["')])/g, (all, lead: string, name: string) => assetVersion.has(name) ? lead + "/" + name + "?v=" + assetVersion.get(name) : all));
+// Versioned files are served immutable (gate/static-cache.ts), so style.css is stamped before its own hash: a tokens.css change must change style.css?v=.
+await writeFile(join(DIST, "style.css"), stampAssets(await readFile(join(DIST, "style.css"), "utf8")), "utf8");
+assetVersion.set("style.css", Bun.hash(await readFile(join(DIST, "style.css"))).toString(36).slice(0, 8));
+// Keyed by path without the leading slash (gate/static-cache.ts).
+const staticVersions: Record<string, string> = {};
+for (const [path, hash] of Object.entries(imageVersions)) staticVersions[path.slice(1)] = hash;
+for (const [name, hash] of assetVersion) staticVersions[name] = hash;
+for (const [path, hash] of nestedVersion) staticVersions[path] = hash;
+for (const [name, versions] of Object.entries(lazyVersions)) for (const [ext, hash] of Object.entries(versions)) staticVersions["lazy/" + name + "." + ext] = hash;
+for (const [name, hash] of Object.entries(uiVersions)) staticVersions["lazy/ui-" + name.replace(".", "-") + "." + name.split(".").pop()] = hash;
 const offlineSource = await readFile(join(ROOT, "offline-sw.js"), "utf8");
 const offlineShell = [...assetVersion].filter(([name]) => /\.(css|js|svg|png|ico)$/.test(name)).map(([name, hash]) => "/" + name + "?v=" + hash);
 offlineShell.push(...Object.entries(imageVersions).filter(([path]) => /^\/img\/(icons|avatars)\//.test(path)).map(([path, hash]) => path + "?v=" + hash));
 const offlineVersion = Bun.hash(offlineSource + workerOut + JSON.stringify(offlineShell)).toString(36);
-await writeFile(join(DIST, "sw.js"), offlineSource + "\nconst offline = createOfflineWorker({ caches, origin: self.location.origin, fetch: request => fetch(request), report: error => console.error(error), notify: message => self.clients.matchAll({ type: \"window\" }).then(list => list.forEach(client => client.postMessage(message))) }, " + JSON.stringify({ version: offlineVersion, shell: offlineShell }) + ");\n" +
-  'self.addEventListener("install", event => event.waitUntil(offline.install()));\n' +
+const serviceWorkerSource = offlineSource + "\nconst offline = createOfflineWorker({ caches, origin: self.location.origin, fetch: request => fetch(request), report: error => console.error(error), unregister: () => self.registration.unregister(), cookieId: () => self.cookieStore ? self.cookieStore.get(\"acard_id\").then(c => c ? c.value : null) : undefined, notify: (message, id) => self.clients.matchAll({ type: \"window\" }).then(list => list.forEach(client => { if (!id || offline.identity(client.id) === id) client.postMessage(message); })) }, " + JSON.stringify({ version: offlineVersion, shell: offlineShell }) + ");\n" +
+  // A new worker takes over at once: a broken older one must not keep control while any tab stays open.
+  'self.addEventListener("install", event => event.waitUntil(offline.install().finally(() => self.skipWaiting())));\n' +
   'self.addEventListener("activate", event => event.waitUntil(offline.activate().then(() => self.clients.claim())));\n' +
-  'self.addEventListener("fetch", event => event.respondWith(offline.handle(event.request, promise => event.waitUntil(promise))));\n', "utf8");
+  'self.addEventListener("message", event => { if (event.data?.type === "acard-id" && event.source?.id) event.waitUntil(offline.identify(event.data.id, event.source.id)); });\n' +
+  'self.addEventListener("fetch", event => event.respondWith(offline.handle(event.request, promise => event.waitUntil(promise), event.clientId, event.resultingClientId).catch(() => fetch(event.request))));\n';
+const serviceWorkerBuild = await Bun.build({ entrypoints: ["sw.js"], files: { "sw.js": serviceWorkerSource }, minify: true, format: "esm" });
+if (!serviceWorkerBuild.success) throw new AggregateError(serviceWorkerBuild.logs, "service worker minify failed");
+await writeFile(join(DIST, "sw.js"), await serviceWorkerBuild.outputs[0].text(), "utf8");
 // 예전 마커 조립 결과는 그대로 두고, 에이전트 입구(OAuth·MCP SDK 를 쓰는 모듈)와 함께 한 파일로 묶는다.
 const CORE = join(ROOT, ".build", "acard-core.js");
 await mkdir(join(ROOT, ".build"), { recursive: true });
-await writeFile(CORE, stampAssets(workerOut), "utf8");
+const buildSha = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], { cwd: ROOT, stdout: "pipe" }).stdout.toString().trim() || "dev";
+const buildInfo = { sha: buildSha, version: new Date(Date.now() + 9 * 36e5).toISOString().slice(0, 10).replace(/-/g, ".") + "-" + buildSha };
+await writeFile(CORE, "globalThis.ACARD_STATIC_VERSIONS = " + JSON.stringify(staticVersions) + ";\nglobalThis.ACARD_BUILD = " + JSON.stringify(buildInfo) + ";\n" + stampAssets(workerOut), "utf8");
 const bundled = await Bun.build({
   entrypoints: [join(ROOT, "gate", "agent-entry.ts")],
   format: "esm",
@@ -463,7 +548,8 @@ const bundled = await Bun.build({
   }],
 });
 if (!bundled.success) throw new Error("agent entry bundle failed:\n" + bundled.logs.map(String).join("\n"));
-await writeFile(join(DIST, "_worker.js"), await bundled.outputs[0].text(), "utf8");
+// The entry (gate/agent-entry.ts, gate/beta.ts, gate/i18n.ts) writes its own tags after the core was stamped.
+await writeFile(join(DIST, "_worker.js"), stampAssets(stampChecks(await bundled.outputs[0].text())), "utf8");
 // npm 과 같은 모양(package/…)의 tgz 를 만들어 `npx --package=<주소>` 로 바로 설치되게 한다.
 const CLI = join(ROOT, "packages", "acard-cli");
 const cliFiles: Record<string, Uint8Array> = {};
@@ -474,7 +560,7 @@ for (const dir of ["bin", "src"]) {
 const cliTar = await new Bun.Archive(cliFiles).bytes();
 await Bun.write(join(DIST, "acard-cli.tgz"), Bun.gzipSync(cliTar));
 const htmlFiles = (await readdir(DIST, { recursive: true })).filter((f) => f.endsWith(".html"));
-for (const file of [...htmlFiles, "style.css"]) await writeFile(join(DIST, file), stampAssets(await readFile(join(DIST, file), "utf8")), "utf8");
+for (const file of htmlFiles) await writeFile(join(DIST, file), stampAssets(stampChecks(await readFile(join(DIST, file), "utf8"))), "utf8");
 const workerCheck = Bun.spawnSync(["node", "--check", join(DIST, "_worker.js")], { stdout: "pipe", stderr: "pipe" });
 if (workerCheck.exitCode !== 0) throw new Error("dist/_worker.js does not parse:\n" + workerCheck.stderr.toString());
 console.log("BUILD_OK pages=" + pages.length + " slugs=" + pages.map((p) => p.slug).join(","));

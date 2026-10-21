@@ -40,9 +40,15 @@ with accounts, sync, sharing and AI features managed for you. OpenNotion is the 
 
 ## Features
 
-- **Block editor** with headings, lists, to-dos, toggles, quotes, callouts, code, tables, equations, images and embeds; `/` commands and Markdown shortcuts.
-- **Databases** with table and board views, properties, filters, sorting and formulas.
-- **Page tree** with nested pages, folders, favorites, templates and quick notes.
+- **Block editor** with headings 1-4 (any of them can fold like a toggle), lists, to-dos, toggles, quotes, callouts, code, tables, equations, images and embeds; `/` commands and Markdown shortcuts.
+- **Columns**: put blocks side by side in 2-4 columns, drag blocks between them and resize them.
+- **Block colors** for text and background, callout icons, and **buttons** that add a database row and open it.
+- **Checklists** in lists and tables that can be ticked in the editor, the reader and on shared pages.
+- **Page look**: an emoji or uploaded icon, a gradient or uploaded cover, and a per-page width (narrow, normal, wide).
+- **Databases** with table, board, gallery, list, calendar, timeline and chart views, filters (including relative dates such as this week), sorting, sub-items, two-way relations, person and auto-numbered ID properties, button properties, row templates (also repeating on a schedule) and formulas (date functions, list methods, `let`, `ifs`, styled results).
+- **Parts**: charts, tables, heatmaps, badges and flow diagrams drawn from JSON data that follow the page theme.
+- **Page tree** with nested pages, folders, drag and drop in the sidebar, favorites, templates and quick notes.
+- **Sharing**: publish a page or share it by link; readers get a clean read-only view with images sized for their screen.
 - **Markdown round trip**: every page is Markdown underneath. Import and export Markdown and Notion exports.
 - **Full-text search** across all pages.
 - **Agent-friendly**: a REST API and MCP read/write tools let your own scripts and AI agents write Markdown that people then read as clean pages.
@@ -82,8 +88,8 @@ On first start it asks for your server address, checks that an OpenNotion server
 
 OpenNotion is the self-hosted core. Features that depend on the hosted service are not part of this repository:
 AI writing and polishing, the chat agent and its work journal, accounts with email/Google sign-in, the admin console,
-and billing. The code paths for them are replaced by small neutral stubs (`gate/hosted-*.ts`, `features/ai-route.js`) so
-the core builds and runs on its own.
+the beta waitlist and feedback forms, and billing. The code paths for them are replaced by small neutral stubs
+(`gate/hosted-*.ts`, `features/ai-service.js`, `local/edition.ts`) so the core builds and runs on its own.
 
 ## Project layout
 
@@ -93,7 +99,7 @@ the core builds and runs on its own.
 | `gate/`, `features/`, `agents/` | Server core (shared with the hosted version) and the MCP tools |
 | `local/` | The self-hosted server: Bun + SQLite, LAN mode, password sign-in |
 | `desktop/` | Electron desktop client |
-| `migrations/`, `workers/`, `wrangler.toml` | Optional Cloudflare / Postgres deployment (`acard-workspace`, `acard-sse-relay`, `acard-live` workers) |
+| `migrations/`, `workers/`, `wrangler.toml` | Optional Cloudflare / Postgres deployment (`acard-workspace`, `acard-sse-relay`, `acard-live`, image resizing `acard-image` / `acard-images` workers) |
 | `tests/` | `bun test` |
 
 ## Development

@@ -1,0 +1,321 @@
+{
+ "blocks": [
+  {
+   "id": "s0",
+   "type": "heading1",
+   "text": "제목 하나",
+   "indent": 0
+  },
+  {
+   "id": "s1",
+   "type": "heading2",
+   "text": "제목 둘",
+   "indent": 0
+  },
+  {
+   "id": "s2",
+   "type": "heading3",
+   "text": "제목 셋",
+   "indent": 0
+  },
+  {
+   "id": "s3",
+   "type": "heading4",
+   "text": "제목 넷",
+   "indent": 0
+  },
+  {
+   "id": "s4",
+   "type": "paragraph",
+   "text": "그냥 문단 **굵게** `코드` [링크](https://example.com)",
+   "indent": 0
+  },
+  {
+   "id": "s5",
+   "type": "bulleted",
+   "text": "글머리 1",
+   "indent": 0
+  },
+  {
+   "id": "s6",
+   "type": "bulleted",
+   "text": "안쪽",
+   "indent": 1
+  },
+  {
+   "id": "s7",
+   "type": "numbered",
+   "text": "번호 1",
+   "indent": 0
+  },
+  {
+   "id": "s8",
+   "type": "numbered",
+   "text": "번호 2",
+   "indent": 0
+  },
+  {
+   "id": "s9",
+   "type": "to_do",
+   "text": "할 일",
+   "indent": 0,
+   "checked": false
+  },
+  {
+   "id": "s10",
+   "type": "to_do",
+   "text": "끝난 일",
+   "indent": 0,
+   "checked": true
+  },
+  {
+   "id": "s11",
+   "type": "toggle",
+   "text": "토글",
+   "indent": 0
+  },
+  {
+   "id": "s12",
+   "type": "paragraph",
+   "text": "토글 안쪽",
+   "indent": 1
+  },
+  {
+   "id": "s13",
+   "type": "callout",
+   "text": "콜아웃 메모\n[!decision] 결정 필요",
+   "indent": 0,
+   "meta": {
+    "tone": "note"
+   }
+  },
+  {
+   "id": "s14",
+   "type": "quote",
+   "text": "인용문",
+   "indent": 0
+  },
+  {
+   "id": "s15",
+   "type": "code",
+   "text": "const a = 1;",
+   "indent": 0,
+   "meta": {
+    "lang": "js"
+   }
+  },
+  {
+   "id": "s16",
+   "type": "divider",
+   "text": "",
+   "indent": 0
+  },
+  {
+   "id": "s17",
+   "type": "database",
+   "text": "상태 | 담당 | 진행률",
+   "indent": 0,
+   "meta": {
+    "columns": [
+     "상태",
+     "담당",
+     "진행률"
+    ],
+    "rows": [
+     {
+      "상태": "진행",
+      "담당": "도리",
+      "진행률": "40"
+     }
+    ]
+   }
+  },
+  {
+   "id": "s18",
+   "type": "table",
+   "text": "이름 | 값",
+   "indent": 0,
+   "meta": {
+    "columns": [
+     "이름",
+     "값"
+    ],
+    "rows": [
+     [
+      "a",
+      "[ ]"
+     ]
+    ],
+    "header": true
+   }
+  },
+  {
+   "id": "s19",
+   "type": "image",
+   "text": "캡션",
+   "indent": 0,
+   "meta": {
+    "src": "/media/0123456789abcdef",
+    "width": 60
+   }
+  },
+  {
+   "id": "s20",
+   "type": "video",
+   "text": "",
+   "indent": 0,
+   "meta": {
+    "url": "https://youtu.be/abcdefgh"
+   }
+  },
+  {
+   "id": "s21",
+   "type": "audio",
+   "text": "",
+   "indent": 0,
+   "meta": {
+    "url": "https://example.com/a.mp3"
+   }
+  },
+  {
+   "id": "s22",
+   "type": "file",
+   "text": "문서",
+   "indent": 0,
+   "meta": {
+    "url": "https://example.com/a.pdf",
+    "name": "문서"
+   }
+  },
+  {
+   "id": "s23",
+   "type": "embed",
+   "text": "",
+   "indent": 0,
+   "meta": {
+    "url": "https://example.com/x"
+   }
+  },
+  {
+   "id": "s24",
+   "type": "bookmark",
+   "text": "",
+   "indent": 0,
+   "meta": {
+    "url": "https://example.com/b"
+   }
+  },
+  {
+   "id": "s25",
+   "type": "bookmark",
+   "text": "",
+   "indent": 0,
+   "meta": {
+    "url": "https://example.com/c"
+   }
+  },
+  {
+   "id": "s26",
+   "type": "button",
+   "text": "이동",
+   "indent": 0,
+   "meta": {
+    "url": "https://example.com"
+   }
+  },
+  {
+   "id": "s27",
+   "type": "progress",
+   "text": "진행",
+   "indent": 0,
+   "meta": {
+    "value": 70,
+    "color": "blue"
+   }
+  },
+  {
+   "id": "s28",
+   "type": "toc",
+   "text": "",
+   "indent": 0
+  },
+  {
+   "id": "s29",
+   "type": "breadcrumb",
+   "text": "",
+   "indent": 0
+  },
+  {
+   "id": "s30",
+   "type": "equation",
+   "text": "x^2",
+   "indent": 0
+  },
+  {
+   "id": "s31",
+   "type": "columns",
+   "text": "",
+   "indent": 0,
+   "meta": {
+    "widths": [
+     0.5,
+     0.5
+    ]
+   }
+  },
+  {
+   "id": "s32",
+   "type": "column",
+   "text": "",
+   "checked": false,
+   "indent": 1,
+   "meta": null
+  },
+  {
+   "id": "s33",
+   "type": "paragraph",
+   "text": "왼쪽",
+   "checked": false,
+   "indent": 2
+  },
+  {
+   "id": "s34",
+   "type": "column",
+   "text": "",
+   "checked": false,
+   "indent": 1,
+   "meta": null
+  },
+  {
+   "id": "s35",
+   "type": "paragraph",
+   "text": "오른쪽",
+   "checked": false,
+   "indent": 2
+  },
+  {
+   "id": "s36",
+   "type": "chart",
+   "text": "{\"type\":\"bar\",\"labels\":[\"a\"],\"series\":[{\"data\":[1]}]}",
+   "indent": 0
+  },
+  {
+   "id": "s37",
+   "type": "part",
+   "text": "{\"items\":[{\"label\":\"a\",\"value\":1}]}",
+   "indent": 0,
+   "meta": {
+    "part": "badge",
+    "v": 1
+   }
+  },
+  {
+   "id": "u1",
+   "type": "made_up_type",
+   "text": "",
+   "meta": null
+  }
+ ],
+ "html": "<span id=\"block-s0\"></span>\n<h2 id=\"제목-하나\">제목 하나</h2>\n<span id=\"block-s1\"></span>\n<h3 id=\"제목-둘\">제목 둘</h3>\n<span id=\"block-s2\"></span>\n<h4 id=\"제목-셋\">제목 셋</h4>\n<span id=\"block-s3\"></span>\n<style>article h5,.blocks h5{font-size:var(--fs-15);font-weight:650;line-height:1.45;margin:20px 0 4px}.blocks .tocblock .lvl5{padding-left:54px}</style><h5 id=\"제목-넷\">제목 넷</h5>\n<span id=\"block-s4\"></span>\n<p>그냥 문단 <strong>굵게</strong> <code>코드</code> <a href=\"https://example.com\" target=\"_blank\" rel=\"noopener\">링크</a></p>\n<ul><li><span id=\"block-s5\"></span>글머리 1<ul><li><span id=\"block-s6\"></span>안쪽</li></ul></li></ul>\n<ol><li><span id=\"block-s7\"></span>번호 1</li><li><span id=\"block-s8\"></span>번호 2</li></ol>\n<span id=\"block-s9\"></span>\n<div class=\"todo\"><span class=\"box\" role=\"checkbox\" aria-checked=\"false\" tabindex=\"0\" data-check=\"s9\"></span><span>할 일</span></div>\n<link rel=\"stylesheet\" href=\"/lazy/checks.css?v=__CHECKS_CSS__\"><script src=\"/lazy/checks.js?v=__CHECKS_JS__\" defer></script>\n<span id=\"block-s10\"></span>\n<div class=\"todo on\"><span class=\"box\" role=\"checkbox\" aria-checked=\"true\" tabindex=\"0\" data-check=\"s10\">✓</span><span>끝난 일</span></div>\n<span id=\"block-s11\"></span>\n<details class=\"toggle\"><summary>토글</summary><span id=\"block-s12\"></span>\n<p>토글 안쪽</p></details>\n<span id=\"block-s13\"></span>\n<div class=\"callout note\"><svg class=\"ico callout-ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\"/><path d=\"M20 2v4\"/><path d=\"M22 4h-4\"/><circle cx=\"4\" cy=\"20\" r=\"2\"/></svg><div class=\"callout-body\">콜아웃 메모<br>[!decision] 결정 필요</div></div>\n<span id=\"block-s14\"></span>\n<blockquote>인용문</blockquote>\n<span id=\"block-s15\"></span>\n<pre><code>const a = 1;</code></pre>\n<span id=\"block-s16\"></span>\n<hr>\n<span id=\"block-s17\"></span>\n\n<div class=\"table-section\"><div class=\"stable\" tabindex=\"0\" role=\"region\" aria-label=\"작업 표\"><table><thead><tr><th class=\"table-select\" scope=\"col\" aria-label=\"완료\"></th><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"1\"/><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>상태</span></th><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"/><path d=\"M16 3.128a4 4 0 0 1 0 7.744\"/><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/></svg>담당</span></th><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M13 5h8\"/><path d=\"M13 12h8\"/><path d=\"M13 19h8\"/><path d=\"m3 17 2 2 4-4\"/><path d=\"m3 7 2 2 4-4\"/></svg>진행률</span></th></tr></thead><tbody><tr><td class=\"table-select cellcheck-td\"><span class=\"cellcheck\" role=\"checkbox\" aria-checked=\"false\" aria-label=\"진행 완료\" tabindex=\"0\" data-check=\"s17\" data-r=\"0\" data-c=\"new\"></span></td><td><span class=\"tag table-status blue\">진행</span></td><td><span class=\"table-person\"><img src=\"/img/avatars/dori-96.webp\" alt=\"\" width=\"24\" height=\"24\"><span>도리</span></span></td><td><span class=\"numwrap\"><span class=\"numtext\">40%</span><span class=\"numbartrack\"><span class=\"numbar\" style=\"width:40%\"></span></span></span></td></tr></tbody></table></div></div>\n<span id=\"block-s18\"></span>\n<div class=\"table-section\"><div class=\"stable\" tabindex=\"0\" role=\"region\" aria-label=\"작업 표\"><table><thead><tr><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 4v16\"/><path d=\"M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2\"/><path d=\"M9 20h6\"/></svg>이름</span></th><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 4v16\"/><path d=\"M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2\"/><path d=\"M9 20h6\"/></svg>값</span></th></tr></thead><tbody><tr><td>a</td><td class=\"cellcheck-td\"><span class=\"cellcheck\" role=\"checkbox\" aria-checked=\"false\" aria-label=\"a 값\" tabindex=\"0\" data-check=\"s18\" data-r=\"0\" data-c=\"1\"></span></td></tr></tbody></table></div></div>\n<span id=\"block-s19\"></span>\n<figure class=\"img\" style=\"width:60%\"><a class=\"imgview\" href=\"/media/0123456789abcdef\"><img src=\"/media/0123456789abcdef\" alt=\"캡션\" srcset=\"/media/0123456789abcdef?w=400 400w, /media/0123456789abcdef?w=800 800w, /media/0123456789abcdef?w=1600 1600w\" sizes=\"(max-width: 760px) 100vw, 760px\" decoding=\"async\" loading=\"eager\" fetchpriority=\"high\"></a><figcaption>캡션</figcaption></figure>\n<span id=\"block-s20\"></span>\n<div class=\"media16\"><iframe src=\"https://www.youtube-nocookie.com/embed/abcdefgh\" title=\"영상\" loading=\"lazy\" allowfullscreen></iframe></div>\n<span id=\"block-s21\"></span>\n<audio controls preload=\"metadata\" src=\"https://example.com/a.mp3\"></audio>\n<span id=\"block-s22\"></span>\n<a class=\"filecard\" href=\"https://example.com/a.pdf\" download><span class=\"fico\" aria-hidden=\"true\">📄</span><span class=\"fname\">문서</span><span class=\"fdl\">받기 ↓</span></a>\n<span id=\"block-s23\"></span>\n<div class=\"media16 embed\"><iframe src=\"https://example.com/x\" sandbox=\"allow-scripts allow-same-origin allow-popups allow-forms\" loading=\"lazy\" referrerpolicy=\"no-referrer\"></iframe></div>\n<span id=\"block-s24\"></span>\n<a class=\"bookmark\" href=\"https://example.com/b\" target=\"_blank\" rel=\"noopener\"><span class=\"bico\" aria-hidden=\"true\">🔖</span><span class=\"bbody\"><span class=\"btitle\">example.com</span><span class=\"bsite\">example.com</span></span></a>\n<span id=\"block-s25\"></span>\n<a class=\"bookmark\" href=\"https://example.com/c\" target=\"_blank\" rel=\"noopener\"><span class=\"bico\" aria-hidden=\"true\">🔖</span><span class=\"bbody\"><span class=\"btitle\">example.com</span><span class=\"bsite\">example.com</span></span></a>\n<span id=\"block-s26\"></span>\n<p class=\"btnrow\"><a class=\"btn\" href=\"https://example.com\">이동</a></p>\n<span id=\"block-s27\"></span>\n<div class=\"progress blue\"><div class=\"phead\"><span>진행</span><span class=\"pval\">70%</span></div><div class=\"pbar\" role=\"progressbar\" aria-valuenow=\"70\" aria-valuemin=\"0\" aria-valuemax=\"100\"><span style=\"width:70%\"></span></div></div>\n<span id=\"block-s28\"></span>\n<nav class=\"tocblock\"><details open><summary><h3>목차</h3> <span class=\"tcount\">4</span></summary><ul><li class=\"lvl2\"><a href=\"#제목-하나\">제목 하나</a></li><li class=\"lvl3\"><a href=\"#제목-둘\">제목 둘</a></li><li class=\"lvl4\"><a href=\"#제목-셋\">제목 셋</a></li><li class=\"lvl5\"><a href=\"#제목-넷\">제목 넷</a></li></ul></details></nav>\n<span id=\"block-s29\"></span>\n<nav class=\"crumbs\"><a href=\"/snap/\">undefined</a></nav>\n<span id=\"block-s30\"></span>\n<div class=\"mathblock\"><span class=\"math\">x<sup>2</sup></span></div>\n<span id=\"block-s31\"></span>\n<div class=\"cols cols2\" style=\"--cols:0.5fr 0.5fr\"><div class=\"col\"><span id=\"block-s33\"></span>\n<p>왼쪽</p></div><div class=\"col\"><span id=\"block-s35\"></span>\n<p>오른쪽</p></div></div>\n<span id=\"block-s36\"></span>\n<figure class=\"acv-fig acv-chart\" style=\"margin:1.2em 0;padding:16px;border:1px solid rgba(123,104,238,.16);border-radius:14px;overflow-x:auto;text-align:center\"><style>.acv-fig{container-type:inline-size}.acv-chart>svg.acv-chart{width:100%;max-height:520px}.acv-narrow{display:none}@container (max-width:560px){.acv-wide:has(+.acv-narrow){display:none}.acv-narrow{display:block}}@media (prefers-reduced-motion:no-preference){.acv .acv-node,.acv .acv-bar,.acv .acv-edge{animation:acv-in .5s ease-out both;animation-delay:calc(var(--i,0)*60ms)}.acv .acv-bar{transform-box:fill-box;transform-origin:50% 100%;animation-name:acv-grow}.acv-gantt .acv-bar{transform-origin:0 50%;animation-name:acv-grow-x}.acv .acv-line{stroke-dasharray:var(--len);animation:acv-draw 1s ease-out both}}@keyframes acv-in{from{opacity:0}}@keyframes acv-grow{from{transform:scaleY(0)}}@keyframes acv-grow-x{from{transform:scaleX(0)}}@keyframes acv-draw{from{stroke-dashoffset:var(--len)}}</style><svg class=\"acv acv-chart\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 480 300\" width=\"480\" role=\"img\" aria-label=\"차트\" style=\"max-width:100%;height:auto;font-family:inherit\"><title>차트</title><line x1=\"60\" x2=\"460\" y1=\"250\" y2=\"250\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"250\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">0</text><line x1=\"60\" x2=\"460\" y1=\"193.5\" y2=\"193.5\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"193.5\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">0.25</text><line x1=\"60\" x2=\"460\" y1=\"137\" y2=\"137\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"137\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">0.5</text><line x1=\"60\" x2=\"460\" y1=\"80.5\" y2=\"80.5\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"80.5\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">0.75</text><line x1=\"60\" x2=\"460\" y1=\"24\" y2=\"24\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"24\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">1</text><line x1=\"60\" x2=\"460\" y1=\"250\" y2=\"250\" stroke=\"currentColor\" stroke-opacity=\".35\"/><rect class=\"acv-bar\" style=\"--i:0\" x=\"120\" y=\"24\" width=\"278\" height=\"226\" rx=\"4\" fill=\"#86dfe3\"><title>a · 값 1: 1</title></rect><text x=\"259\" y=\"12\" font-size=\"12\" text-anchor=\"middle\" dominant-baseline=\"central\" fill=\"currentColor\" class=\"acv-node\" style=\"--i:0\">1</text><text x=\"260\" y=\"268\" font-size=\"12\" text-anchor=\"middle\" dominant-baseline=\"central\" fill=\"currentColor\">a</text></svg></figure>\n<span id=\"block-s37\"></span>\n<figure class=\"acv-fig acv-part\" data-part=\"badge\" style=\"margin:1.2em 0\"><script>addEventListener(\"message\",function(e){var f=document.getElementById(\"acv-fs37\"),h=e.data&&+e.data.acvH;if(f&&e.source===f.contentWindow&&h>0)f.style.height=Math.min(20000,h)+\"px\"})</script><iframe id=\"acv-fs37\" class=\"acv-frame acp-frame\" data-part=\"badge\" data-theme-id=\"\" sandbox=\"allow-scripts\" referrerpolicy=\"no-referrer\" title=\"부품 badge\" style=\"width:100%;height:160px;border:0;background:transparent\" srcdoc=\"&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#39;none&#39;; img-src data:; style-src &#39;unsafe-inline&#39;; script-src &#39;unsafe-inline&#39;; font-src data:&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;/head&gt;&lt;body&gt;&lt;div id=&quot;acp&quot; data-part=&quot;badge&quot; data-theme-id=&quot;&quot;&gt;&lt;/div&gt;&lt;script type=&quot;application/json&quot; id=&quot;acp-data&quot;&gt;{&quot;items&quot;:[{&quot;label&quot;:&quot;a&quot;,&quot;value&quot;:1}]}&lt;/script&gt;&lt;script&gt;(function(){var R=document.documentElement,D=document.getElementById(&quot;acp-data&quot;),P=document.getElementById(&quot;acp&quot;).getAttribute(&quot;data-part&quot;),done=0;function ask(){parent.postMessage({acpReady:1,part:P,theme:document.getElementById(&quot;acp&quot;).getAttribute(&quot;data-theme-id&quot;)},&quot;*&quot;)}function h(){parent.postMessage({acvH:Math.ceil(document.body.getBoundingClientRect().height)},&quot;*&quot;)}function run(c){var s=document.createElement(&quot;script&quot;);s.textContent=c;document.body.appendChild(s)}function go(m){if(done)return;done=1;if(m.acpThemeCss!=null)window.acardPartTheme=String(m.acpThemeCss);if(m.acpHtml!=null){try{window.acardPartData=JSON.parse(D.textContent)}catch(e){window.acardPartData=null}var t=document.createElement(&quot;div&quot;);t.innerHTML=m.acpHtml;Array.prototype.forEach.call(t.childNodes,function(n){if(n.tagName===&quot;SCRIPT&quot;)run(n.textContent);else document.body.appendChild(n)})}else run(m.acpCode);h();parent.postMessage({acpDrawn:1},&quot;*&quot;)}addEventListener(&quot;message&quot;,function(e){var m=e.data;if(e.source!==parent||!m)return;if(m.acpHello&amp;&amp;!done)ask();if(m.acpTheme)R.setAttribute(&quot;data-theme&quot;,m.acpTheme);if(m.acpCode!=null||m.acpHtml!=null)go(m)});new ResizeObserver(h).observe(document.body);ask()})()&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;\"></iframe></figure>\n<script src=\"/lazy/parts.js?v=__PARTS_JS__\" async></script>",
+ "readOnly": "<span id=\"block-s0\"></span>\n<h2 id=\"제목-하나\">제목 하나</h2>\n<span id=\"block-s1\"></span>\n<h3 id=\"제목-둘\">제목 둘</h3>\n<span id=\"block-s2\"></span>\n<h4 id=\"제목-셋\">제목 셋</h4>\n<span id=\"block-s3\"></span>\n<style>article h5,.blocks h5{font-size:var(--fs-15);font-weight:650;line-height:1.45;margin:20px 0 4px}.blocks .tocblock .lvl5{padding-left:54px}</style><h5 id=\"제목-넷\">제목 넷</h5>\n<span id=\"block-s4\"></span>\n<p>그냥 문단 <strong>굵게</strong> <code>코드</code> <a href=\"https://example.com\" target=\"_blank\" rel=\"noopener\">링크</a></p>\n<ul><li><span id=\"block-s5\"></span>글머리 1<ul><li><span id=\"block-s6\"></span>안쪽</li></ul></li></ul>\n<ol><li><span id=\"block-s7\"></span>번호 1</li><li><span id=\"block-s8\"></span>번호 2</li></ol>\n<span id=\"block-s9\"></span>\n<div class=\"todo\"><span class=\"box\" role=\"checkbox\" aria-checked=\"false\"></span><span>할 일</span></div>\n<span id=\"block-s10\"></span>\n<div class=\"todo on\"><span class=\"box\" role=\"checkbox\" aria-checked=\"true\">✓</span><span>끝난 일</span></div>\n<span id=\"block-s11\"></span>\n<details class=\"toggle\"><summary>토글</summary><span id=\"block-s12\"></span>\n<p>토글 안쪽</p></details>\n<span id=\"block-s13\"></span>\n<div class=\"callout note\"><svg class=\"ico callout-ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z\"/><path d=\"M20 2v4\"/><path d=\"M22 4h-4\"/><circle cx=\"4\" cy=\"20\" r=\"2\"/></svg><div class=\"callout-body\">콜아웃 메모<br>[!decision] 결정 필요</div></div>\n<span id=\"block-s14\"></span>\n<blockquote>인용문</blockquote>\n<span id=\"block-s15\"></span>\n<pre><code>const a = 1;</code></pre>\n<span id=\"block-s16\"></span>\n<hr>\n<span id=\"block-s17\"></span>\n\n<div class=\"table-section\"><div class=\"stable\" tabindex=\"0\" role=\"region\" aria-label=\"작업 표\"><table><thead><tr><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"1\"/><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>상태</span></th><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"/><path d=\"M16 3.128a4 4 0 0 1 0 7.744\"/><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/></svg>담당</span></th><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M13 5h8\"/><path d=\"M13 12h8\"/><path d=\"M13 19h8\"/><path d=\"m3 17 2 2 4-4\"/><path d=\"m3 7 2 2 4-4\"/></svg>진행률</span></th></tr></thead><tbody><tr><td><span class=\"tag table-status blue\">진행</span></td><td><span class=\"table-person\"><img src=\"/img/avatars/dori-96.webp\" alt=\"\" width=\"24\" height=\"24\"><span>도리</span></span></td><td><span class=\"numwrap\"><span class=\"numtext\">40%</span><span class=\"numbartrack\"><span class=\"numbar\" style=\"width:40%\"></span></span></span></td></tr></tbody></table></div></div>\n<span id=\"block-s18\"></span>\n<div class=\"table-section\"><div class=\"stable\" tabindex=\"0\" role=\"region\" aria-label=\"작업 표\"><table><thead><tr><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 4v16\"/><path d=\"M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2\"/><path d=\"M9 20h6\"/></svg>이름</span></th><th scope=\"col\"><span class=\"thname\"><svg class=\"ico\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 4v16\"/><path d=\"M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2\"/><path d=\"M9 20h6\"/></svg>값</span></th></tr></thead><tbody><tr><td>a</td><td class=\"cellcheck-td\"><span class=\"cellcheck\" role=\"checkbox\" aria-checked=\"false\" aria-label=\"a 값\"></span></td></tr></tbody></table></div></div>\n<span id=\"block-s19\"></span>\n<figure class=\"img\" style=\"width:60%\"><a class=\"imgview\" href=\"/media/0123456789abcdef\"><img src=\"/media/0123456789abcdef\" alt=\"캡션\" srcset=\"/media/0123456789abcdef?w=400 400w, /media/0123456789abcdef?w=800 800w, /media/0123456789abcdef?w=1600 1600w\" sizes=\"(max-width: 760px) 100vw, 760px\" decoding=\"async\" loading=\"eager\" fetchpriority=\"high\"></a><figcaption>캡션</figcaption></figure>\n<span id=\"block-s20\"></span>\n<div class=\"media16\"><iframe src=\"https://www.youtube-nocookie.com/embed/abcdefgh\" title=\"영상\" loading=\"lazy\" allowfullscreen></iframe></div>\n<span id=\"block-s21\"></span>\n<audio controls preload=\"metadata\" src=\"https://example.com/a.mp3\"></audio>\n<span id=\"block-s22\"></span>\n<a class=\"filecard\" href=\"https://example.com/a.pdf\" download><span class=\"fico\" aria-hidden=\"true\">📄</span><span class=\"fname\">문서</span><span class=\"fdl\">받기 ↓</span></a>\n<span id=\"block-s23\"></span>\n<div class=\"media16 embed\"><iframe src=\"https://example.com/x\" sandbox=\"allow-scripts allow-same-origin allow-popups allow-forms\" loading=\"lazy\" referrerpolicy=\"no-referrer\"></iframe></div>\n<span id=\"block-s24\"></span>\n<a class=\"bookmark\" href=\"https://example.com/b\" target=\"_blank\" rel=\"noopener\"><span class=\"bico\" aria-hidden=\"true\">🔖</span><span class=\"bbody\"><span class=\"btitle\">example.com</span><span class=\"bsite\">example.com</span></span></a>\n<span id=\"block-s25\"></span>\n<a class=\"bookmark\" href=\"https://example.com/c\" target=\"_blank\" rel=\"noopener\"><span class=\"bico\" aria-hidden=\"true\">🔖</span><span class=\"bbody\"><span class=\"btitle\">example.com</span><span class=\"bsite\">example.com</span></span></a>\n<span id=\"block-s26\"></span>\n<p class=\"btnrow\"><a class=\"btn\" href=\"https://example.com\">이동</a></p>\n<span id=\"block-s27\"></span>\n<div class=\"progress blue\"><div class=\"phead\"><span>진행</span><span class=\"pval\">70%</span></div><div class=\"pbar\" role=\"progressbar\" aria-valuenow=\"70\" aria-valuemin=\"0\" aria-valuemax=\"100\"><span style=\"width:70%\"></span></div></div>\n<span id=\"block-s28\"></span>\n<nav class=\"tocblock\"><details open><summary><h3>목차</h3> <span class=\"tcount\">4</span></summary><ul><li class=\"lvl2\"><a href=\"#제목-하나\">제목 하나</a></li><li class=\"lvl3\"><a href=\"#제목-둘\">제목 둘</a></li><li class=\"lvl4\"><a href=\"#제목-셋\">제목 셋</a></li><li class=\"lvl5\"><a href=\"#제목-넷\">제목 넷</a></li></ul></details></nav>\n<span id=\"block-s29\"></span>\n<nav class=\"crumbs\"><a href=\"/undefined/\">undefined</a></nav>\n<span id=\"block-s30\"></span>\n<div class=\"mathblock\"><span class=\"math\">x<sup>2</sup></span></div>\n<span id=\"block-s31\"></span>\n<div class=\"cols cols2\" style=\"--cols:0.5fr 0.5fr\"><div class=\"col\"><span id=\"block-s33\"></span>\n<p>왼쪽</p></div><div class=\"col\"><span id=\"block-s35\"></span>\n<p>오른쪽</p></div></div>\n<span id=\"block-s36\"></span>\n<figure class=\"acv-fig acv-chart\" style=\"margin:1.2em 0;padding:16px;border:1px solid rgba(123,104,238,.16);border-radius:14px;overflow-x:auto;text-align:center\"><style>.acv-fig{container-type:inline-size}.acv-chart>svg.acv-chart{width:100%;max-height:520px}.acv-narrow{display:none}@container (max-width:560px){.acv-wide:has(+.acv-narrow){display:none}.acv-narrow{display:block}}@media (prefers-reduced-motion:no-preference){.acv .acv-node,.acv .acv-bar,.acv .acv-edge{animation:acv-in .5s ease-out both;animation-delay:calc(var(--i,0)*60ms)}.acv .acv-bar{transform-box:fill-box;transform-origin:50% 100%;animation-name:acv-grow}.acv-gantt .acv-bar{transform-origin:0 50%;animation-name:acv-grow-x}.acv .acv-line{stroke-dasharray:var(--len);animation:acv-draw 1s ease-out both}}@keyframes acv-in{from{opacity:0}}@keyframes acv-grow{from{transform:scaleY(0)}}@keyframes acv-grow-x{from{transform:scaleX(0)}}@keyframes acv-draw{from{stroke-dashoffset:var(--len)}}</style><svg class=\"acv acv-chart\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 480 300\" width=\"480\" role=\"img\" aria-label=\"차트\" style=\"max-width:100%;height:auto;font-family:inherit\"><title>차트</title><line x1=\"60\" x2=\"460\" y1=\"250\" y2=\"250\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"250\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">0</text><line x1=\"60\" x2=\"460\" y1=\"193.5\" y2=\"193.5\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"193.5\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">0.25</text><line x1=\"60\" x2=\"460\" y1=\"137\" y2=\"137\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"137\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">0.5</text><line x1=\"60\" x2=\"460\" y1=\"80.5\" y2=\"80.5\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"80.5\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">0.75</text><line x1=\"60\" x2=\"460\" y1=\"24\" y2=\"24\" stroke=\"currentColor\" stroke-opacity=\".12\"/><text x=\"52\" y=\"24\" font-size=\"11\" text-anchor=\"end\" dominant-baseline=\"central\" fill=\"currentColor\" fill-opacity=\".7\">1</text><line x1=\"60\" x2=\"460\" y1=\"250\" y2=\"250\" stroke=\"currentColor\" stroke-opacity=\".35\"/><rect class=\"acv-bar\" style=\"--i:0\" x=\"120\" y=\"24\" width=\"278\" height=\"226\" rx=\"4\" fill=\"#86dfe3\"><title>a · 값 1: 1</title></rect><text x=\"259\" y=\"12\" font-size=\"12\" text-anchor=\"middle\" dominant-baseline=\"central\" fill=\"currentColor\" class=\"acv-node\" style=\"--i:0\">1</text><text x=\"260\" y=\"268\" font-size=\"12\" text-anchor=\"middle\" dominant-baseline=\"central\" fill=\"currentColor\">a</text></svg></figure>\n<span id=\"block-s37\"></span>\n<figure class=\"acv-fig acv-part\" data-part=\"badge\" style=\"margin:1.2em 0\"><script>addEventListener(\"message\",function(e){var f=document.getElementById(\"acv-fs37\"),h=e.data&&+e.data.acvH;if(f&&e.source===f.contentWindow&&h>0)f.style.height=Math.min(20000,h)+\"px\"})</script><iframe id=\"acv-fs37\" class=\"acv-frame acp-frame\" data-part=\"badge\" data-theme-id=\"\" sandbox=\"allow-scripts\" referrerpolicy=\"no-referrer\" title=\"부품 badge\" style=\"width:100%;height:160px;border:0;background:transparent\" srcdoc=\"&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#39;none&#39;; img-src data:; style-src &#39;unsafe-inline&#39;; script-src &#39;unsafe-inline&#39;; font-src data:&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1&quot;&gt;&lt;/head&gt;&lt;body&gt;&lt;div id=&quot;acp&quot; data-part=&quot;badge&quot; data-theme-id=&quot;&quot;&gt;&lt;/div&gt;&lt;script type=&quot;application/json&quot; id=&quot;acp-data&quot;&gt;{&quot;items&quot;:[{&quot;label&quot;:&quot;a&quot;,&quot;value&quot;:1}]}&lt;/script&gt;&lt;script&gt;(function(){var R=document.documentElement,D=document.getElementById(&quot;acp-data&quot;),P=document.getElementById(&quot;acp&quot;).getAttribute(&quot;data-part&quot;),done=0;function ask(){parent.postMessage({acpReady:1,part:P,theme:document.getElementById(&quot;acp&quot;).getAttribute(&quot;data-theme-id&quot;)},&quot;*&quot;)}function h(){parent.postMessage({acvH:Math.ceil(document.body.getBoundingClientRect().height)},&quot;*&quot;)}function run(c){var s=document.createElement(&quot;script&quot;);s.textContent=c;document.body.appendChild(s)}function go(m){if(done)return;done=1;if(m.acpThemeCss!=null)window.acardPartTheme=String(m.acpThemeCss);if(m.acpHtml!=null){try{window.acardPartData=JSON.parse(D.textContent)}catch(e){window.acardPartData=null}var t=document.createElement(&quot;div&quot;);t.innerHTML=m.acpHtml;Array.prototype.forEach.call(t.childNodes,function(n){if(n.tagName===&quot;SCRIPT&quot;)run(n.textContent);else document.body.appendChild(n)})}else run(m.acpCode);h();parent.postMessage({acpDrawn:1},&quot;*&quot;)}addEventListener(&quot;message&quot;,function(e){var m=e.data;if(e.source!==parent||!m)return;if(m.acpHello&amp;&amp;!done)ask();if(m.acpTheme)R.setAttribute(&quot;data-theme&quot;,m.acpTheme);if(m.acpCode!=null||m.acpHtml!=null)go(m)});new ResizeObserver(h).observe(document.body);ask()})()&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;\"></iframe></figure>\n<script src=\"/lazy/parts.js?v=__PARTS_JS__\" async></script>"
+}

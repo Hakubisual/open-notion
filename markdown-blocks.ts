@@ -1,3 +1,5 @@
+import "./assets/columns-model.js";
+
 // 마크다운 -> 블록 변환기.
 // 도리는 마크다운을 쓰고(정본), 오너는 브라우저 에디터에서 같은 페이지를 블록으로 고친다.
 // 그래서 마크다운을 블록 목록으로 바꾸는 규칙이 한 곳에만 있어야 한다. 빌드와 시드가 이걸 쓴다.
@@ -7,6 +9,7 @@ export type BlockType =
   | "heading1"
   | "heading2"
   | "heading3"
+  | "heading4"
   | "bulleted"
   | "numbered"
   | "to_do"
@@ -23,6 +26,7 @@ export type BlockType =
   | "embed"
   | "bookmark"
   | "columns"
+  | "column"
   | "table"
   | "equation"
   | "toc"
@@ -33,22 +37,29 @@ export type BlockType =
   | "diagram"
   | "chart"
   | "visual"
-  | "html";
+  | "html"
+  | "part"
+  | "component";
 
 // Visual blocks are fenced blocks: ```mermaid / ```acard-chart / ```acard-visual, with an optional JSON meta object
 // after the language. Format: research/visuals/format.md.
-const VISUAL_FENCES: Record<string, BlockType> = { mermaid: "diagram", "acard-chart": "chart", "acard-visual": "visual", "html-embed": "html" };
-const VISUAL_LANGS: Record<string, string> = { diagram: "mermaid", chart: "acard-chart", visual: "acard-visual", html: "html-embed" };
+// ```acard-part {"part":"chart","v":1} holds a part's JSON data; the part's code is a versioned file (#38).
+// ```acard-ui {"ui":"stat"} holds a component's JSON data; component-registry.js draws it (ds10).
+const VISUAL_FENCES: Record<string, BlockType> = { mermaid: "diagram", "acard-chart": "chart", "acard-visual": "visual", "html-embed": "html", "acard-part": "part", "acard-ui": "component" };
+const VISUAL_LANGS: Record<string, string> = { diagram: "mermaid", chart: "acard-chart", visual: "acard-visual", html: "html-embed", part: "acard-part", component: "acard-ui" };
 const VISUAL_META_KEYS = ["caption", "alt", "height"];
+const PART_META_KEYS = ["part", "v", "theme", "caption", "alt", "height"];
+const COMPONENT_META_KEYS = ["ui"];
+const fenceMetaKeys = (type: BlockType | string) => type === "part" ? PART_META_KEYS : type === "component" ? COMPONENT_META_KEYS : VISUAL_META_KEYS;
 
-function visualMeta(info: string): Record<string, unknown> | null {
+function visualMeta(info: string, part: boolean | BlockType = false): Record<string, unknown> | null {
   if (!info.startsWith("{")) return null;
   try {
     const parsed = JSON.parse(info);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const out: Record<string, unknown> = {};
-    for (const key of VISUAL_META_KEYS) {
-      if (key === "height" ? Number.isFinite(parsed[key]) : typeof parsed[key] === "string" && parsed[key]) out[key] = parsed[key];
+    for (const key of fenceMetaKeys(part === true ? "part" : part || "")) {
+      if (key === "height" || key === "v" ? Number.isFinite(parsed[key]) : typeof parsed[key] === "string" && parsed[key]) out[key] = parsed[key];
     }
     return Object.keys(out).length ? out : null;
   } catch {
@@ -95,20 +106,139 @@ function splitTableRow(line: string): string[] {
   return trimmed.split("|").map((cell) => cell.trim());
 }
 
-export function markdownToBlocks(markdown: string): Block[] {
+// Block meta comment (notion-parity C6 C7 C11): in a document whose front matter says acard_meta: 1, the line right after
+// a block may be <!--acard {"color":"yellow_background","icon":"🔥","height":480,"toggle":true,"open":false}--> (same
+// indentation). Only these keys and values are taken; anything else leaves the line as text. Without the flag (every older
+// markdown: imports, seeds, agent writes) such a line stays text exactly as before. In a flagged document a text line that
+// itself starts with <!--acard (after any backslashes) gets one more backslash on write and loses one on read.
+export type MarkdownOptions = { meta?: boolean };
+
+// A document's acard_meta flag: front matter with the line acard_meta: 1 (and its title, if any). Other front matter and
+// documents without it come back with flagged false and the text untouched.
+export function acardMetaDocument(markdown: string): { flagged: boolean; title: string; body: string } {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(markdown);
+  if (!m || !/^acard_meta:\s*1\s*$/m.test(m[1])) return { flagged: false, title: "", body: markdown };
+  const title = /^title:\s*(.*)$/m.exec(m[1]);
+  let t = title ? title[1].trim() : "";
+  if (/^".*"$/.test(t)) { try { t = JSON.parse(t); } catch {} }
+  return { flagged: true, title: t, body: markdown.slice(m[0].length) };
+}
+
+// Lossless Acard markdown of a page: front matter with the flag, then every block with its meta comment lines.
+export function acardMarkdown(title: string, blocks: Block[]): string {
+  return "---\ntitle: " + JSON.stringify(String(title)) + "\nacard_meta: 1\n---\n\n" + blocksToMarkdown(blocks, { meta: true }) + "\n";
+}
+const META_LINE = /^\s*<!--acard (\{.*\})-->\s*$/;
+const COLUMNS_OPEN = /^\s*<!--acard columns( (\{.*\}))?-->\s*$/;
+const COLUMN_LINE = /^\s*<!--acard column-->\s*$/;
+const COLUMNS_CLOSE = /^\s*<!--acard \/columns-->\s*$/;
+
+// Whether the columns marker at index has its closing marker (nested sets counted) before the document ends.
+function columnsClosed(lines: string[], index: number, escaped: Set<number>): boolean {
+  let open = 0;
+  for (let k = index; k < lines.length; k += 1) {
+    if (escaped.has(k)) continue;
+    if (COLUMNS_OPEN.test(lines[k])) open += 1;
+    else if (COLUMNS_CLOSE.test(lines[k])) { open -= 1; if (!open) return true; }
+  }
+  return false;
+}
+const ESCAPED_META = /^(\s*)\\(\\*<!--acard)/;
+const COLOR_NAME = /^(gray|brown|orange|yellow|green|blue|purple|pink|red)(_background)?$/;
+
+function cleanBlockMeta(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const src = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  if (typeof src.color === "string" && COLOR_NAME.test(src.color)) out.color = src.color;
+  if (typeof src.icon === "string" && src.icon.trim() && [...src.icon.trim()].length <= 8) out.icon = src.icon.trim();
+  if (typeof src.height === "number" && Number.isFinite(src.height)) out.height = Math.min(2000, Math.max(120, Math.round(src.height)));
+  if (typeof src.toggle === "boolean") out.toggle = src.toggle;
+  if (typeof src.open === "boolean") out.open = src.open;
+  const actions = mdButtonActions(src.actions);
+  if (actions) out.actions = actions;
+  return Object.keys(out).length ? out : null;
+}
+
+// Button actions (notion-parity C3) in a meta comment: only the five known shapes, at most ten, values a flat object; a
+// list with any other shape is dropped as a whole. Whether the writer may target a database is checked when it is saved.
+const MD_BUTTON_ACTION_TYPES = ["confirm", "create_row", "open", "update_row", "update_related"];
+function mdButtonActions(raw: unknown): Record<string, unknown>[] | null {
+  if (!Array.isArray(raw) || !raw.length || raw.length > 10) return null;
+  const flat = (v: unknown) => v === undefined || (!!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length <= 100);
+  const out: Record<string, unknown>[] = [];
+  for (const item of raw) {
+    const a = item as Record<string, unknown>;
+    if (!a || typeof a !== "object" || MD_BUTTON_ACTION_TYPES.indexOf(a.type as string) < 0) return null;
+    if (a.type === "confirm") out.push({ type: "confirm", message: String(a.message ?? "").slice(0, 300) });
+    else if (a.type === "open") {
+      if (a.target === "url") {
+        const url = String(a.url ?? "").trim();
+        if (!/^(https?:\/\/|\/(?!\/))/.test(url)) return null;
+        out.push({ type: "open", target: "url", url: url.slice(0, 2000) });
+      } else out.push({ type: "open", target: "created" });
+    } else if (a.type === "create_row") {
+      if (typeof a.database !== "string" || !a.database || !flat(a.values)) return null;
+      out.push({ type: "create_row", database: a.database, ...(typeof a.template === "string" && a.template ? { template: a.template } : {}), values: a.values || {} });
+    } else if (a.type === "update_row") {
+      if (!flat(a.values)) return null;
+      out.push({ type: "update_row", values: a.values || {} });
+    } else {
+      if (typeof a.relation !== "string" || !a.relation || !flat(a.values)) return null;
+      out.push({ type: "update_related", relation: a.relation, values: a.values || {} });
+    }
+  }
+  return out;
+}
+
+// The meta a block writes into its comment line: progress keeps its own color syntax, height only for embeds (visual
+// fences carry theirs), open only with a toggle heading (a toggle block's open state was never in markdown).
+function blockMetaComment(block: Block): Record<string, unknown> | null {
+  const meta = (block.meta || {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  if (block.type !== "progress" && typeof meta.color === "string" && COLOR_NAME.test(meta.color)) out.color = meta.color;
+  if ((block.type === "callout" || block.type === "button") && typeof meta.icon === "string" && meta.icon.trim() && [...meta.icon.trim()].length <= 8) out.icon = meta.icon.trim();
+  if (block.type === "button") { const actions = mdButtonActions(meta.actions); if (actions) out.actions = actions; }
+  if (block.type === "embed" && Number(meta.height) > 0) out.height = Math.min(2000, Math.max(120, Math.round(Number(meta.height))));
+  if (/^heading[1-4]$/.test(block.type) && meta.toggle === true) { out.toggle = true; out.open = meta.open === true; }
+  return Object.keys(out).length ? out : null;
+}
+
+export function markdownToBlocks(markdown: string, options: MarkdownOptions = {}): Block[] {
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
   let i = 0;
+  // Meta comment lines are found first (by index) so a later unescape cannot turn text into meta.
+  const metaLines = new Map<number, Record<string, unknown>>();
+  const escaped = new Set<number>();
+  if (options.meta) {
+    lines.forEach((line, index) => {
+      const m = META_LINE.exec(line);
+      if (m) { try { const meta = cleanBlockMeta(JSON.parse(m[1])); if (meta) metaLines.set(index, meta); } catch {} }
+      else if (ESCAPED_META.test(line)) { lines[index] = line.replace(ESCAPED_META, "$1$2"); escaped.add(index); }
+    });
+  }
 
   const push = (type: BlockType, text: string, extra: Partial<Block> = {}) => {
     blocks.push({ id: nextId(), type, text, indent: currentIndent, ...extra });
   };
   let currentIndent = 0;
+  const columnStack: { base: number; widthsGiven: boolean; head: Block }[] = [];
 
   while (i < lines.length) {
     const raw = lines[i];
-    currentIndent = Math.floor((/^ */.exec(raw)?.[0].length ?? 0) / 2);
+    // Inside a column the written indent starts at 0; the stored depth is the column's + 1.
+    currentIndent = Math.floor((/^ */.exec(raw)?.[0].length ?? 0) / 2) + (columnStack.length ? columnStack[columnStack.length - 1].base + 2 : 0);
     const line = raw.trim();
+
+    const comment = metaLines.get(i);
+    if (comment && blocks.length) {
+      const last = blocks[blocks.length - 1];
+      const { actions, ...rest } = comment;
+      last.meta = { ...(last.meta || {}), ...rest, ...(actions && last.type === "button" ? { actions } : {}) };
+      i += 1;
+      continue;
+    }
 
     if (line.trim() === "") {
       i += 1;
@@ -130,7 +260,7 @@ export function markdownToBlocks(markdown: string): Block[] {
       }
       i += 1;
       if (visual) {
-        const meta = visualMeta(langMatch[2]);
+        const meta = visualMeta(langMatch[2], visual);
         push(visual, body.join("\n"), meta ? { meta } : {});
       } else push("code", body.join("\n"), lang ? { meta: { lang } } : {});
       continue;
@@ -169,7 +299,8 @@ export function markdownToBlocks(markdown: string): Block[] {
 
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
-      const level = Math.min(heading[1].length, 3);
+      // #### is heading 4 (notion-parity C16); ##### and ###### have no own level and become heading 4.
+      const level = Math.min(heading[1].length, 4);
       const type = ("heading" + level) as BlockType;
       push(type, heading[2].trim());
       i += 1;
@@ -212,10 +343,18 @@ export function markdownToBlocks(markdown: string): Block[] {
       continue;
     }
 
-    // 이미지 한 줄: ![캡션](주소 "60")  — 마지막 따옴표 숫자는 폭(%) 이다
-    const image = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"(\d+)")?\)\s*$/.exec(line);
+    // 이미지 한 줄: ![캡션](주소 "60 t=0:05 g=v1 agent")  — 따옴표 안 숫자는 폭(%), t= 는 영상 속 시각, g= 는 한 줄로
+    // 묶을 이미지 무리, agent 는 에이전트가 붙인 이미지 표시다(#33).
+    const image = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)\s*$/.exec(line);
     if (image) {
-      push("image", image[1], { meta: { src: image[2], width: image[3] ? Math.min(100, Math.max(10, Number(image[3]))) : 100 } });
+      const meta: Record<string, unknown> = { src: image[2], width: 100 };
+      for (const token of (image[3] ?? "").split(/\s+/)) {
+        if (/^\d+$/.test(token)) meta.width = Math.min(100, Math.max(10, Number(token)));
+        else if (/^t=\d{1,2}(?::\d{2}){1,2}$/.test(token)) meta.time = token.slice(2);
+        else if (/^g=[\w-]{1,24}$/.test(token)) meta.group = token.slice(2);
+        else if (token === "agent") meta.agent = true;
+      }
+      push("image", image[1], { meta });
       i += 1;
       continue;
     }
@@ -256,7 +395,37 @@ export function markdownToBlocks(markdown: string): Block[] {
         cols[cols.length - 1].text = (cols[cols.length - 1].text + "\n" + extra.text).trim();
       }
       while (cols.length < 2) cols.push({ text: "" });
-      push("columns", cols.map((c) => (c.text.split("\n")[0] ?? "")).join(" | "), { meta: { columns: cols } });
+      // Old :::cols markdown still reads as columns, now as columns + column + paragraph blocks (notion-parity C13).
+      const legacy = { id: nextId(), type: "columns" as BlockType, text: "", indent: currentIndent, meta: { columns: cols } };
+      const converted = (globalThis as any).ColumnsModel ? (globalThis as any).ColumnsModel.columnsFromLegacy([legacy]) : [legacy];
+      for (const block of converted) blocks.push(block.type === "columns" || block.type === "column" ? { ...block, id: nextId() } : { ...block, id: nextId(), meta: undefined } as Block);
+      continue;
+    }
+
+    // Column marker lines (notion-parity C13), only in an acard_meta document and only as a whole line:
+    // <!--acard columns {"widths":[..]}--> ... <!--acard column--> ... <!--acard /columns-->. The blocks between two
+    // markers are ordinary markdown written without the column's own indent; an unclosed set stays text.
+    if (options.meta && !escaped.has(i) && COLUMNS_OPEN.test(raw) && columnsClosed(lines, i, escaped)) {
+      const open = COLUMNS_OPEN.exec(raw)!;
+      let widths: number[] | null = null;
+      try { const parsed = open[2] ? JSON.parse(open[2]) : null; if (parsed && Array.isArray(parsed.widths) && parsed.widths.every((w: unknown) => typeof w === "number" && w > 0)) widths = parsed.widths; } catch {}
+      const base = currentIndent;
+      push("columns", "", widths ? { meta: { widths } } : {});
+      columnStack.push({ base, widthsGiven: !!widths, head: blocks[blocks.length - 1] });
+      i += 1;
+      continue;
+    }
+    if (options.meta && !escaped.has(i) && columnStack.length && COLUMN_LINE.test(raw)) {
+      const top = columnStack[columnStack.length - 1];
+      blocks.push({ id: nextId(), type: "column", text: "", indent: top.base + 1 });
+      i += 1;
+      continue;
+    }
+    if (options.meta && !escaped.has(i) && columnStack.length && COLUMNS_CLOSE.test(raw)) {
+      const top = columnStack.pop()!;
+      const count = blocks.filter((b, k) => k > blocks.indexOf(top.head) && b.type === "column" && b.indent === top.base + 1).length;
+      if (!top.widthsGiven && count) top.head.meta = { widths: Array.from({ length: count }, () => Math.round(10000 / count) / 10000) };
+      i += 1;
       continue;
     }
 
@@ -328,7 +497,8 @@ export function markdownToBlocks(markdown: string): Block[] {
         /^```/.test(peek.trim()) ||
         isTableRow(peek) ||
         /^https?:\/\/\S+$/.test(peek.trim()) ||
-        /^(-{3,}|\*{3,}|_{3,})$/.test(peek.trim())
+        /^(-{3,}|\*{3,}|_{3,})$/.test(peek.trim()) ||
+        metaLines.has(i)
       ) {
         break;
       }
@@ -362,24 +532,85 @@ function richMarkdown(block: Block): string {
 
 // Two-space indentation preserves child hierarchy without replacing existing flat callers.
 // Every block type has a markdown form that markdownToBlocks reads back as the same type.
-export function blocksToMarkdown(blocks: Block[]): string {
-  return blocks.map((block) => {
+// Numbered items are written 1. 2. 3. per list (a list restarts after any other block at its indent), so an agent
+// that edits the markdown by text sees the same numbers the reader shows.
+export function blocksToMarkdown(blocks: Block[], options: MarkdownOptions = {}): string {
+  const counters: number[] = [];
+  const model = (globalThis as any).ColumnsModel;
+  if (model) blocks = model.columnsFromLegacy(blocks);
+  // Column children are written without the 2 levels each enclosing columns adds (notion-parity C13).
+  const lift: number[] = model ? model.columnsLevels(blocks).map((n: number) => n * 2) : blocks.map(() => 0);
+  const closers: { indent: number; text: string }[] = [];
+  const out: string[] = [];
+  let skipUntil = -1;
+  blocks.forEach((block, index) => {
+    if (index < skipUntil) return;
+    while (closers.length && (block.indent || 0) <= closers[closers.length - 1].indent) out.push(closers.pop()!.text);
+    if (!options.meta && block.type === "columns" && model) {
+      // Without the flag, columns that hold only one-line paragraphs go back to :::cols (reads back the same).
+      const plain = plainColumns(blocks, index);
+      if (plain) { out.push("  ".repeat(Math.max(0, (block.indent || 0) - lift[index])) + plain.text); skipUntil = plain.end; return; }
+    }
+    const text = blockMarkdown(block, index);
+    if (text !== null) out.push(text);
+  });
+  while (closers.length) out.push(closers.pop()!.text);
+  return out.join("\n\n");
+
+  function plainColumns(list: Block[], index: number): { text: string; end: number } | null {
+    const head = list[index], d = head.indent || 0;
+    let end = index + 1;
+    while (end < list.length && (list[end].indent || 0) > d) end += 1;
+    const cols: string[][] = [];
+    for (let k = index + 1; k < end; k += 1) {
+      const b = list[k];
+      if (b.type === "column" && (b.indent || 0) === d + 1) { cols.push([]); continue; }
+      if (!cols.length || b.type !== "paragraph" || (b.indent || 0) !== d + 2 || !b.text || b.text.includes("\n") || /^\s|\s$/.test(b.text) || /^(:::|-{3,}$)/.test(b.text) || (b.meta && Object.keys(b.meta).some((key) => key !== "richText"))) return null;
+      cols[cols.length - 1].push(richMarkdown(b));
+    }
+    if (cols.length < 2 || cols.length > 3) return null;
+    const widths = head.meta?.widths;
+    if (Array.isArray(widths) && widths.some((w: number) => Math.abs(w - 1 / cols.length) > 0.001)) return null;
+    return { text: [":::cols", ...cols.map((lines, n) => (n ? "---\n" : "") + lines.join("\n")), ":::"].join("\n"), end };
+  }
+
+  function blockMarkdown(block: Block, index: number): string | null {
+    const pad = "  ".repeat(Math.max(0, (block.indent || 0) - lift[index]));
+    if ((block.type === "columns" && !Array.isArray(block.meta?.columns)) || block.type === "column") {
+      // Without the acard_meta flag there is no marker syntax: the columns' blocks are written one after another.
+      if (!options.meta) return null;
+      if (block.type === "columns") {
+        const widths = Array.isArray(block.meta?.widths) ? block.meta!.widths : null;
+        closers.push({ indent: block.indent || 0, text: pad + "<!--acard /columns-->" });
+        return pad + "<!--acard columns" + (widths ? " " + JSON.stringify({ widths }) : "") + "-->";
+      }
+      return pad + "<!--acard column-->";
+    }
+    return plainBlockMarkdown(block, pad);
+  }
+
+  function plainBlockMarkdown(block: Block, pad: string): string {
     const meta = (block.meta || {}) as Record<string, any>;
+    const level = Math.max(0, block.indent || 0);
+    counters.length = Math.min(counters.length, level + 1);
+    if (block.type === "numbered") counters[level] = (counters[level] || 0) + 1;
+    else counters.length = Math.min(counters.length, level);
     let text = richMarkdown(block);
     switch (block.type) {
       case "heading1": text = "# " + text; break;
       case "heading2": text = "## " + text; break;
       case "heading3": text = "### " + text; break;
+      case "heading4": text = "#### " + text; break;
       case "bulleted": text = "- " + text; break;
-      case "numbered": text = "1. " + text; break;
+      case "numbered": text = counters[level] + ". " + text; break;
       case "to_do": text = "- [" + (block.checked ? "x" : " ") + "] " + text; break;
       case "toggle": text = "- [toggle] " + text; break;
       case "callout": text = "> [!" + String(block.meta?.tone || "note") + "] " + text.replace(/\n/g, "\n> "); break;
       case "quote": text = text.split("\n").map(line => "> " + line).join("\n"); break;
       case "code": text = "```" + String(block.meta?.lang || "") + "\n" + text + "\n```"; break;
-      case "diagram": case "chart": case "visual": case "html": {
+      case "diagram": case "chart": case "visual": case "html": case "part": case "component": {
         const picked: Record<string, unknown> = {};
-        for (const key of VISUAL_META_KEYS) if (meta[key] !== undefined && meta[key] !== "" && meta[key] !== null) picked[key] = meta[key];
+        for (const key of fenceMetaKeys(block.type)) if (meta[key] !== undefined && meta[key] !== "" && meta[key] !== null) picked[key] = meta[key];
         const fence = "`".repeat(Math.max(3, ...[...block.text.matchAll(/^\s*(`{3,})/gm)].map((m) => m[1].length + 1)));
         text = fence + VISUAL_LANGS[block.type] + (Object.keys(picked).length ? " " + JSON.stringify(picked) : "") + "\n" + block.text + "\n" + fence;
         break;
@@ -399,7 +630,16 @@ export function blocksToMarkdown(blocks: Block[]): string {
         text = [rowText(columns), rowText(columns.map(() => "===")), ...rows.map((row: unknown[]) => rowText(columns.map((_c: string, index: number) => Array.isArray(row) ? row[index] : "")))].join("\n");
         break;
       }
-      case "image": text = "![" + block.text.replace(/[\]\n]/g, " ") + "](" + String(meta.src || "") + (meta.width && Number(meta.width) !== 100 ? ' "' + Number(meta.width) + '"' : "") + ")"; break;
+      case "image": {
+        const tokens = [
+          meta.width && Number(meta.width) !== 100 ? String(Number(meta.width)) : "",
+          typeof meta.time === "string" && /^\d{1,2}(?::\d{2}){1,2}$/.test(meta.time) ? "t=" + meta.time : "",
+          typeof meta.group === "string" && /^[\w-]{1,24}$/.test(meta.group) ? "g=" + meta.group : "",
+          meta.agent === true ? "agent" : "",
+        ].filter(Boolean);
+        text = "![" + block.text.replace(/[\]\n]/g, " ") + "](" + String(meta.src || "") + (tokens.length ? ' "' + tokens.join(" ") + '"' : "") + ")";
+        break;
+      }
       case "video": case "audio": case "embed": text = "- [" + block.type + "] " + String(meta.url || ""); break;
       case "bookmark": text = /^https?:\/\/\S+$/.test(String(meta.url || "")) ? String(meta.url) : "- [bookmark] " + String(meta.url || ""); break;
       case "file": text = "- [file] " + String(meta.url || "") + (block.text || meta.name ? " " + (block.text || meta.name) : ""); break;
@@ -409,15 +649,19 @@ export function blocksToMarkdown(blocks: Block[]): string {
       case "db_ref": text = "- [db_ref] " + String(meta.database || ""); break;
       case "equation": text = "$$\n" + block.text + "\n$$"; break;
       case "columns": {
+        // A page too full to convert keeps its old text-only columns: write them as :::cols, which reads back as columns.
         const cols = Array.isArray(meta.columns) ? meta.columns : [];
         text = [":::cols", ...cols.map((col: { text?: string }, index: number) => (index ? "---\n" : "") + String(col?.text ?? "")), ":::"].join("\n");
         break;
       }
       case "paragraph": break;
     }
-    const pad = "  ".repeat(Math.max(0, block.indent || 0));
-    return text.split("\n").map(line => pad + line).join("\n");
-  }).join("\n\n");
+    if (!options.meta) return text.split("\n").map(line => pad + line).join("\n");
+    const lines = text.split("\n").map(line => pad + line.replace(/^(\s*)(\\*<!--acard)/, "$1\\$2"));
+    const comment = blockMetaComment(block);
+    if (comment) lines.push(pad + "<!--acard " + JSON.stringify(comment) + "-->");
+    return lines.join("\n");
+  }
 }
 
 // 블록 안에서 나가는 링크를 뽑는다 (백링크용). [[슬러그]] 와 [글](/슬러그/) 둘 다 인정한다.

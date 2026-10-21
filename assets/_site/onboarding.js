@@ -9,7 +9,7 @@ const show = (form, kind, text) => { const m = form.querySelector(".msg"); m.cla
 function paintAvatar(url, name) {
   const a = $("avatar");
   if (url) { a.style.backgroundImage = `url("${url}")`; a.textContent = ""; $("avatar-cap").textContent = T("js.onb.google"); }
-  else { a.style.backgroundImage = ""; a.textContent = (name.trim()[0] ?? "A").toUpperCase(); $("avatar-cap").textContent = T("js.onb.initial"); }
+  else { a.style.backgroundImage = ""; a.textContent = (name.match(/[\p{L}\p{N}]/u)?.[0] ?? "A").toUpperCase(); $("avatar-cap").textContent = T("js.onb.initial"); }
 }
 let avatarUrl = null;
 

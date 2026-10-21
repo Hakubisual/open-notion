@@ -25,11 +25,11 @@ html[data-theme="dark"] { --ui-col-todo: #23232a; --ui-col-doing: #2a2643; --ui-
 .ui-kanban[hidden], .ui-table[hidden] { display: none; }
 .ui-card { min-width: 0; max-width: 100%; background: var(--surface); border: var(--ui-border); border-radius: var(--ui-radius-card); box-shadow: var(--ui-shadow-card); padding: var(--ui-pad-card); }
 .ui-card-head { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; }
-.ui-card-head h2 { margin: 0; font-size: var(--fs-17); font-weight: 700; flex: 1; display: flex; align-items: center; gap: 10px; }
+.ui-card-head h2 { margin: 0; font-size: var(--fs-17); font-weight: 700; line-height: normal; flex: 1; display: flex; align-items: center; gap: 10px; }
 .ui-card-head h2 svg { width: 20px; height: 20px; color: var(--fg-dim); }
 .ui-soft { background: var(--accent-soft); border-radius: var(--ui-radius-card); }
 
-.ui-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: var(--ui-radius-item); border: var(--ui-border); background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-14); font-weight: 600; cursor: pointer; text-decoration: none; }
+.ui-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; line-height: normal; padding: 0 14px; border-radius: var(--ui-radius-item); border: var(--ui-border); background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-14); font-weight: 600; cursor: pointer; text-decoration: none; }
 .ui-btn-primary { height: var(--ui-btn-h); padding: 0 18px; background: var(--accent); border-color: var(--accent); color: var(--on-accent); box-shadow: 0 2px 8px rgba(100, 80, 220, .25); }
 .ui-btn-primary:hover { background: var(--accent-strong); }
 .ui-btn-sm { height: 32px; padding: 0 14px; }

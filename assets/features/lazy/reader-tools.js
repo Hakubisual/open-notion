@@ -21,7 +21,7 @@
   }
   // Trash rows: restore puts the page back, permanent delete asks first. A row goes away only once the server agrees.
   function trash(show, list, esc, when) {
-    fetch("/api/editor/trash").then(function (r) { return r.ok ? r.json() : { pages: [] }; }).then(function (d) {
+    fetch("/api/editor/trash").then(function (r) { if (!r.ok) throw Error(String(r.status)); return r.json(); }).then(function (d) {
       var pages = d.pages || [];
       show("휴지통", [], "휴지통이 비었어요.");
       if (!pages.length) return;
@@ -61,7 +61,33 @@
           window.alert(restore ? "복원하지 못했어요. 잠시 뒤 다시 시도해 주세요." : "영구 삭제하지 못했어요. 잠시 뒤 다시 시도해 주세요.");
         });
       });
+    }).catch(function () {
+      show("휴지통", [], "휴지통을 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.");
     });
   }
-  window.AcardTools = { homeTab: homeTab, trash: trash };
+  // #21 페이지 너비: ⋯ 메뉴의 좁게/보통/넓게. 고르면 바로 적용하고 페이지 설정에 저장한다.
+  function width(menu) {
+    var box = menu.querySelector(".menu-width"), main = document.getElementById("main");
+    if (!box || !main || box.dataset.ready || !window.AcardReader) return;
+    box.dataset.ready = "1";
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "페이지 너비");
+    box.innerHTML = '<span class="menu-label">페이지 너비</span><div class="seg"><button type="button" data-width="default">좁게</button><button type="button" data-width="normal">보통</button><button type="button" data-width="full">넓게</button></div>';
+    box.after(document.createElement("hr"));
+    function paint(w) {
+      main.classList.toggle("full-width", w === "full");
+      main.classList.toggle("width-normal", w === "normal");
+      box.querySelectorAll("[data-width]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.dataset.width === w)); });
+    }
+    paint(main.classList.contains("full-width") ? "full" : main.classList.contains("width-normal") ? "normal" : "default");
+    box.addEventListener("click", function (ev) {
+      var b = ev.target.closest("[data-width]");
+      if (!b) return;
+      var before = main.classList.contains("full-width") ? "full" : main.classList.contains("width-normal") ? "normal" : "default";
+      paint(b.dataset.width);
+      fetch("/api/page/" + encodeURIComponent(AcardReader.slug) + "/settings", { method: "PUT", headers: { "content-type": "application/json", "x-acard-client": (window.AcardLive || {}).client || "" }, body: JSON.stringify({ width: b.dataset.width }) })
+        .then(function (r) { if (!r.ok) throw Error(String(r.status)); }).catch(function () { paint(before); });
+    });
+  }
+  window.AcardTools = { homeTab: homeTab, trash: trash, width: width };
 })();

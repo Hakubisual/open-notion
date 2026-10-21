@@ -48,7 +48,7 @@
 
   function sentHtml() {
     if (!sent.length) return "";
-    return '<div class="shd-sent" role="status"><p>메일 발송이 아직 연결되지 않았어요. 아래 링크와 코드를 초대한 사람에게 직접 보내 주세요. 코드는 15분 동안만 쓸 수 있어요.</p>' + sent.map(function (s, i) {
+    return '<div class="shd-sent" role="status"><p>메일 발송이 아직 연결되지 않았어요. 아래 링크와 코드를 초대한 사람에게 직접 보내 주세요. 코드는 24시간 동안 쓸 수 있어요.</p>' + sent.map(function (s, i) {
       return '<div class="shd-copyrow"><span>' + esc(s.email) + '</span></div><div class="shd-copyrow"><input readonly value="' + esc(abs(s.url)) + '" aria-label="초대 링크"><b>' + esc(s.code) + '</b><button type="button" class="shd-ghost" data-copy-invite="' + i + '">복사</button></div>';
     }).join("") + "</div>";
   }
@@ -61,7 +61,7 @@
     }
     var link = state.link, onLink = Boolean(link && !link.inherited);
     var avatar = me && me.avatar ? '<img class="shd-avatar" src="' + esc(me.avatar) + '" alt="">' : '<span class="shd-avatar">' + esc((me && me.name || "나").slice(0, 1)) + "</span>";
-    var html = '<form class="shd-invite"><input name="email" type="text" inputmode="email" autocomplete="off" placeholder="쉼표로 구분한 이메일 또는 그룹" aria-label="초대할 이메일"><select name="role" aria-label="초대 권한">' + options(ROLES, "read") + '</select><button class="shd-primary" type="submit">공유하기</button></form>' + sentHtml() +
+    var html = '<form class="shd-invite"><input name="email" type="text" inputmode="email" autocomplete="off" placeholder="쉼표로 구분한 이메일" aria-label="초대할 이메일"><select name="role" aria-label="초대 권한">' + options(ROLES, "read") + '</select><button class="shd-primary" type="submit">공유하기</button></form>' + sentHtml() +
       '<ul class="shd-list"><li class="shd-person">' + avatar + '<span class="shd-who"><strong>' + esc(me && me.name || "나") + "(나)</strong><small>" + esc(me && me.email || "") + '</small></span><span class="shd-static">전체 허용</span></li>' + state.people.map(personRow).join("") + "</ul>";
     if (state.requests.length) {
       html += '<div class="shd-requests"><strong>권한 요청 ' + state.requests.length + "건</strong><ul class=\"shd-list\">" + state.requests.map(function (r) {
@@ -76,11 +76,10 @@
     }
     html += '<details class="shd-sees"><summary>다른 사람에게 표시되는 내용</summary><ul>' +
       (state.people.length ? state.people.map(function (p) { return "<li>" + esc(p.email) + ": " + roleName(p.role) + (p.inherited ? " (상위 페이지에서 상속)" : "") + "</li>"; }).join("") : "<li>초대한 사람이 없어요.</li>") +
-      "<li>" + (link ? "링크가 있는 모든 사용자: 읽기 허용" : "링크로는 열 수 없어요.") + "</li><li>" + (state.publish ? "웹에 게시됨: 누구나 게시 주소로 읽을 수 있어요." : "웹에 게시되지 않았어요.") + "</li>" +
+      "<li>" + (link ? "링크가 있는 모든 사용자: <span>" + roleName(link.role) + "</span>" : "링크로는 열 수 없어요.") + "</li><li>" + (state.publish ? "웹에 게시됨: 누구나 게시 주소로 읽을 수 있어요." : "웹에 게시되지 않았어요.") + "</li>" +
       "<li>하위 페이지도 같은 권한을 상속해요. 사이드바와 검색에는 볼 수 있는 페이지만 보여요.</li></ul></details>";
     html += '<div class="shd-foot"><button type="button" class="shd-plain" data-adv aria-expanded="' + advanced + '">' + ico("gear") + '고급</button><button type="button" class="shd-ghost" data-copy-link>' + ico("link") + "링크 복사</button></div>";
     if (advanced) html += advancedHtml(onLink);
-    else if (localStorage.getItem("acard-share-banner") !== "off") html += '<div class="shd-banner"><button type="button" data-adv>고급 기능에서 에이전트 사용 권한 제어</button><button type="button" class="shd-x" data-banner-close aria-label="닫기">×</button></div>';
     return html;
   }
 

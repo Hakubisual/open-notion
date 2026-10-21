@@ -28,10 +28,14 @@
     var current = await editor.api("/page/" + encodeURIComponent(slug));
     return remember(slug, current.page.title, current.blocks, current.page.updated);
   }
-  editor.provide("changed-blocks", { send: async function (slug, payload, previous) {
+  editor.provide("changed-blocks", { send: async function (slug, payload) {
     // Freeze the submitted state before an asynchronous read or network send.
     payload = JSON.parse(JSON.stringify(payload));
-    var base = saved.get(slug) || await read(slug);
+    if (!Number.isSafeInteger(payload.base_updated)) return new Response(JSON.stringify({ error: "불러오지 못했어요 · 읽기 전용. 새로고침해 주세요." }), { status: 428 });
+    var base = saved.get(slug);
+    if (!base && slug === editor.slug && editor.base) base = remember(slug, editor.base.title, editor.base.blocks, editor.base.updated);
+    if (!base) base = await read(slug);
+    if (base.updated !== payload.base_updated) return new Response(JSON.stringify({ error: "conflict", updated: base.updated }), { status: 409 });
     var next = new Map(payload.blocks.map(function (block) { return [block.id, hash(block)]; }));
     var order = payload.blocks.map(function (block) { return block.id; });
     var delta = { base_updated: base.updated, upserts: [], deletes: base.order.filter(function (id) { return !next.has(id); }) };
@@ -44,18 +48,13 @@
       return new Response(JSON.stringify({ ok: true, updated: base.updated, blocks: order.length }));
     }
     var response = await fetch("/api/page/" + encodeURIComponent(slug) + "/blocks", {
-      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(delta)
+      method: "PATCH", headers: { "content-type": "application/json", "x-acard-client": editor.clientId || "" }, body: JSON.stringify(delta)
     });
-    if (response.status === 409) {
-      await read(slug);
-      // Keep the existing full-save conflict policy and transport composition.
-      // Never persist a delta whose baseline would disappear after a reload.
-      saved.delete(slug);
-      return previous.call(editor, slug, payload);
-    }
     if (response.ok) {
       var result = await response.clone().json();
-      remember(slug, payload.title, payload.blocks, result.updated);
+      // The server moved column blocks (notion-parity C13), so the next delta must start from what it stored.
+      if (result.reshaped) await read(slug);
+      else remember(slug, payload.title, payload.blocks, result.updated);
     }
     return response;
   } });

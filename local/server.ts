@@ -36,6 +36,17 @@ function workspaceStore(db: Database) {
   return {
     exec: async (sql: string, params: unknown[], mode: string) => run(sql, params, mode),
     batch: async (list: { sql: string; params: unknown[] }[]) => db.transaction(() => list.map((item) => run(item.sql, item.params, "run")))(),
+    // Several statements in one call (gate/tenancy.ts d1Adapter); each reports its own result like WorkspaceStore.pipe.
+    pipe: async (items: { sql?: string; params?: unknown[]; mode?: string; batch?: { sql: string; params: unknown[] }[] }[]) => items.map((item) => {
+      try {
+        const value = item.batch
+          ? db.transaction(() => item.batch!.map((s) => run(s.sql, s.params, "run")))()
+          : run(item.sql!, item.params ?? [], item.mode ?? "run");
+        return { ok: true, value };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }),
     stats: async () => ({ pages: Number((db.query("SELECT count(*) AS n FROM pages").get() as any)?.n ?? 0) }),
     wipe: async () => ({ ok: false }),
     hit: async (key: string, limit: number, period: number) => {

@@ -3,8 +3,9 @@
   if (!lang || lang === "ko") return;
   // Page content written by the user never goes through the dictionary: reader article, editor blocks, editable areas.
   const SKIP = '#article, #blocks, [contenteditable], [translate="no"], script, style, textarea, code, pre';
-  const CHROME = 'button, [role="tab"], [role="menuitem"], .table-toolbar, .table-tabs, .crumbs, .dbempty, .tempty, .backlinks h2, .byline';
+  const CHROME = 'button, [role="tab"], [role="menuitem"], .table-toolbar, .table-tabs, .crumbs, .dbempty, .tempty, .backlinks h2, .byline, .fv-mode, .fv-meta, .fv-new, .fv-time, .fv-badge, .fv-empty';
   const ATTRS = ["placeholder", "title", "aria-label", "alt", "data-tip"];
+  const attrBlocked = (el) => el.tagName === "TEXTAREA" && !el.closest('#article, #blocks, [contenteditable], [translate="no"]') ? false : blocked(el);
   const blocked = (el) => { const s = el.closest(SKIP); return !!s && !(el.closest(CHROME) && s.contains(el.closest(CHROME)) && !el.closest('[contenteditable], [translate="no"], textarea')); };
   let map = null;
   const pending = [];
@@ -27,13 +28,17 @@
       return;
     }
     if (root.nodeType !== 1) return;
-    if (!blocked(root)) for (const a of ATTRS) { const v = root.getAttribute(a); if (v) { const t = tr(v); if (t) root.setAttribute(a, t); } }
+    if (!attrBlocked(root)) for (const a of ATTRS) { const v = root.getAttribute(a); if (v) { const t = tr(v); if (t) root.setAttribute(a, t); } }
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => (n.nodeType === 1 && n.matches('script, style, textarea, [contenteditable], [translate="no"]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+      acceptNode: (n) => {
+        if (n.nodeType !== 1 || !n.matches('script, style, textarea, [contenteditable], [translate="no"]')) return NodeFilter.FILTER_ACCEPT;
+        if (n.tagName === "TEXTAREA" && !attrBlocked(n)) for (const a of ATTRS) { const v = n.getAttribute(a); if (v) { const t = tr(v); if (t) n.setAttribute(a, t); } }
+        return NodeFilter.FILTER_REJECT;
+      },
     });
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       if (n.nodeType === 3) { if (!blocked(n.parentElement)) { const v = tr(n.nodeValue); if (v) n.nodeValue = v; } }
-      else if (!blocked(n)) for (const a of ATTRS) { const v = n.getAttribute(a); if (v) { const t = tr(v); if (t) n.setAttribute(a, t); } }
+      else if (!attrBlocked(n)) for (const a of ATTRS) { const v = n.getAttribute(a); if (v) { const t = tr(v); if (t) n.setAttribute(a, t); } }
     }
   };
   const origAlert = window.alert, origConfirm = window.confirm, origPrompt = window.prompt;

@@ -26,3 +26,4 @@
 .et-menu button:hover { background: var(--bg-soft); }
 .et-menu .danger { color: #e5484d; }
 @media (max-width: 560px) { .easy-table .et-hint { display: none; } .easy-table .et-grid { font-size: var(--fs-13); } }
+.easy-table .et-grid .et-check { min-height: 0; padding: 0; }

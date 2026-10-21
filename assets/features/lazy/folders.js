@@ -2,6 +2,8 @@
   if (window.AcardFolders) return;
   var editor = /^\/edit\//.test(location.pathname);
   var current = decodeURIComponent((location.pathname.match(/^\/(?:edit\/)?([^/]+)\/?$/) || [])[1] || "index");
+  if (current === "home") current = "index";
+  var identity = (document.querySelector('meta[name="acard-id"]') || {}).content;
   var base = editor ? document.getElementById("tree") : document.querySelector(".side-ws");
   if (!base) return;
   var host = base;
@@ -13,7 +15,8 @@
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function href(slug) { return editor ? "/edit/" + encodeURIComponent(slug) + "/" : slug === "index" ? "/" : "/" + encodeURIComponent(slug) + "/"; }
   function api(method, path, body) {
-    return fetch(path, { method: method, headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined })
+    // keepalive: a drop is drawn at once, so a click on a link right after it must not cancel the save.
+    return fetch(path, { method: method, keepalive: method !== "GET", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) { var e = new Error(d.error || "실패했어요."); e.data = d; e.status = r.status; throw e; } return d; }); });
   }
   function withShare(method, path, body) {
@@ -32,7 +35,7 @@
     toastEl.appendChild(el("span", "fd-tt", text));
     if (batch) {
       var u = el("button", "fd-undo", "되돌리기"); u.type = "button";
-      u.onclick = function () { api("POST", "/api/folders/undo", { batch: batch }).then(function () { toast("되돌렸어요."); reload(); }, function (e) { toast(e.message, null, true); }); };
+      u.onclick = function () { api("POST", "/api/folders/undo", { batch: batch }).then(function () { toast("되돌렸어요."); reload(); }, oops); };
       toastEl.appendChild(u);
     }
     var x = el("button", "fd-x", "×"); x.type = "button"; x.setAttribute("aria-label", "닫기"); x.onclick = function () { toastEl.remove(); };
@@ -52,8 +55,22 @@
   function isUnder(slug, maybeAncestor) { for (var p = S.bySlug[slug]; p; p = S.bySlug[p.parent]) { if (p.slug === maybeAncestor) return true; if (!p.parent) break; } return false; }
   function isOpen(slug) { return S.prefs.closed.indexOf(slug) < 0 && (S.prefs.open.indexOf(slug) >= 0 || isUnder(current, slug) && current !== slug); }
   // #14: one save per burst of clicks (concurrent saves raced); v lets the server drop a late older save.
-  var due, put = function () { if (due) fetch("/api/folders/prefs", { method: "PUT", keepalive: true, body: JSON.stringify(S.prefs) }); due = 0; };
-  function savePrefs() { S.prefs.v = Date.now(); clearTimeout(due); due = setTimeout(put, 200); }
+  // #45: the last tree and fold state also live in this browser (per sign-in epoch): the menu draws at once, survives a
+  // failed tree read, and a fold whose save failed is sent again; the newer fold wins.
+  function local(key, value) {
+    if (!identity) return;
+    key += ":" + identity;
+    try {
+      var e = localStorage.getItem("acard-cache-epoch:" + identity) || "";
+      if (value === undefined) { var c = JSON.parse(localStorage.getItem(key)); return c && c.e === e ? c.d : null; }
+      localStorage.setItem(key, JSON.stringify({ e: e, d: value }));
+    } catch (x) {}
+  }
+  var due, put = function () {
+    if (due) fetch("/api/folders/prefs", { method: "PUT", keepalive: true, body: JSON.stringify(S.prefs) }).then(function (r) { var p = local("acard-tree-prefs"); if (r.ok && p && p.v === S.prefs.v) { p.saved = 1; local("acard-tree-prefs", p); } }, function () {});
+    due = 0;
+  };
+  function savePrefs() { S.prefs.v = Date.now(); local("acard-tree-prefs", S.prefs); clearTimeout(due); due = setTimeout(put, 200); }
   function toggleOpen(slug, open) {
     var P = S.prefs, no = function (x) { return x !== slug; };
     P.open = P.open.filter(no); P.closed = P.closed.filter(no);
@@ -67,6 +84,7 @@
     var r = el("div", "fd-row" + (p.slug === current ? " on" : ""));
     r.dataset.slug = p.slug;
     r.style.paddingLeft = (flat ? 6 : 6 + depth * 14) + "px";
+    r.style.setProperty("--fd-indent", (flat ? 6 : 6 + depth * 14) + "px");
     var children = flat ? [] : kids(p.slug);
     var open = children.length && isOpen(p.slug);
     var tw = el("button", "fd-tw" + (children.length ? "" : " none")); tw.type = "button";
@@ -75,7 +93,9 @@
     if (open) r.classList.add("open");
     tw.onclick = function (ev) { ev.preventDefault(); toggleOpen(p.slug, !r.classList.contains("open")); render(); };
     var a = el("a", "fd-link"); a.href = href(p.slug); a.draggable = false;
-    a.appendChild(el("span", "fd-ic", p.icon || (children.length ? "▤" : "▢")));
+    var ic = el("span", "fd-ic", /^\/media\/[0-9a-f]{16}$/.test(p.icon || "") ? null : p.icon || (children.length ? "▤" : "▢"));
+    if (!ic.textContent) { var im = el("img"); im.src = p.icon + "?w=400"; im.alt = ""; im.width = im.height = 16; im.loading = "lazy"; im.style.cssText = "border-radius:3px;object-fit:cover;vertical-align:-3px"; ic.appendChild(im); }
+    a.appendChild(ic);
     a.appendChild(el("span", "fd-t", p.title || "제목 없음"));
     r.appendChild(tw); r.appendChild(a);
     if (children.length) r.appendChild(el("span", "fd-n", String(count(p.slug))));
@@ -103,7 +123,7 @@
   }
   function iconBtn(label, text, fn) { var b = el("button", "fd-ib", text); b.type = "button"; b.title = label; b.setAttribute("aria-label", label); b.onclick = fn; return b; }
   // 트리 / 태그별 보기: a per-browser choice (localStorage).
-  function groupMode() { try { return localStorage.getItem("acard-tree-group"); } catch (e) {} }
+  function groupMode() { return local("acard-tree-group"); }
   function tagGroups() {
     var box = el("div"), names = {};
     S.pages.forEach(function (p) { if (p.slug !== S.journal && !isUnder(p.slug, S.journal) && !p.shared) (p.tags.length ? p.tags : ["태그 없음"]).forEach(function (t) { (names[t] = names[t] || []).push(p); }); });
@@ -133,11 +153,11 @@
       var parents = S.pages.filter(function (p) { return kids(p.slug).length && depth(p) < 2; }).map(function (p) { return p.slug; });
       var byTag = groupMode() == "tags";
       wrap.appendChild(section("ws", "작업 공간", byTag ? tagGroups() : list(roots), { tools: [
-        iconBtn(byTag ? "트리로 보기" : "태그·프로젝트별 보기", byTag ? "≡" : "#", function () { try { localStorage.setItem("acard-tree-group", byTag ? "" : "tags"); } catch (e) {} render(); }),
+        iconBtn(byTag ? "트리로 보기" : "태그·프로젝트별 보기", byTag ? "≡" : "#", function () { local("acard-tree-group", byTag ? "" : "tags"); render(); }),
         byTag ? null : iconBtn(anyOpen ? "모두 접기" : "모두 펼치기", anyOpen ? "⇤" : "⇥", function () { S.prefs.open = anyOpen ? [] : parents.slice(0, 2000); S.prefs.closed = anyOpen ? parents.slice(0, 2000) : []; savePrefs(); render(); }),
         iconBtn("새 페이지", "+", function () { newPage(null); }),
       ].filter(Boolean) }));
-      // The agent journal group is hidden from the tree (owner); journal pages stay reachable from search and /connect.
+      // The agent journal group is hidden from the tree (owner); journal pages stay reachable from search and 설정 > 에이전트 연결.
       var shared = S.pages.filter(function (p) { return p.shared; });
       wrap.appendChild(section("shared", "공유받은 페이지", list(shared, true)));
     }
@@ -157,17 +177,56 @@
     if (keep) { var again = host.querySelector('.fd-row[data-slug="' + CSS.escape(keep) + '"] .fd-link'); if (again) again.focus(); }
   }
 
-  function reload() {
-    return api("GET", "/api/folders/tree").then(function (d) {
-      S.pages = d.pages || []; S.tags = d.tags || []; S.journal = d.journalRoot || S.journal;
-      S.prefs = Object.assign({ open: [], collapsed: [], closed: [] }, d.prefs);
+  // read: a tree read already started by the caller (live.js passes one that skips the service worker's stale copy).
+  function reload(read) {
+    return (read || api("GET", "/api/folders/tree")).then(function (d) {
+      if (!d || !Array.isArray(d.pages)) throw Error("tree");
+      local("acard-tree-cache", { pages: d.pages, tags: d.tags, journalRoot: d.journalRoot });
+      apply(d, d.prefs);
       render(); headTags();
     });
   }
+  function apply(d, theirs) {
+    S.pages = d.pages || []; S.tags = d.tags || []; S.journal = d.journalRoot || S.journal;
+    var mine = local("acard-tree-prefs"), pick = mine && mine.v > ((theirs || {}).v || 0) ? mine : theirs;
+    S.prefs = Object.assign({ open: [], collapsed: [], closed: [] }, pick);
+    delete S.prefs.saved;
+    if (pick === mine && !mine.saved) { due = 1; put(); }
+  }
 
   document.addEventListener("acard:tree-fresh", function () { reload().catch(function () {}); });
+  document.addEventListener("acard:navigated", function (e) {
+    current = e.detail.slug;
+    // Keep the tree and its focus/expansion DOM mounted across reader navigation.
+    host.querySelectorAll(".fd-row[data-slug]").forEach(function (row) { row.classList.toggle("on", row.dataset.slug === current); });
+    headTags();
+  });
 
-  // Service-worker sync: a small dot while cached pages/tree refresh, silent swap when they changed, sidebar prefetch on hover.
+  // #30 prefetch
+  var ahead = {}, made = {};
+  function newUrl(p) { p = p || ""; return made[p] || (made[p] = "/edit/page-" + Math.random().toString(36).slice(2, 8) + "/?new&create" + (p ? "&parent=" + encodeURIComponent(p) : "")); }
+  // #45/#57: a mouse sweeping over a long tree started a full page load per row at once; at most 8 per page view now.
+  var aheadN = 0, hover;
+  function pre(u) {
+    if (!u || ahead[u] || u == location.pathname || aheadN >= 8) return;
+    ahead[u] = 1; aheadN++;
+    if (!editor && window.AcardReader && window.AcardReader.prefetch && !/^\/edit\//.test(u)) { window.AcardReader.prefetch(u); return; }
+    document.head.append(Object.assign(document.createElement("script"), { type: "speculationrules", textContent: JSON.stringify({ prefetch: [{ source: "list", urls: [u], eagerness: "immediate" }] }) }));
+  }
+  function warm(ev) {
+    var t = ev.target.closest ? ev.target : document.body, n = t.closest(".fd-add,[title='새 페이지']"), a = t.closest("#sidebar a[href^='/']");
+    var u = n ? newUrl(n.matches(".fd-add") && n.parentNode.dataset.slug) : a && a.pathname;
+    clearTimeout(hover);
+    if (ev.type === "pointerover") hover = setTimeout(pre, 100, u); else pre(u);
+  }
+  // Phones have no hover: a touch starts the fetch, and an opened drawer fetches its first 3 links on screen.
+  "pointerover pointerdown focusin".split(" ").forEach(function (e) { document.addEventListener(e, warm, { passive: true }); });
+  var side = document.getElementById("sidebar");
+  side && new MutationObserver(function () {
+    side.classList.contains("open") && setTimeout(function () { [...side.querySelectorAll(".fd-link")].filter(function (a) { return a.getBoundingClientRect().top < innerHeight; }).slice(0, 3).forEach(function (a) { pre(a.pathname); }); }, 50);
+  }).observe(side, { attributes: true });
+
+  // Service-worker sync: a small dot while cached pages/tree refresh, silent swap when they changed.
   if ("serviceWorker" in navigator) (function () {
   var dot = null, busy = 0;
   function sync(on) {
@@ -182,35 +241,10 @@
     }
     dot.style.opacity = busy ? "0.8" : "0";
   }
-  function swapPage(url) {
-    if (new URL(url).pathname !== location.pathname) return;
-    if (document.activeElement && document.activeElement.isContentEditable) return;
-    fetch(location.pathname, { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : null; }).then(function (html) {
-      if (!html) return;
-      var next = new DOMParser().parseFromString(html, "text/html");
-      var main = document.getElementById("main"), fresh = next.getElementById("main");
-      if (main && fresh && main.innerHTML !== fresh.innerHTML) {
-        var y = window.scrollY;
-        main.innerHTML = fresh.innerHTML;
-        window.scrollTo(0, y);
-        document.dispatchEvent(new CustomEvent("acard:page-fresh"));
-      }
-    }).catch(function () {});
-  }
-  var warmed = {};
-  document.addEventListener("pointerover", function (event) {
-    var a = event.target.closest && event.target.closest("#sidebar a[href^='/']");
-    if (!a || !navigator.serviceWorker.controller) return;
-    var path = new URL(a.href).pathname;
-    if (warmed[path] || !/^\/[^/.]+\/$/.test(path)) return;
-    warmed[path] = 1;
-    fetch(path, { credentials: "same-origin" }).catch(function () {});
-  }, { passive: true });
   navigator.serviceWorker.addEventListener("message", function (event) {
     var m = event.data || {};
     if (m.type === "acard-sync") sync(m.on);
     else if (m.type === "acard-fresh" && m.kind === "tree") document.dispatchEvent(new CustomEvent("acard:tree-fresh"));
-    else if (m.type === "acard-fresh" && m.kind === "html") swapPage(m.url);
     else if (m.type === "acard-auth") location.reload();
   });
   })();
@@ -219,10 +253,14 @@
     return withShare("POST", "/api/page/" + encodeURIComponent(slug) + "/move", body)
       .then(function (d) { toast(label || "1개 페이지 옮김", d.batch); return reload(); }, function (e) { toast(e.message, null, true); return reload(); });
   }
-  function newPage(parent) {
-    api("POST", "/api/pages", { title: "제목 없음", parent: parent }).then(function (p) { location.href = "/edit/" + encodeURIComponent(p.slug) + "/?new"; }, function (e) { toast(e.message, null, true); });
+  function newPage(parent) { location.href = newUrl(parent); }
+  function newFolder(parent) {
+    api("POST", "/api/pages", { title: "새 폴더", parent: parent || null }).then(function (d) {
+      return api("PUT", "/api/page/" + encodeURIComponent(d.slug) + "/view", { mode: "folder" }).then(function () { location.href = href(d.slug); });
+    }, oops);
   }
 
+  function oops(e) { toast(e.message, null, true); }
   var menuEl;
   function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
   function menu(anchor, items) {
@@ -234,6 +272,12 @@
     menuEl.style.left = Math.max(8, Math.min(r.left, innerWidth - 240)) + "px";
     menuEl.style.top = Math.min(r.bottom + 4, innerHeight - menuEl.offsetHeight - 8) + "px";
     var first = menuEl.querySelector("button"); if (first) first.focus();
+  }
+  function ask(a, label, v, done) {
+    menu(a, []);
+    var f = el("form", "fd-bar"), i = el("input", "fd-in"); i.value = v; i.placeholder = i.ariaLabel = label;
+    f.onsubmit = function (e) { e.preventDefault(); v = i.value.trim(); closeMenu(); if (v) done(v); };
+    f.append(i); menuEl.append(f); i.focus(); i.select();
   }
   document.addEventListener("mousedown", function (ev) { if (menuEl && !menuEl.contains(ev.target)) closeMenu(); });
   document.addEventListener("keydown", function (ev) { if (ev.key === "Escape") { closeMenu(); closeSheet(); } });
@@ -254,10 +298,10 @@
       { label: "한 단계 밖으로", fn: function () { keyMove(p, "out"); } },
       { label: "옮기기…", fn: function () { moveSheet([p.slug]); } },
       { label: "새 하위 페이지", fn: function () { newPage(p.slug); } },
+      { label: "새 하위 폴더", fn: function () { newFolder(p.slug); } },
       { label: "삭제", danger: true, fn: function () {
-        var msg = p.slug === S.journal ? "에이전트 작업 기록 전체를 휴지통으로 옮길까요? 새 세션이 오면 그룹이 다시 만들어져요." : "'" + p.title + "' 페이지를 휴지통으로 옮길까요?";
-        if (!window.confirm(msg)) return;
-        api("POST", "/api/folders/bulk", { action: "trash", slugs: [p.slug] }).then(function (d) { toast("휴지통으로 옮겼어요.", d.batch); if (p.slug === current) location.href = "/"; else reload(); }, function (e) { toast(e.message, null, true); });
+        if (p.slug === S.journal && !window.confirm("에이전트 작업 기록 전체를 휴지통으로 옮길까요? 새 세션이 오면 그룹이 다시 만들어져요.")) return;
+        api("POST", "/api/folders/bulk", { action: "trash", slugs: [p.slug] }).then(function (d) { toast("휴지통으로 옮겼어요.", d.batch); if (p.slug === current) location.href = "/"; else reload(); }, oops);
       } },
     ]);
   }
@@ -299,7 +343,7 @@
         b.onclick = function () {
           closeSheet();
           var req = slugs.length > 1 ? withShare("POST", "/api/folders/bulk", { action: "move", slugs: slugs, parent: o.slug }) : withShare("POST", "/api/page/" + encodeURIComponent(slugs[0]) + "/move", { parent: o.slug });
-          req.then(function (d) { if (o.slug) toggleOpen(o.slug, true); toast((d.moved || 1) + "개 페이지 옮김", d.batch); reload().then(done); }, function (e) { toast(e.message, null, true); });
+          req.then(function (d) { if (o.slug) toggleOpen(o.slug, true); toast((d.moved || 1) + "개 페이지 옮김", d.batch); reload().then(done); }, oops);
         };
         ul.appendChild(b);
       });
@@ -307,49 +351,66 @@
     input.oninput = paint; paint(); input.focus();
   }
 
+  // Drag in the sidebar (#41): mouse drags after 6 px; a finger holds a row for 400 ms and then drags (a hold that does
+  // not move opens the move sheet). Drop on a row's middle = inside it, top/bottom edge = above/below it, on the empty
+  // area under the tree = last at the top level; dragging a child left past its parent's indent takes it out.
   var drag = null, press = null;
-  function clearMarks() { host.querySelectorAll(".fd-before,.fd-after,.fd-nest").forEach(function (n) { n.classList.remove("fd-before", "fd-after", "fd-nest"); }); }
+  function clearMarks() { host.querySelectorAll(".fd-before,.fd-after,.fd-nest,.fd-end").forEach(function (n) { n.classList.remove("fd-before", "fd-after", "fd-nest", "fd-end"); }); }
   function zone(rowEl, y) { var r = rowEl.getBoundingClientRect(), f = (y - r.top) / r.height; return f < 0.28 ? "before" : f > 0.72 ? "after" : "nest"; }
-  host.addEventListener("pointerdown", function (ev) {
-    var r = ev.target.closest(".fd-row");
-    if (!r || ev.button !== 0 || ev.target.closest("button")) return;
-    var slug = r.dataset.slug, sec = r.closest(".fd-sec");
-    if (!sec || ["ws", "journal"].indexOf(sec.dataset.sec) < 0) return;
-    press = { slug: slug, x: ev.clientX, y: ev.clientY, row: r, touch: ev.pointerType !== "mouse", id: ev.pointerId };
-    if (press.touch) press.timer = setTimeout(function () { var s = press && press.slug; press = null; if (s && !sheet) moveSheet([s]); }, 500);
-  });
-  window.addEventListener("pointermove", function (ev) {
-    if (!press && !drag) return;
-    if (press && !drag) {
-      if (Math.abs(ev.clientX - press.x) + Math.abs(ev.clientY - press.y) < 6) return;
-      clearTimeout(press.timer);
-      if (press.touch) { press = null; return; }
-      drag = { slug: press.slug, ghost: el("div", "fd-ghost", (S.bySlug[press.slug] || {}).title || "") };
-      document.body.appendChild(drag.ghost); document.body.classList.add("fd-dragging");
-      press.row.classList.add("fd-src"); press = null;
-    }
-    ev.preventDefault();
-    var pane = host.closest(".sidebar") || host, box = pane.getBoundingClientRect();
-    drag.scroll = ev.clientY < box.top + 40 ? -12 : ev.clientY > box.bottom - 40 ? 12 : 0;
+  function rowOf(slug) { return host.querySelector('.fd-row[data-slug="' + CSS.escape(slug) + '"]'); }
+  function dragStart(slug, rowEl) {
+    drag = { slug: slug, ghost: el("div", "fd-ghost", (S.bySlug[slug] || {}).title || "") };
+    document.body.appendChild(drag.ghost); document.body.classList.add("fd-dragging");
+    rowEl.classList.add("fd-src");
+  }
+  function dragTo(x, y) {
+    var pane = host.closest(".sidebar") || host.closest("#sidebar") || host, box = pane.getBoundingClientRect();
+    drag.scroll = y < box.top + 40 ? -12 : y > box.bottom - 40 ? 12 : 0;
     if (drag.scroll && !drag.scroller) drag.scroller = setInterval(function () { if (drag && drag.scroll) pane.scrollTop += drag.scroll; }, 30);
-    drag.ghost.style.transform = "translate(" + (ev.clientX + 12) + "px," + (ev.clientY + 8) + "px)";
+    drag.ghost.style.transform = "translate(" + (x + 12) + "px," + (y + 8) + "px)";
     clearMarks();
-    var t = document.elementFromPoint(ev.clientX, ev.clientY), r = t && t.closest && t.closest(".fd-row"), head = t && t.closest && t.closest('.fd-sec[data-sec="ws"] .fd-head');
+    var t = document.elementFromPoint(x, y), r = t && t.closest && t.closest(".fd-row"), head = t && t.closest && t.closest('.fd-sec[data-sec="ws"] .fd-head');
+    var ws = t && t.closest && t.closest('.fd-sec[data-sec="ws"]');
     drag.target = null;
     if (head) { head.classList.add("fd-nest"); drag.target = { top: true }; return; }
-    if (!r || !host.contains(r)) return;
-    var target = r.dataset.slug;
-    if (target === drag.slug || isUnder(target, drag.slug)) return;
-    var z = zone(r, ev.clientY);
+    if (!r || !host.contains(r)) {
+      // Empty space of the 작업 공간 section, below its last row: last at the top level.
+      var root = ws && ws.querySelector(".fd-root"), rows = root ? root.querySelectorAll(".fd-row") : [];
+      var last = rows.length ? rows[rows.length - 1].getBoundingClientRect().bottom : 0;
+      if (root && y > last) { root.classList.add("fd-end"); drag.target = { end: true }; }
+      return;
+    }
+    var target = r.dataset.slug, me = S.bySlug[drag.slug];
+    if (target === drag.slug) {
+      // Own row, pulled left past the parent's indent: one level out, right after the parent.
+      var pad = parseFloat(r.style.paddingLeft) || 6;
+      if (me && me.parent && S.bySlug[me.parent] && x < r.getBoundingClientRect().left + pad - 4) {
+        var pr = rowOf(me.parent);
+        if (pr) pr.classList.add("fd-after");
+        drag.target = { slug: me.parent, zone: "after" };
+      }
+      return;
+    }
+    if (isUnder(target, drag.slug)) return;
+    var z = zone(r, y);
+    if (z === "nest" && me && me.parent === target) return;
     r.classList.add("fd-" + z);
     drag.target = { slug: target, zone: z };
     if (z === "nest" && kids(target).length && !isOpen(target)) {
-      if (drag.hover !== target) { clearTimeout(drag.hoverTimer); drag.hover = target; drag.hoverTimer = setTimeout(function () { toggleOpen(target, true); render(); }, 650); }
+      if (drag.hover !== target) { clearTimeout(drag.hoverTimer); drag.hover = target; drag.hoverTimer = setTimeout(function () { toggleOpen(target, true); render(); var src = drag && rowOf(drag.slug); if (src) src.classList.add("fd-src"); }, 650); }
     } else { clearTimeout(drag.hoverTimer); drag.hover = null; }
-  }, { passive: false });
-  window.addEventListener("pointerup", function () {
-    if (press) { clearTimeout(press.timer); press = null; }
-    if (!drag) return;
+  }
+  // The sidebar shows the move at once; the server answer (or its error, which reloads) follows.
+  function placeLocal(slug, body) {
+    var p = S.bySlug[slug]; if (!p) return;
+    var list = S.pages.filter(function (x) { return x !== p; });
+    var parent = body.parent || null, sib = list.filter(function (x) { return (x.parent && S.bySlug[x.parent] ? x.parent : null) === parent; });
+    var anchor = body.before ? S.bySlug[body.before] : body.after ? S.bySlug[body.after] : null;
+    var at = anchor && sib.indexOf(anchor) >= 0 ? list.indexOf(anchor) + (body.after ? 1 : 0) : sib.length ? list.indexOf(sib[sib.length - 1]) + 1 : list.length;
+    p.parent = parent; list.splice(at, 0, p); S.pages = list;
+    render();
+  }
+  function dragEnd() {
     var d = drag; drag = null;
     clearTimeout(d.hoverTimer); clearInterval(d.scroller); d.ghost.remove(); document.body.classList.remove("fd-dragging"); clearMarks();
     host.querySelectorAll(".fd-src").forEach(function (n) { n.classList.remove("fd-src"); });
@@ -357,11 +418,38 @@
     window.addEventListener("click", stop, true);
     setTimeout(function () { window.removeEventListener("click", stop, true); }, 0);
     if (!d.target) return;
-    if (d.target.top) return move(d.slug, { parent: null }, "맨 위로 옮김");
-    var t = S.bySlug[d.target.slug];
-    if (d.target.zone === "nest") { toggleOpen(t.slug, true); return move(d.slug, { parent: t.slug }, "'" + t.title + "' 안으로 옮김"); }
-    var parent = t.parent && S.bySlug[t.parent] ? t.parent : null;
-    move(d.slug, d.target.zone === "before" ? { parent: parent, before: t.slug } : { parent: parent, after: t.slug });
+    var body, label;
+    if (d.target.top) { body = { parent: null, index: 0 }; label = "맨 위로 옮김"; }
+    else if (d.target.end) body = { parent: null };
+    else {
+      var t = S.bySlug[d.target.slug];
+      if (d.target.zone === "nest") { toggleOpen(t.slug, true); body = { parent: t.slug }; label = "'" + t.title + "' 안으로 옮김"; }
+      else { var parent = t.parent && S.bySlug[t.parent] ? t.parent : null; body = d.target.zone === "before" ? { parent: parent, before: t.slug } : { parent: parent, after: t.slug }; }
+    }
+    placeLocal(d.slug, body);
+    move(d.slug, body, label);
+  }
+  host.addEventListener("pointerdown", function (ev) {
+    if (ev.pointerType !== "mouse") return;
+    var r = ev.target.closest(".fd-row");
+    if (!r || ev.button !== 0 || ev.target.closest("button")) return;
+    var sec = r.closest(".fd-sec");
+    if (!sec || ["ws", "journal"].indexOf(sec.dataset.sec) < 0) return;
+    press = { slug: r.dataset.slug, x: ev.clientX, y: ev.clientY, row: r };
+  });
+  window.addEventListener("pointermove", function (ev) {
+    if (ev.pointerType !== "mouse" || (!press && !drag)) return;
+    if (press && !drag) {
+      if (Math.abs(ev.clientX - press.x) + Math.abs(ev.clientY - press.y) < 6) return;
+      dragStart(press.slug, press.row); press = null;
+    }
+    ev.preventDefault();
+    dragTo(ev.clientX, ev.clientY);
+  }, { passive: false });
+  window.addEventListener("pointerup", function (ev) {
+    if (ev.pointerType !== "mouse") return;
+    press = null;
+    if (drag) dragEnd();
   });
   host.addEventListener("keydown", function (ev) {
     var r = ev.target.closest && ev.target.closest(".fd-row");
@@ -378,42 +466,64 @@
     }
     if ((ev.key === "ArrowRight" || ev.key === "ArrowLeft") && p && kids(p.slug).length) { ev.preventDefault(); toggleOpen(p.slug, ev.key === "ArrowRight"); render(); }
   });
+  // Touch: hold 400 ms (a move before that is a scroll), then the row follows the finger; let go without moving and
+  // the move sheet opens as before.
   var lastTouch = 0;
   var hold = null;
   host.addEventListener("touchstart", function (ev) {
     lastTouch = Date.now();
     var r = ev.target.closest && ev.target.closest(".fd-row"), t = ev.touches[0];
-    if (!r || ev.target.closest("button") || ev.touches.length > 1) return;
-    clearTimeout(hold && hold.timer);
-    hold = { x: t.clientX, y: t.clientY, timer: setTimeout(function () { hold = null; if (press) { clearTimeout(press.timer); press = null; } if (!sheet) { if (navigator.vibrate) navigator.vibrate(15); moveSheet([r.dataset.slug]); } }, 500) };
+    if (hold) { clearTimeout(hold.timer); hold = null; }
+    if (!r || ev.target.closest("button") || ev.touches.length > 1 || drag) return;
+    var sec = r.closest(".fd-sec"), movable = sec && ["ws", "journal"].indexOf(sec.dataset.sec) >= 0;
+    hold = { x: t.clientX, y: t.clientY, row: r, slug: r.dataset.slug, armed: false, movable: movable };
+    hold.timer = setTimeout(function () { if (!hold) return; hold.armed = true; r.classList.add("fd-armed"); if (navigator.vibrate) navigator.vibrate(15); }, 400);
   }, { passive: true });
-  host.addEventListener("touchmove", function (ev) { var t = ev.touches[0]; if (hold && Math.abs(t.clientX - hold.x) + Math.abs(t.clientY - hold.y) > 8) { clearTimeout(hold.timer); hold = null; } }, { passive: true });
-  host.addEventListener("touchend", function (ev) { if (hold) { clearTimeout(hold.timer); hold = null; } else if (sheet) ev.preventDefault(); });
+  host.addEventListener("touchmove", function (ev) {
+    var t = ev.touches[0];
+    if (!hold) return;
+    if (!hold.armed) { if (Math.abs(t.clientX - hold.x) + Math.abs(t.clientY - hold.y) > 8) { clearTimeout(hold.timer); hold = null; } return; }
+    ev.preventDefault();
+    if (!hold.movable) return;
+    if (!drag) { if (Math.abs(t.clientX - hold.x) + Math.abs(t.clientY - hold.y) < 6) return; hold.row.classList.remove("fd-armed"); dragStart(hold.slug, hold.row); }
+    dragTo(t.clientX, t.clientY);
+  }, { passive: false });
+  function touchDone(ev, cancelled) {
+    if (!hold) return;
+    var h = hold; hold = null;
+    clearTimeout(h.timer); h.row.classList.remove("fd-armed");
+    if (drag) { ev.preventDefault(); if (cancelled) drag.target = null; dragEnd(); return; }
+    if (h.armed && !cancelled) { ev.preventDefault(); if (!sheet) moveSheet([h.slug]); }
+  }
+  host.addEventListener("touchend", function (ev) { touchDone(ev, false); });
+  host.addEventListener("touchcancel", function (ev) { touchDone(ev, true); });
   host.addEventListener("contextmenu", function (ev) {
     var r = ev.target.closest(".fd-row"); if (!r || !S.bySlug[r.dataset.slug]) return;
     ev.preventDefault();
-    if (press) { clearTimeout(press.timer); press = null; }
-    if (ev.pointerType === "touch" || Date.now() - lastTouch < 1500) { if (!sheet) moveSheet([r.dataset.slug]); } else pageMenu(r, S.bySlug[r.dataset.slug]);
+    press = null;
+    // A finger's long press is handled by the touch hold above (drag or move sheet).
+    if (ev.pointerType === "touch" || Date.now() - lastTouch < 1500) return;
+    pageMenu(r, S.bySlug[r.dataset.slug]);
   });
 
   function tagMenu(anchor, t) {
     menu(anchor, [
       { label: "이 태그 페이지 보기", fn: function () { S.filter = t.name; render(); } },
-      { label: "이름 바꾸기", fn: function () { var n = window.prompt("새 이름", t.name); if (n && n !== t.name) tagCall("PATCH", t.name, { name: n }, "태그 이름 바꿈"); } },
+      { label: "이름 바꾸기", fn: function () { ask(anchor, "새 이름", t.name, function (n) { if (n !== t.name) tagCall("PATCH", t.name, { name: n }, "태그 이름 바꿈"); }); } },
       { label: "색 바꾸기", fn: function () { colorMenu(anchor, t); } },
-      { label: "다른 태그와 합치기", fn: function () { var n = window.prompt("합칠 태그 이름 ('" + t.name + "' 이(가) 사라지고 이 태그로 바뀌어요)"); if (n) api("POST", "/api/tags/merge", { from: [t.name], into: n }).then(function (d) { toast("태그를 합쳤어요.", d.batch); reload(); }, function (e) { toast(e.message, null, true); }); } },
+      { label: "다른 태그와 합치기", fn: function () { ask(anchor, "합칠 태그 이름 ('" + t.name + "' 이(가) 사라지고 이 태그로 바뀌어요)", "", function (n) { api("POST", "/api/tags/merge", { from: [t.name], into: n }).then(function (d) { toast("태그를 합쳤어요.", d.batch); reload(); }, oops); }); } },
       { label: "삭제", danger: true, fn: function () { if (window.confirm("'" + t.name + "' 태그를 지울까요? 페이지는 그대로 있어요.")) tagCall("DELETE", t.name, null, "태그를 지웠어요."); } },
     ]);
   }
   function colorMenu(anchor, t) { menu(anchor, COLORS.map(function (c) { return { label: COLOR_KO[c], fn: function () { tagCall("PATCH", t.name, { color: c }, "색을 바꿨어요."); } }; })); }
   function tagCall(method, name, body, done) {
-    api(method, "/api/tags/" + encodeURIComponent(name), body).then(function (d) { if (S.filter === name) S.filter = body && body.name || null; toast(done, d.batch); reload(); }, function (e) { toast(e.message, null, true); });
+    api(method, "/api/tags/" + encodeURIComponent(name), body).then(function (d) { if (S.filter === name) S.filter = body && body.name || null; toast(done, d.batch); reload(); }, oops);
   }
   function manageTags() {
     var box = overlay("태그 관리");
     var add = el("form", "fd-bar"); var inp = el("input", "fd-in"); inp.placeholder = "새 태그 이름"; inp.setAttribute("aria-label", "새 태그 이름");
     var go = el("button", "fd-btn primary", "만들기"); go.type = "submit"; add.appendChild(inp); add.appendChild(go);
-    add.onsubmit = function (ev) { ev.preventDefault(); if (!inp.value.trim()) return; api("POST", "/api/tags", { name: inp.value }).then(function (d) { toast("태그를 만들었어요.", d.batch); closeSheet(); reload(); }, function (e) { toast(e.message, null, true); }); };
+    add.onsubmit = function (ev) { ev.preventDefault(); if (!inp.value.trim()) return; api("POST", "/api/tags", { name: inp.value }).then(function (d) { toast("태그를 만들었어요.", d.batch); closeSheet(); reload(); }, oops); };
     box.appendChild(add);
     var ul = el("div", "fd-dest");
     S.tags.forEach(function (t) {
@@ -452,7 +562,7 @@
         if (ev.key === "Escape") return headTags();
         if (ev.key !== "Enter" || !inp.value.trim()) return;
         ev.preventDefault();
-        api("PUT", "/api/page/" + encodeURIComponent(current) + "/tags", { tags: inp.value.split(","), mode: "add" }).then(function (d) { toast("태그를 달았어요.", d.batch); reload(); }, function (e) { toast(e.message, null, true); });
+        api("PUT", "/api/page/" + encodeURIComponent(current) + "/tags", { tags: inp.value.split(","), mode: "add" }).then(function (d) { toast("태그를 달았어요.", d.batch); reload(); }, oops);
       };
       inp.onblur = function () { setTimeout(headTags, 150); };
     };
@@ -507,15 +617,14 @@
     }
     var reopen = function () { allPages(); };
     bMove.onclick = function () { moveSheet(sel.slice(), reopen); };
-    bTag.onclick = function () {
-      var n = window.prompt(sel.length + "개 페이지에 달 태그 (쉼표로 여러 개)"); if (!n) return;
-      api("POST", "/api/folders/bulk", { action: "tag", slugs: sel, tags: n.split(",") }).then(function (d) { toast(d.tagged + "개 페이지에 태그를 달았어요.", d.batch); reload().then(reopen); }, function (e) { toast(e.message, null, true); });
-    };
+    bTag.onclick = function () { ask(bTag, sel.length + "개 페이지에 달 태그 (쉼표로 여러 개)", "", function (n) {
+      api("POST", "/api/folders/bulk", { action: "tag", slugs: sel, tags: n.split(",") }).then(function (d) { toast(d.tagged + "개 페이지에 태그를 달았어요.", d.batch); reload().then(reopen); }, oops);
+    }); };
     bDel.onclick = function () {
-      if (!window.confirm(sel.length + "개 페이지를 휴지통으로 옮길까요? 하위 페이지는 함께 숨겨져요.")) return;
-      api("POST", "/api/folders/bulk", { action: "trash", slugs: sel }).then(function (d) { toast(d.trashed + "개 페이지를 휴지통으로 옮겼어요.", d.batch); reload().then(reopen); }, function (e) { toast(e.message, null, true); });
+      api("POST", "/api/folders/bulk", { action: "trash", slugs: sel }).then(function (d) { toast(d.trashed + "개 페이지를 휴지통으로 옮겼어요.", d.batch); reload().then(reopen); }, oops);
     };
     q.oninput = paint; tf.onchange = paint; paint(); q.focus();
+    if (firstLoad) firstLoad.then(paint);
   }
 
   function suggest() {
@@ -550,9 +659,24 @@
     }, function (e) { status.textContent = e.message; });
   }
 
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest && ev.target.closest("[data-fv-mode]");
+    if (!b || editor) return;
+    ev.preventDefault();
+    if (b.getAttribute("aria-pressed") === "true") return;
+    b.disabled = true;
+    api("PUT", "/api/page/" + encodeURIComponent(current) + "/view", { mode: b.dataset.fvMode })
+      .then(function () { location.reload(); }, function (e) { b.disabled = false; toast(e.message, null, true); });
+  });
   window.AcardFolders = { reload: reload, allPages: allPages, suggest: suggest };
   var allLink = document.querySelector('[data-act="all"]');
   if (allLink) allLink.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopImmediatePropagation(); allPages(); }, true);
   base.classList.add("fd-host");
-  reload().catch(function () { base.classList.remove("fd-host"); if (host !== base) host.remove(); });
+  var cached = local("acard-tree-cache");
+  if (cached) { apply(cached); render(); }
+  if (side) {
+    try { if (cached) side.scrollTop = +sessionStorage.getItem("acard-side-scroll"); } catch (e) {}
+    addEventListener("pagehide", function () { try { sessionStorage.setItem("acard-side-scroll", side.scrollTop); } catch (e) {} });
+  }
+  var firstLoad = reload().catch(function () { if (!cached) { base.classList.remove("fd-host"); if (host !== base) host.remove(); } });
 })();

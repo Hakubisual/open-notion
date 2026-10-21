@@ -1,0 +1,20 @@
+.be-panel { position: fixed; z-index: 45; width: min(420px, calc(100vw - 16px)); max-height: min(70vh, 560px); overflow: auto; padding: 10px; background: var(--raised); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-menu); font-size: var(--fs-13); }
+.be-panel input, .be-panel select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; min-height: 32px; }
+.be-top { display: flex; gap: 6px; margin-bottom: 8px; }
+.be-top input:first-child { flex: 1; min-width: 0; }
+.be-icon { width: 64px; }
+.be-list { display: grid; gap: 8px; }
+.be-list > select { width: 100%; }
+.be-action { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--bg); }
+.be-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.be-head strong { flex: 1; font-weight: 600; }
+.be-num { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--bg-soft); font-size: var(--fs-11); }
+.be-body { display: grid; gap: 6px; }
+.be-body > input, .be-body > select { width: 100%; }
+.be-slot { display: grid; gap: 6px; }
+.be-values { display: grid; gap: 4px; }
+.be-value { display: flex; align-items: center; gap: 6px; }
+.be-value .be-pname { width: 84px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); }
+.be-value input[type="text"], .be-value input[type="number"], .be-value input[type="date"] { flex: 1; min-width: 0; }
+.be-done { margin-top: 10px; width: 100%; min-height: 36px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
+.btnline .btnacts { flex: none; }

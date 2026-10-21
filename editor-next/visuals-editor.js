@@ -1,4 +1,4 @@
-import { visualBlockHtml } from "../visual-html.js";
+import { visualBlockHtml, VISUAL_MAX_HEIGHT } from "../visual-html.js";
 import { DIAGRAM_KINDS, CHART_TYPES, diagramToText, diagramFromText, chartToText, chartFromText, chartFromTable } from "./visual-forms.js";
 
 var TEMPLATES = {
@@ -197,5 +197,12 @@ function mount(host, block, save) {
   if (block.type === "chart") return chartForm(host, block, save);
   return codeMount(host, block, save);
 }
+
+// The preview's frame arrives through innerHTML, so the resize script beside it never runs: size HTML/visual frames here (#43).
+addEventListener("message", function (e) {
+  var h = e.data && +e.data.acvH;
+  if (!(h > 0)) return;
+  document.querySelectorAll(".acv-preview iframe.acv-frame:not(.acp-frame)").forEach(function (f) { if (f.contentWindow === e.source) f.style.height = Math.min(VISUAL_MAX_HEIGHT, h) + "px"; });
+});
 
 if (window.AcardEditor) window.AcardEditor.provide("visuals", { mount: mount, html: visualBlockHtml });

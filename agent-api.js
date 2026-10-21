@@ -39,9 +39,15 @@ export const AGENT_SCOPES = ["read", "write"];
 const TOKEN_PREFIX = "acard_";
 const NAME_MAX = 60;
 const MARKDOWN_MAX = 400_000;
+const LONG_BODY = "본문이 너무 길어요. 한 번에 400,000자까지 쓸 수 있어요. 첫 섹션들로 페이지를 만들고 나머지는 append_to_page 로 ## 제목 단위 30~50KB씩 나눠 붙이거나, 큰 섹션은 하위 페이지(create_page 에 parent)로 쓰세요.";
 
+// Remembered per store key: every reader page load and every live re-read of an open page asks for this, and a
+// member workspace's store answers one request at a time, so re-sending the CREATE list each time delayed them (#17).
+const agentSchemaReady = new Set();
 export async function ensureAgentSchema(db) {
+  if (db.acardKey && agentSchemaReady.has(db.acardKey)) return;
   await db.batch(AGENT_SCHEMA.map((sql) => db.prepare(sql)));
+  if (db.acardKey) agentSchemaReady.add(db.acardKey);
 }
 
 export class AgentError extends Error {
@@ -100,10 +106,16 @@ export async function revokeAgentToken(db, id) {
 // Authorization: Bearer acard_… 를 확인한다. 아니면 null (워커가 401 을 낸다).
 export async function principalFromToken(db, raw) {
   if (typeof raw !== "string" || !raw.startsWith(TOKEN_PREFIX) || raw.length > 200) return null;
-  const row = await db.prepare("SELECT id, name, scopes, revoked FROM agent_tokens WHERE hash = ?").bind(await sha256Hex(raw)).first();
+  const hash = await sha256Hex(raw);
+  // Started together so a member workspace store gets both in one round trip.
+  const [row] = await Promise.all([
+    // agent_rules saves features/share.js a second round trip when the token has no per-page rules (the usual case).
+    db.prepare("SELECT id, name, scopes, revoked, EXISTS (SELECT 1 FROM share_rules r WHERE r.principal = 'agent:token:' || agent_tokens.id AND r.revoked IS NULL) AS agent_rules FROM agent_tokens WHERE hash = ?").bind(hash).first(),
+    // At most once a minute: under load every request of one token wrote and locked the same row.
+    db.prepare("UPDATE agent_tokens SET last_used = ? WHERE hash = ? AND revoked IS NULL AND (last_used IS NULL OR last_used < ?)").bind(Date.now(), hash, Date.now() - 60_000).run(),
+  ]);
   if (!row || row.revoked) return null;
-  await db.prepare("UPDATE agent_tokens SET last_used = ? WHERE id = ?").bind(Date.now(), row.id).run();
-  return { name: row.name, via: "token", scopes: String(row.scopes).split(" "), tokenId: row.id };
+  return { name: row.name, via: "token", scopes: String(row.scopes).split(" "), tokenId: row.id, agentRules: Boolean(Number(row.agent_rules)) };
 }
 
 export function bearerToken(request) {
@@ -128,6 +140,11 @@ export function parseFrontmatter(markdown) {
   return { meta, body: markdown.slice(match[0].length) };
 }
 
+// notion-parity: block meta comment lines are read only from documents whose front matter says acard_meta: 1.
+function metaFlag(meta) {
+  return String(meta && meta.acard_meta).trim() === "1";
+}
+
 function frontmatterText(page, icon, tags, authors) {
   const quote = (value) => (/[:#\[\]"']/.test(value) ? JSON.stringify(value) : value);
   const lines = ["---", "title: " + quote(page.title), "slug: " + page.slug];
@@ -136,6 +153,8 @@ function frontmatterText(page, icon, tags, authors) {
   if (tags.length) lines.push("tags: [" + tags.map(quote).join(", ") + "]");
   lines.push("updated: " + new Date(page.updated).toISOString());
   if (authors.length) lines.push("last_author: " + quote(authors[0].agent));
+  // The body below carries block meta comment lines (color, icon, embed height, toggle heading); send it back with this flag.
+  lines.push("acard_meta: 1");
   lines.push("---", "");
   return lines.join("\n");
 }
@@ -149,9 +168,45 @@ function requireScope(principal, scope) {
   if (!principal.scopes.includes(scope)) throw new AgentError("이 토큰에는 " + (scope === "write" ? "쓰기" : "읽기") + " 권한이 없어요.", 403);
 }
 
+function activityStatement(db, slug, principal, action, id = crypto.randomUUID()) {
+  return db.prepare("INSERT INTO agent_activity (id, page, agent, via, action, created) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(id, slug, principal.name, principal.via, action, Date.now());
+}
+
 async function recordActivity(db, slug, principal, action) {
-  await db.prepare("INSERT INTO agent_activity (id, page, agent, via, action, created) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(crypto.randomUUID(), slug, principal.name, principal.via, action, Date.now()).run();
+  await activityStatement(db, slug, principal, action).run();
+}
+
+// Retries of a create or an append (a client that timed out and sends the same call again) must not make a second
+// page or a second copy of the text. The write's agent_activity row gets an id derived from the Idempotency-Key (or,
+// without one, from the same agent sending the same content within 10 minutes) and is inserted in the same transaction
+// as the blocks: a second identical call finds it and answers with the first result, and two racing calls cannot both
+// commit because the id is the primary key.
+const IDEM_WINDOW = 10 * 60 * 1000;
+const IDEM_KEY_MAX = 200;
+const AUTO_IDEM_MIN = 2000;
+function idempotencyKey(input) {
+  const key = input.idempotencyKey;
+  if (key === undefined || key === null || key === "") return null;
+  if (typeof key !== "string" || key.length > IDEM_KEY_MAX) throw new AgentError("idempotencyKey(Idempotency-Key) 는 200자 이하 문자열이어야 해요.");
+  return key;
+}
+async function idemIds(kind, principal, key, content) {
+  const who = principal.tokenId || principal.name;
+  if (key) return ["idem:" + (await sha256Hex([kind, who, "key", key].join("\u0000"))).slice(0, 40)];
+  const bucket = Math.floor(Date.now() / IDEM_WINDOW);
+  return Promise.all([bucket, bucket - 1].map(async (b) => "idem:" + (await sha256Hex([kind, who, "auto", b, ...content].join("\u0000"))).slice(0, 40)));
+}
+async function idemSeen(db, ids) {
+  const rows = await db.prepare("SELECT page FROM agent_activity WHERE id IN (" + ids.map(() => "?").join(", ") + ")").bind(...ids).all();
+  return (rows.results ?? [])[0]?.page ?? null;
+}
+const duplicateKey = (error) => /unique|primary key|duplicate key|constraint/i.test(String(error && error.message || error));
+
+const PAGE_BLOCK_MAX = 2000;
+function blockLimit(count, existing = 0) {
+  if (existing + count <= PAGE_BLOCK_MAX) return;
+  throw new AgentError("한 페이지에는 블록을 " + PAGE_BLOCK_MAX + "개까지 넣을 수 있어요 (이번 요청 " + (existing ? "기존 " + existing + "개 + " : "") + count + "개). 긴 문서는 ## 섹션 단위로 나눠 하위 페이지(create_page 에 parent)로 쓰세요. 한 번의 쓰기는 50KB(블록 1000개) 안팎이 가장 빨라요.", 413);
 }
 
 export async function pageAuthors(db, slug, limit = 20) {
@@ -177,13 +232,17 @@ async function setIcon(db, slug, icon) {
   await db.prepare("INSERT INTO editor_page_settings (page, icon) VALUES (?, ?) ON CONFLICT(page) DO UPDATE SET icon = excluded.icon").bind(slug, value).run();
 }
 
+function buttonNote(dropped) {
+  return dropped ? { buttons: "버튼 " + dropped + "개의 동작은 저장하지 않았어요. 대상 데이터베이스에 쓸 권한이 없거나 동작 모양이 맞지 않아요." } : {};
+}
+
 async function parentExists(db, parent) {
   return Boolean(await db.prepare("SELECT slug FROM pages WHERE slug = ?").bind(parent).first());
 }
 
 function markdownInput(text) {
   if (typeof text !== "string") throw new AgentError("마크다운 본문이 필요해요.");
-  if (text.length > MARKDOWN_MAX) throw new AgentError("본문이 너무 길어요.", 413);
+  if (text.length > MARKDOWN_MAX) throw new AgentError(LONG_BODY, 413);
   return text;
 }
 
@@ -197,8 +256,19 @@ async function ingest(db, helpers, slug, blocks) {
   return helpers.ingestImages ? helpers.ingestImages(db, slug, blocks) : [];
 }
 
-export function withWarnings(result, imageWarnings) {
-  return imageWarnings && imageWarnings.length ? { ...result, imageWarnings } : result;
+function plainComputed(computed) {
+  const out = {};
+  for (const [id, value] of Object.entries(computed || {})) {
+    out[id] = value && typeof value === "object" && Array.isArray(value.__rich) ? value.__rich.map((seg) => String(seg.text ?? "")).join("") : value;
+  }
+  return out;
+}
+
+export function withWarnings(result, imageWarnings, written) {
+  const out = imageWarnings && imageWarnings.length ? { ...result, imageWarnings } : result;
+  // #58: HTML blocks that paint fixed white/black boxes or a stacked card flow get a pointer to the part to use.
+  const html = written && typeof htmlBlockWarnings === "function" ? htmlBlockWarnings(written) : [];
+  return html.length ? { ...out, htmlWarnings: html } : out;
 }
 
 export const agentOps = {
@@ -219,11 +289,10 @@ export const agentOps = {
   async readPage(db, principal, helpers, input) {
     requireScope(principal, "read");
     const slug = String(input.slug ?? "");
-    const found = await helpers.readPage(db, slug);
+    // One wave of queries instead of two: each wave is a ~125 ms round trip through Hyperdrive.
+    const [found, tags, authors] = await Promise.all([helpers.readPage(db, slug), pageTags(db, slug), pageAuthors(db, slug, 5)]);
     if (!found) throw new AgentError("없는 페이지예요.", 404);
-    const tags = await pageTags(db, slug);
-    const authors = await pageAuthors(db, slug, 5);
-    const body = helpers.blocksToMarkdown(found.blocks);
+    const body = helpers.blocksToMarkdown(found.blocks, { meta: true });
     return {
       slug, title: found.page.title, parent: found.page.parent, icon: found.settings?.icon ?? null, tags,
       updated: found.page.updated, authors,
@@ -233,25 +302,51 @@ export const agentOps = {
 
   async createPage(db, principal, helpers, input) {
     requireScope(principal, "write");
+    const key = idempotencyKey(input);
     const { meta, body } = parseFrontmatter(markdownInput(input.markdown));
+    const folder = (input.view ?? meta.view) === "folder";
+    const parsed = helpers.markdownToBlocks(body, { meta: metaFlag(meta) });
+    blockLimit(parsed.length);
+    let blocks = helpers.normaliseBlocks(parsed);
+    if (folder && blocks.length) {
+      if (!input.description && !meta.description) input.description = String(blocks.find((b) => b.text)?.text || "").replace(/\s+/g, " ").slice(0, 200);
+      blocks = [];
+    }
     const title = String(input.title ?? meta.title ?? "").trim().slice(0, 200) || "새 페이지";
     const parent = String(input.parent ?? meta.parent ?? "").trim() || null;
+    const ids = await idemIds("create", principal, key, [parent ?? "", title, String(input.markdown)]);
+    const again = async () => {
+      const prior = await idemSeen(db, ids);
+      const found = prior ? await helpers.readPage(db, prior) : null;
+      return found ? { slug: prior, title: found.page.title, parent: found.page.parent, url: "/" + encodeURIComponent(prior) + "/", created: found.page.updated, blocks: found.blocks.length, duplicate: true, note: "같은 요청을 이미 받아 만든 페이지예요. 새로 만들지 않았어요." } : null;
+    };
+    const earlier = await again();
+    if (earlier) return earlier;
     if (parent && !(await parentExists(db, parent))) throw new AgentError("상위 페이지 '" + parent + "' 가 없어요.", 404);
     let slug = helpers.slugify(String(input.slug ?? meta.slug ?? title));
     const taken = await db.prepare("SELECT slug FROM pages WHERE slug = ? UNION ALL SELECT page AS slug FROM editor_trash WHERE page = ?").bind(slug, slug).first();
     if (taken) slug = slug + "-" + Math.random().toString(36).slice(2, 6);
     const maxRow = await db.prepare("SELECT COALESCE(MAX(ord), 0) AS m FROM pages WHERE parent IS ?").bind(parent).first();
     const now = Date.now();
-    await db.prepare("INSERT INTO pages (slug, title, parent, ord, kind, updated, source, hash) VALUES (?, ?, ?, ?, 'note', ?, 'editor', NULL)")
-      .bind(slug, title, parent, Number(maxRow?.m ?? 0) + 10, now).run();
-    const blocks = helpers.normaliseBlocks(helpers.markdownToBlocks(body));
     const imageWarnings = await ingest(db, helpers, slug, blocks);
-    await helpers.saveBlocks(db, slug, blocks);
+    const buttonsDropped = helpers.guardAgentButtons ? await helpers.guardAgentButtons(db, principal, [], blocks) : 0;
+    // The page row, its blocks and the create record commit together: a write that fails or times out leaves no empty page.
+    const marker = (await idemSeen(db, ids)) === null ? ids[0] : crypto.randomUUID();
+    try {
+      await helpers.saveBlocks(db, slug, blocks, {
+        before: [db.prepare("INSERT INTO pages (slug, title, parent, ord, kind, updated, source, hash) VALUES (?, ?, ?, ?, 'note', ?, 'editor', NULL)").bind(slug, title, parent, Number(maxRow?.m ?? 0) + 10, now)],
+        after: [activityStatement(db, slug, principal, "create", marker)],
+      });
+    } catch (error) {
+      const raced = duplicateKey(error) ? await again() : null;
+      if (raced) return raced;
+      throw error;
+    }
     await setIcon(db, slug, input.icon ?? meta.icon);
     const tags = tagList(input.tags ?? meta.tags);
     if (tags.length) await setTags(db, slug, tags);
-    await recordActivity(db, slug, principal, "create");
-    return withWarnings({ slug, title, parent, url: "/" + encodeURIComponent(slug) + "/", created: now }, imageWarnings);
+    if (folder) await markFolder(db, slug, input.description ?? meta.description, "agent");
+    return withWarnings({ slug, title, parent, url: "/" + encodeURIComponent(slug) + "/", created: now, blocks: blocks.length, ...(folder && body.trim() ? { note: "폴더에는 본문을 쓰지 않아요. 한 줄 설명만 남기고, 본문은 parent 로 이 폴더를 준 하위 페이지에 쓰세요." } : {}), ...buttonNote(buttonsDropped) }, imageWarnings, blocks);
   },
 
   async updatePage(db, principal, helpers, input) {
@@ -259,9 +354,23 @@ export const agentOps = {
     const slug = String(input.slug ?? "");
     const found = await helpers.readPage(db, slug);
     if (!found) throw new AgentError("없는 페이지예요.", 404);
+    await folderGuard(db, slug);
     const { meta, body } = parseFrontmatter(markdownInput(input.markdown));
-    const blocks = helpers.normaliseBlocks(helpers.markdownToBlocks(body));
-    const imageWarnings = await ingest(db, helpers, slug, blocks);
+    const parsed = helpers.markdownToBlocks(body, { meta: metaFlag(meta) });
+    blockLimit(parsed.length);
+    const written = humanAlign(found.blocks, helpers.normaliseBlocks(parsed));
+    // A retry of an update that already went through (the client timed out waiting) would now be refused with 409 because
+    // updated moved; when the page already holds exactly this content, answer as done.
+    const onlyBody = [input.icon, meta.icon, input.tags, meta.tags, input.parent, meta.parent].every((value) => value === undefined);
+    const sameTitle = onlyBody && ((input.title ?? meta.title) === undefined || String(input.title ?? meta.title).trim().slice(0, 200) === found.page.title);
+    if (sameTitle && found.blocks.length && helpers.blocksToMarkdown(found.blocks, { meta: true }) === helpers.blocksToMarkdown(written, { meta: true })) {
+      return { slug, title: found.page.title, parent: found.page.parent, updated: true, unchanged: true, note: "페이지가 이미 이 내용이라 바꾸지 않았어요." };
+    }
+    const imageWarnings = await ingest(db, helpers, slug, written);
+    // #36: paragraphs a person edited stay as they are; a different text becomes a suggestion under them.
+    const guard = humanGuard(found.blocks, written, principal.name);
+    const blocks = guard.blocks;
+    const buttonsDropped = helpers.guardAgentButtons ? await helpers.guardAgentButtons(db, principal, found.blocks, blocks) : 0;
     const title = String(input.title ?? meta.title ?? found.page.title).trim().slice(0, 200) || found.page.title;
     const parentRaw = input.parent ?? meta.parent;
     const parent = parentRaw === undefined ? found.page.parent : (String(parentRaw).trim() || null);
@@ -270,18 +379,33 @@ export const agentOps = {
     if (expected !== null && !Number.isFinite(expected)) throw new AgentError("expectedUpdated 는 숫자여야 해요.");
     const now = Date.now();
     // 다른 쓰기가 사이에 끼어들어도 잊지 않도록, 기대한 수정 시각 확인을 UPDATE 문 안에서 한다.
-    const claimed = await db.prepare("UPDATE pages SET updated = ? WHERE slug = ?" + (expected === null ? "" : " AND updated <= ?"))
-      .bind(...(expected === null ? [now, slug] : [now, slug, expected])).run();
-    if (Number(claimed?.meta?.changes ?? 0) === 0) throw new AgentError("그사이 페이지가 바뀌었어요. 다시 읽고 합친 뒤 쓰세요.", 409);
+    // expectedUpdated 가 없으면 마지막 변경이 에이전트 쓰기일 때만 덮어쓴다. 사람이 편집기에서 고친 뒤면(#25) 409 로 다시 읽게 한다.
+    // The claim and this write's activity row commit together, after the page row is locked: a second agent writing
+    // the same page waits for the first and then sees its activity, so it is not refused as if a person had edited
+    // (acard-db-load: 192 of 221 concurrent agent writes got this false 409). The stamp only moves forward and the
+    // activity row gets the same stamp; the claim token marks the row this write won.
+    const claim = crypto.randomUUID();
+    const [, claimed] = await db.batch([
+      db.prepare("UPDATE pages SET updated = updated WHERE slug = ?").bind(slug),
+      db.prepare("UPDATE pages SET updated = MAX(updated + 1, ?), source = 'editor', hash = ? WHERE slug = ? AND updated <= " + (expected === null ? "COALESCE((SELECT MAX(created) FROM agent_activity WHERE page = ?), -1)" : "?"))
+        .bind(now, claim, slug, expected === null ? slug : expected),
+      db.prepare("INSERT INTO agent_activity (id, page, agent, via, action, created) SELECT ?, ?, ?, ?, 'update', updated FROM pages WHERE slug = ? AND hash = ?")
+        .bind(crypto.randomUUID(), slug, principal.name, principal.via, slug, claim),
+    ]);
+    if (Number(claimed?.meta?.changes ?? 0) === 0) {
+      throw new AgentError(expected === null
+        ? "사람이 이 페이지를 고친 뒤라 그대로 덮어쓸 수 없어요. read_page 로 다시 읽고, 고친 내용을 합친 뒤 그 updated 값을 expectedUpdated 로 보내 주세요."
+        : "그사이 페이지가 바뀌었어요. 다시 읽고 합친 뒤 쓰세요.", 409);
+    }
     await helpers.captureEditorVersion(db, slug);
-    await db.prepare("UPDATE pages SET title = ?, parent = ?, updated = ?, source = 'editor', hash = NULL WHERE slug = ?").bind(title, parent, now, slug).run();
+    // The stamp stays the claimed one (equal to the activity row), so the next agent write is not taken for a person's.
+    await db.prepare("UPDATE pages SET title = ?, parent = ?, source = 'editor', hash = NULL WHERE slug = ?").bind(title, parent, slug).run();
     await helpers.saveBlocks(db, slug, blocks);
     if (title !== found.page.title) await helpers.syncPageTitleToRow(db, slug, title);
     await setIcon(db, slug, input.icon ?? meta.icon);
     const tagsRaw = input.tags ?? meta.tags;
     if (tagsRaw !== undefined) await setTags(db, slug, tagList(tagsRaw));
-    await recordActivity(db, slug, principal, "update");
-    return withWarnings({ slug, title, parent, updated: true }, imageWarnings);
+    return withWarnings(humanNote({ slug, title, parent, updated: true, ...buttonNote(buttonsDropped) }, guard), imageWarnings, written);
   },
 
   async appendToPage(db, principal, helpers, input) {
@@ -289,16 +413,33 @@ export const agentOps = {
     const slug = String(input.slug ?? "");
     const found = await helpers.readPage(db, slug);
     if (!found) throw new AgentError("없는 페이지예요.", 404);
-    const added = helpers.normaliseBlocks(helpers.markdownToBlocks(parseFrontmatter(markdownInput(input.markdown)).body));
-    if (!added.length) throw new AgentError("붙일 내용이 비었어요.");
+    await folderGuard(db, slug);
+    const key = idempotencyKey(input);
+    const appended = parseFrontmatter(markdownInput(input.markdown));
+    const parsedAdd = helpers.markdownToBlocks(appended.body, { meta: metaFlag(appended.meta) });
+    if (!parsedAdd.length) throw new AgentError("붙일 내용이 비었어요.");
+    // Without a key only a large piece (where a timeout retry happens) counts as a repeat; a short log line may be sent twice on purpose.
+    const ids = key || String(input.markdown).length >= AUTO_IDEM_MIN ? await idemIds("append", principal, key, [slug, String(input.markdown)]) : [crypto.randomUUID()];
+    const skip = { slug, appended: 0, blocks: found.blocks.length, duplicate: true, note: "같은 내용을 이미 붙였어요. 다시 붙이지 않았어요." };
+    if ((await idemSeen(db, ids)) !== null) return skip;
+    blockLimit(parsedAdd.length, found.blocks.length);
+    const added = helpers.normaliseBlocks(parsedAdd);
     const imageWarnings = await ingest(db, helpers, slug, added);
     const used = new Set(found.blocks.map((block) => block.id));
     for (const block of added) while (used.has(block.id)) block.id = "a" + Math.random().toString(36).slice(2, 10);
     await helpers.captureEditorVersion(db, slug);
-    await helpers.saveBlocks(db, slug, helpers.normaliseBlocks([...found.blocks, ...added]));
-    await db.prepare("UPDATE pages SET updated = ?, source = 'editor', hash = NULL WHERE slug = ?").bind(Date.now(), slug).run();
-    await recordActivity(db, slug, principal, "append");
-    return withWarnings({ slug, appended: added.length }, imageWarnings);
+    try {
+      await helpers.saveBlocks(db, slug, helpers.normaliseBlocks([...found.blocks, ...added]), {
+        after: [
+          db.prepare("UPDATE pages SET updated = ?, source = 'editor', hash = NULL WHERE slug = ?").bind(Date.now(), slug),
+          activityStatement(db, slug, principal, "append", ids[0]),
+        ],
+      });
+    } catch (error) {
+      if (duplicateKey(error) && (await idemSeen(db, ids)) !== null) return skip;
+      throw error;
+    }
+    return withWarnings({ slug, appended: added.length, blocks: found.blocks.length + added.length }, imageWarnings, added);
   },
 
   async listDatabases(db, principal) {
@@ -307,6 +448,7 @@ export const agentOps = {
     return { databases: rows.results ?? [] };
   },
 
+  // Formula, rollup and time values are computed on read; style() results go out as their plain text.
   async readDatabase(db, principal, helpers, input) {
     requireScope(principal, "read");
     const found = await helpers.readDatabase(db, String(input.database ?? ""));
@@ -314,7 +456,7 @@ export const agentOps = {
     return {
       database: { slug: found.database.slug, title: found.database.title },
       properties: found.properties.map((prop) => ({ id: prop.id, name: prop.name, type: prop.type })),
-      rows: found.rows.map((row) => ({ id: row.id, page: row.page, title: row.pageTitle, props: row.props })),
+      rows: found.rows.map((row) => ({ id: row.id, page: row.page, title: row.pageTitle, props: { ...row.props, ...plainComputed(row.computed) } })),
     };
   },
 
@@ -353,7 +495,7 @@ export const agentOps = {
 async function bodyOf(request) {
   const type = request.headers.get("content-type") ?? "";
   const text = await request.text();
-  if (text.length > MARKDOWN_MAX + 10_000) throw new AgentError("본문이 너무 길어요.", 413);
+  if (text.length > MARKDOWN_MAX + 10_000) throw new AgentError(LONG_BODY, 413);
   if (/^text\/(markdown|plain)/i.test(type)) return { markdown: text };
   if (!text.trim()) return {};
   let value;
@@ -374,21 +516,32 @@ export async function handleAgentV1(request, db, path, principal, helpers) {
     await ensureAgentSchema(db);
     if (path === "/me" && method === "GET") return json(await agentOps.whoami(db, principal));
     if (path === "/pages" && method === "GET") return json(await agentOps.listPages(db, principal, helpers, { query: url.searchParams.get("q") ?? "" }));
+    const idem = request.headers.get("idempotency-key");
+    const withKey = (body) => (idem && (body.idempotencyKey === undefined || body.idempotencyKey === null) ? { ...body, idempotencyKey: idem } : body);
     if (path === "/pages" && method === "POST") {
-      const result = await agentOps.createPage(db, principal, helpers, await bodyOf(request));
-      return json(result, 201);
+      const result = await agentOps.createPage(db, principal, helpers, withKey(await bodyOf(request)));
+      return json(result, result.duplicate ? 200 : 201);
     }
     const page = /^\/pages\/([^/]+)(\/append)?$/.exec(path);
     if (page) {
       let slug;
       try { slug = helpers.resolveSlug(decodeURIComponent(page[1])); } catch { throw new AgentError("주소를 읽지 못했어요."); }
-      if (page[2] && method === "POST") return json(await agentOps.appendToPage(db, principal, helpers, { ...(await bodyOf(request)), slug }));
+      if (page[2] && method === "POST") return json(await agentOps.appendToPage(db, principal, helpers, { ...withKey(await bodyOf(request)), slug }));
       if (!page[2] && method === "GET") {
         const found = await agentOps.readPage(db, principal, helpers, { slug });
-        if (wantsMarkdown(request, url)) return new Response(found.markdown, { headers: { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" } });
-        return json(found);
+        const etag = '"' + found.updated + '"';
+        if (wantsMarkdown(request, url)) return new Response(found.markdown, { headers: { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store", etag } });
+        const response = json(found);
+        response.headers.set("etag", etag);
+        return response;
       }
-      if (!page[2] && (method === "PUT" || method === "PATCH")) return json(await agentOps.updatePage(db, principal, helpers, { ...(await bodyOf(request)), slug }));
+      if (!page[2] && (method === "PUT" || method === "PATCH")) {
+        const body = await bodyOf(request);
+        // If-Match: "<updated>" (the ETag from GET) works like expectedUpdated.
+        const ifMatch = /^(?:W\/)?"?(\d+)"?$/.exec((request.headers.get("if-match") ?? "").trim());
+        if (ifMatch && (body.expectedUpdated === undefined || body.expectedUpdated === null)) body.expectedUpdated = Number(ifMatch[1]);
+        return json(await agentOps.updatePage(db, principal, helpers, { ...body, slug }));
+      }
       return json({ error: "지원하지 않는 방법이에요." }, 405);
     }
     if (path === "/databases" && method === "GET") return json(await agentOps.listDatabases(db, principal));

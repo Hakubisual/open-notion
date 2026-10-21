@@ -2,7 +2,7 @@
   "use strict";
 
   var colors = ["#86dfe3", "#c4b2f4", "#94bff4", "#a4dcb9", "#f1c692", "#eab1cd"];
-  var kinds = { bar: "막대", line: "선", donut: "도넛" };
+  var kinds = { bar: "막대", hbar: "가로 막대", line: "선", donut: "도넛", number: "숫자" };
   var aggregates = { count: "행 개수", sum: "합계", avg: "평균" };
 
   function chartModel(properties, rows, config, valuesOf) {
@@ -12,6 +12,18 @@
     var number = properties.find(function (p) { return p.id === cfg.value && p.type === "number"; });
     var aggregation = aggregates[cfg.aggregation] ? cfg.aggregation : "count";
     var model = { kind: kinds[cfg.kind] ? cfg.kind : "bar", title: (category ? category.name : "분류") + "별 " + (aggregation === "count" ? aggregates.count : (number ? number.name + " " : "") + aggregates[aggregation]), points: [], category: category, number: number };
+    // number: one aggregate over every row (avg is the mean of all rows), no category.
+    if (model.kind === "number") {
+      model.title = aggregation === "count" ? aggregates.count : (number ? number.name + " " : "") + aggregates[aggregation];
+      if (aggregation !== "count" && !number) return model;
+      var total = 0, seen = 0;
+      rows.forEach(function (row) {
+        var n = aggregation === "count" ? 1 : (valuesOf ? valuesOf(row) : (row.props || {}))[number.id];
+        if (typeof n === "number" && Number.isFinite(n)) { total += n; seen++; }
+      });
+      if (aggregation === "count" || seen) model.points = [{ key: "", label: model.title, value: aggregation === "avg" ? total / seen : total, count: seen }];
+      return model;
+    }
     if (!category || (aggregation !== "count" && !number)) return model;
     var groups = new Map();
     rows.forEach(function (row) {
@@ -47,9 +59,31 @@
   }
   function format(value) { return Math.abs(value) >= 1e9 || (value !== 0 && Math.abs(value) < .001) ? value.toExponential(2) : Number(value.toPrecision(6)).toLocaleString("ko-KR", { maximumFractionDigits: 3 }); }
 
+  // Horizontal bars share one zero line: labels on the left, values after each bar, widths proportional to |value|.
+  function hbarSvg(model) {
+    var points = model.points;
+    var lo = Math.min.apply(null, [0].concat(points.map(function (p) { return p.value; })));
+    var hi = Math.max.apply(null, [0].concat(points.map(function (p) { return p.value; })));
+    var span = (hi - lo) || 1, plot = 190, rowH = 34, height = points.length * rowH + 20;
+    var zero = 110 + (-lo / span) * plot;
+    var out = ['<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="' + escape(model.title) + '" style="max-width:640px" viewBox="0 0 360 ' + height + '"><title>' + escape(model.title) + '</title>'];
+    out.push('<line x1="' + zero + '" x2="' + zero + '" y1="6" y2="' + (height - 6) + '" stroke="currentColor" opacity=".3"/>');
+    points.forEach(function (p, i) {
+      var y = 10 + i * rowH, w = Math.abs(p.value) / span * plot, x = p.value < 0 ? zero - w : zero;
+      var tip = '<title>' + escape(p.label + ': ' + format(p.value)) + '</title>';
+      out.push('<text x="102" y="' + (y + 21) + '" text-anchor="end" font-size="12">' + tip + escape(p.label.length > 9 ? p.label.slice(0, 8) + '…' : p.label) + '</text>');
+      out.push('<rect class="ac-chart-bar" x="' + x + '" y="' + (y + 6) + '" width="' + w + '" height="' + (rowH - 14) + '" rx="4" fill="' + colors[i % colors.length] + '">' + tip + '</rect>');
+      out.push('<text x="' + (p.value < 0 ? x - 6 : x + w + 6) + '" y="' + (y + 21) + '"' + (p.value < 0 ? ' text-anchor="end"' : '') + ' font-size="13">' + escape(format(p.value)) + '</text>');
+    });
+    out.push('</svg>');
+    return out.join('');
+  }
+
   function chartSvg(model) {
     var points = model.points, donut = model.kind === "donut";
     if (!points.length) return '<p class="ac-chart-empty" role="status">표시할 숫자 데이터가 없어요.</p>';
+    if (model.kind === "number") return '<div class="ac-chart-number" role="img" aria-label="' + escape(model.title + ': ' + format(points[0].value)) + '"><strong>' + escape(format(points[0].value)) + '</strong><span>' + escape(model.title) + '</span></div>';
+    if (model.kind === "hbar") return hbarSvg(model);
     if (donut && (points.some(function (p) { return p.value < 0; }) || !points.some(function (p) { return p.value > 0; }))) return '<p class="ac-chart-empty" role="status">도넛은 양수 합계가 필요해요. 음수는 막대나 선으로 보세요.</p>';
     var width = donut ? 400 : Math.max(400, points.length * 88 + 80);
     var out = ['<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label="' + escape(model.title) + '"' + (!donut && points.length > 6 ? ' style="min-width:' + width + 'px"' : '') + ' viewBox="0 0 ' + width + ' 340"><title>' + escape(model.title) + '</title>'];
@@ -127,10 +161,10 @@
     function draw() {
       controls.replaceChildren();
       select('차트 종류', 'kind', Object.keys(kinds).map(function (k) { return [k, kinds[k]]; }));
-      select('분류', 'category', categories.map(function (p) { return [p.id, p.name]; }));
+      if (cfg.kind !== 'number') select('분류', 'category', categories.map(function (p) { return [p.id, p.name]; }));
       select('값', 'aggregation', Object.keys(aggregates).map(function (k) { return [k, aggregates[k]]; }));
       if (cfg.aggregation !== 'count') select('숫자 속성', 'value', numbers.map(function (p) { return [p.id, p.name]; }));
-      if (categories.some(function (p) { return p.id === cfg.category && p.type === 'date'; })) select('날짜 단위', 'bucket', [['day', '일'], ['month', '월']]);
+      if (cfg.kind !== 'number' && categories.some(function (p) { return p.id === cfg.category && p.type === 'date'; })) select('날짜 단위', 'bucket', [['day', '일'], ['month', '월']]);
       var model = chartModel(ctx.properties, ctx.rows, cfg, ctx.values);
       output.replaceChildren();
       var title = doc.createElement('h3'); title.textContent = model.title; output.appendChild(title);

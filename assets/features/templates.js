@@ -11,6 +11,9 @@
     } catch (error) { editor.setSave("템플릿을 불러오지 못했어요. 다시 눌러 주세요.", true); }
   }
   editor.openTemplatePicker = open;
+  var blocks = document.getElementById("blocks"), empty = button("템플릿으로 시작", open, "template-empty-start");
+  empty.hidden = !/[?&]create\b/.test(location.search);
+  blocks.before(empty);
   editor.on("ready", function () {
     if (new URLSearchParams(location.search).has("templates")) open();
     document.getElementById("new-page").addEventListener("click", function (event) { event.stopImmediatePropagation(); open(); }, true);
@@ -21,8 +24,6 @@
       var slash = document.getElementById("slash"), choice = slash.querySelector(".template-slash.sel");
       if (!slash.hidden && choice && event.key === "Enter") { event.preventDefault(); event.stopImmediatePropagation(); choice.click(); }
     }, true);
-    var blocks = document.getElementById("blocks"), empty = button("템플릿으로 시작", open, "template-empty-start");
-    blocks.before(empty);
     function updateEmpty() { empty.hidden = editor.state.kind !== "note" || editor.state.blocks.some(function (b) { return b.type !== "paragraph" || b.text.trim(); }); }
     new MutationObserver(updateEmpty).observe(blocks, { childList: true, subtree: true, characterData: true });
     blocks.addEventListener("input", updateEmpty); updateEmpty();

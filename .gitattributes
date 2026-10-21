@@ -1,3 +1,7 @@
 # Built by scripts/build-editor-next.ts; tests/editor-next.test.ts compares bytes, so checkout must not convert line endings.
 assets/features/lazy/editor-next.js -text
 assets/features/lazy/editor-next.css -text
+# Built by scripts/build-parts.ts; tests/parts.test.ts compares bytes the same way.
+assets/features/lazy/parts.js -text
+# part-html.js embeds the parts runtime between LF markers that scripts/build-parts.ts rewrites (#58); CRLF checkout broke the rebuild.
+part-html.js -text

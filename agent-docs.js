@@ -124,7 +124,7 @@ export function openapiSpec(origin) {
         }, {
           200: ok('Pages', { type: 'object', properties: { pages: { type: 'array', items: ref('PageSummary') } } }),
         }),
-        post: op('createPage', 'Create a page from markdown (frontmatter title/parent/icon/tags)', {
+        post: op('createPage', 'Create a page from markdown (frontmatter title/parent/icon/tags). Up to 2,000 blocks; send Idempotency-Key to make retries return the first page (200, duplicate: true)', {
           requestBody: markdownBody({
             title: str, parent: str, icon: str, tags: { type: 'array', items: str }, slug: str,
           }, ['markdown']),
@@ -144,8 +144,8 @@ export function openapiSpec(origin) {
             content: { 'application/json': { schema: ref('Page') }, 'text/markdown': { schema: str } },
           },
         }),
-        put: op('updatePage', 'Replace a page. 409 if expectedUpdated is older than the page', {
-          parameters: [slugParam],
+        put: op('updatePage', 'Replace a page. Send expectedUpdated (the updated value from GET) or If-Match with the GET ETag. 409 if the page changed since that read, or if expectedUpdated is missing and a person edited the page after the last agent write', {
+          parameters: [slugParam, { name: 'If-Match', in: 'header', required: false, schema: str }],
           requestBody: { required: true, ...json({ type: 'object', required: ['markdown'], properties: { markdown: str, expectedUpdated: num } }) },
         }, {
           200: ok('Updated', {
@@ -155,7 +155,7 @@ export function openapiSpec(origin) {
         }),
       },
       '/pages/{slug}/append': {
-        post: op('appendToPage', 'Append markdown to the end of a page', {
+        post: op('appendToPage', 'Append markdown to the end of a page. Write long documents as 30-50 KB pieces; a repeated piece (same body or Idempotency-Key) is not added twice', {
           parameters: [slugParam],
           requestBody: markdownBody({}, ['markdown']),
         }, {
@@ -233,8 +233,11 @@ export function llmsTxt(origin) {
 - [AGENTS.md](${origin}/AGENTS.md): full rules. Read it before writing.
 - [Agent skills](${origin}/api/v1/agent-skills): call get_agent_skills first. The owner edits the agent-skills page; missing rules are seeded in Korean.
 - Prefer read_blocks and update_block/insert_blocks/delete_block with expected_version from the read. On 409 re-read and merge.
+- Visuals (cards, tables with totals, charts, heatmaps, flows): pick a part with list_parts and send only JSON data (\`\`\`acard-part fence or set_part_data), not a new HTML block.
+- Flows: a flow, process, pipeline or structure (전체 흐름, 구조도, 구성도) is the \`dag\` part: \`nodes\` [{id, label, desc, items, tags [{text, kind: agent|api|lib|person}], gate, state}], \`edges\` [[from, to, label?]], \`numbered\`, \`callout\` {title, text}. It draws step cards joined by arrows (left to right, top-down on phones) in the page theme. Never hand-write stacked HTML cards with ▼/→ arrows or white/black boxes; such a write returns \`htmlWarnings\` naming the part to use. To change an HTML block send only the changed text with patch_block.
 - One work-log page per project; add to existing logs with append, don't rewrite them.
 - Flag owner decisions with a callout \`> [!decision] 주인님 결정 필요: <question>\`. They show up in GET /api/v1/decisions.
+- Contents: never hand-write a \`## 목차\` list. One \`- [toc]\` line makes linked contents from the page's headings. A workflow, pipeline or structure diagram is the dag part, not stacked HTML cards or an uploaded image. Change one section with the block tools (GET/PATCH/POST /api/v1/pages/{slug}/blocks), not a text replace over the whole page markdown.
 - Never put secrets, tokens or passwords in pages.
 - Write for the owner in Korean.
 
@@ -263,13 +266,18 @@ Acard (${origin}) is a Notion-like notes app. Agents write markdown. The human o
 - \`read_blocks\` takes \`page\` (slug), returning ordered \`{id,type,text,markdown}\` blocks and \`version\`/\`updated\` stamps. HTTP: GET /api/v1/pages/{slug}/blocks.
 - \`update_block\` takes \`page, block_id, markdown, expected_version\`. Markdown must describe exactly one block; its ID and indentation stay unchanged. HTTP: PATCH /api/v1/pages/{slug}/blocks/{id}.
 - \`insert_blocks\` takes \`page, after_block_id, markdown, expected_version\`. A null anchor inserts at the start; an ID inserts immediately after that block. HTTP: POST /api/v1/pages/{slug}/blocks.
-- Visuals: write \`\`\`mermaid (flowchart, sequenceDiagram, timeline, gantt, mindmap), \`\`\`acard-chart (JSON {type,labels,series}) or \`\`\`acard-visual (sandboxed HTML/SVG, no network, 64 KB) fences, or \`\`\`html-embed for an HTML block (HTML/CSS/JS charts, interactive demos, styled layouts; runs in a sandboxed iframe with scripts but no network, cookies or parent access, 64 KB) with {"caption":...,"alt":...} after the language. Images: \`upload_media\` takes \`page, data\` (base64 png/jpeg/webp/gif, 4 MB; SVG is refused) and returns a markdown image line. HTTP: POST /api/v1/media (multipart file, page, mime).
+- Visuals: write \`\`\`mermaid (flowchart, sequenceDiagram, timeline, gantt, mindmap), \`\`\`acard-chart (JSON {type,labels,series}) or \`\`\`acard-visual (sandboxed HTML/SVG, no network, 64 KB) fences, or, only when no part fits and the user asked for it, \`\`\`html-embed for an HTML block (HTML/CSS/JS charts, interactive demos, styled layouts; runs in a sandboxed iframe with scripts but no network, cookies or parent access, 64 KB) with {"caption":...,"alt":...} after the language. The block follows the page's light/dark theme and grows to its content: use the Acard CSS variables (var(--fg), var(--fg-dim), var(--bg), var(--bg-soft), var(--surface), var(--line), var(--accent), var(--tag-<color>-bg/-fg)) instead of hard-coded white/black, and leave fonts, body font size and height alone; plain table, h2-h4, .card, .pill/.tag and .muted already look like the page. Blocks are never cut: a visual/chart/diagram/HTML block over 64 KB (UTF-8) or any other block over 100,000 characters makes the whole write fail with 413 and a message naming the block, so split it into several blocks. Images: \`upload_media\` takes \`page, data\` (base64 png/jpeg/webp/gif, 4 MB; SVG is refused) and returns a markdown image line. HTTP: POST /api/v1/media (multipart file, page, mime).
+- Parts first: when a page needs a visual (status cards, a table with totals or shares, a chart, a heatmap, a step flow), do not write a new HTML block. Call \`list_parts\` (the 5 defaults badge, table, chart, heatmap, dag plus parts registered from HTML blocks, each with its JSON data schema and fence) and write \`\`\`acard-part {"part":"table","v":1} with only the JSON data, or call \`set_part_data\` with \`page\`, \`block_id\` (or \`part\` and optional \`after_block_id\`, \`caption\`), \`data\` and \`expected_version\` from \`read_blocks\`. Data is checked against the part's schema (a mismatch fails and names the field); the part's code is never in the page, it runs in the same sandbox as HTML blocks, computes sums/averages/ratios itself and follows the page's dark theme. To change a number, send only the new data with \`set_part_data\`. A part block a person edited keeps the person's data; yours becomes an update suggestion. Measured on a 5-block sample: parts are about 5% of the tokens of the same HTML blocks to write, and a one-number change is 180 tokens instead of 3,900.
+- Editing an HTML block: do not resend the whole block. Call \`patch_block\` with \`page\`, \`block_id\`, \`expected_version\` and \`edits\` (a list of {find, replace}; each find must appear exactly once in the block) and only that text changes. If the HTML block draws cards, a table, a chart, a heatmap or a flow, suggest to the user turning it into a part with data and do it with \`set_part_data\` (\`part\` + \`after_block_id\`, then \`delete_block\` on the old one) once they agree.
 - \`delete_block\` takes \`page, block_id, expected_version\`. It deletes only that block, leaving descendants untouched. HTTP: DELETE /api/v1/pages/{slug}/blocks/{id} with a JSON body.
 - Prefer these tools over replacing a whole page. Send the exact \`version\` you read as \`expected_version\`; each successful write returns a new version. A stale version is HTTP 409, or MCP \`isError: true\` with \`structuredContent.status: 409\`. Re-read and merge instead of forcing a write.
+
 
 ## Where to write work logs
 
 - You'll be told a parent page. Create one page per project under it (create_page with \`parent\`).
+- A project or topic page is a folder: create it with \`view: folder\` and a one-line \`description\`, and write every long text (overview, log, plan, notes) as its own sub-page under it. Never put a long write-up into the folder page itself.
+- A person decides whether a page is a folder or an article (⋯ 폴더로 보기 / 글로 보기). update_page, append_to_page and block edits on a folder page are refused with 409; add a sub-page instead. An article page is written as before. \`set_page_view\` (PUT /api/v1/pages/{slug}/view) changes it only on pages no person has set.
 - If a log page already exists, add to it with \`append_to_page\` (POST /api/v1/pages/{slug}/append). Don't rewrite the whole page to add an entry.
 - Search first with \`list_pages\` (GET /api/v1/pages?q=) so you don't make duplicates.
 
@@ -292,14 +300,16 @@ tags: [log, project]
 | --- | --- |
 | \`# H1\` to \`### H3\` | headings |
 | \`- item\` / \`1. item\` | bulleted / numbered list |
-| \`- [ ] task\` / \`- [x] task\` | to-do |
+| \`- [ ] task\` / \`- [x] task\` | to-do (the owner ticks it; use this for any checklist) |
 | \`- [toggle] Title\` | toggle |
+| \`- [toc]\` | table of contents built from the headings |
 | \`> [!tip] text\` | callout |
 | \`> quote\` | quote |
 | fenced \`\`\` code \`\`\` | code |
 | \`---\` | divider |
 | \`| a | b |\` table | database (table/board) |
 | \`![caption](url "60")\` | image (last number is width %) |
+| \`![a](url "g=drafts")\` lines in a row | images with the same g= sit in one row (a set of drafts or screenshots) |
 | \`[[slug]]\` | page link (shows in backlinks) |
 
 ## Asking the owner to decide
@@ -316,7 +326,9 @@ It shows up in GET /api/v1/decisions and the \`list_decisions\` tool. The owner 
 
 - Never put secrets, tokens, passwords or private keys in a page.
 - Read before you overwrite. Prefer append over replace.
-- Pass \`expectedUpdated\` (the \`updated\` value you read) to update_page. A 409 means the page changed since you read it: re-read, merge your change with theirs, then write again. Never drop the owner's edits.
+- Long documents: one write takes up to 400,000 characters and a page up to 2,000 blocks. Up to ~50 KB (~1,000 blocks) saves in a few seconds; for more, create the page with the first sections and add the rest with \`append_to_page\` (POST /api/v1/pages/{slug}/append) in 30-50 KB pieces split at \`##\` headings, or put big sections in sub-pages. Over the limit is a 413 that says how to split.
+- Retries are safe: a create or append is saved whole or not at all, and the same call sent again (same body, or the same \`Idempotency-Key\` header / \`idempotencyKey\` field) returns the first result with \`duplicate: true\` instead of a second page or a second copy. After a timeout send the same call again; don't create under a new title.
+- Always pass \`expectedUpdated\` (the \`updated\` value you read) to update_page, or send \`If-Match\` with the ETag from GET /api/v1/pages/{slug}. Without it, a page a person edited after your last write is refused with 409. A 409 means the page changed since you read it: re-read, merge your change with theirs, then write again. Never drop the owner's edits.
 - Write in Korean when the text is for the owner.
 - Keep pages short. Lead with what changed and what's next.
 `;

@@ -6,6 +6,12 @@ function dbEscape(value) {
   return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
+// The payload must be the same authorized object as GET /api/db/<slug>.
+export function dbBootTag(slug, body) {
+  const json = JSON.stringify(body).replace(/[<>&\u2028\u2029]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+  return '<script type="application/json" class="acard-db-boot" data-slug="' + dbEscape(slug) + '">' + json + '</script>';
+}
+
 // 허용: http(s), 같은 출처 상대 경로(/로 시작, //·\ 제외). mailto/tel 은 호출자가 허용할 때만.
 function dbSafeUrl(value, allow) {
   const text = String(value === null || value === undefined ? "" : value).trim();
@@ -56,6 +62,14 @@ function dbNumberCell(prop, value) {
   return '<span class="numtext">' + dbEscape(text) + "</span>";
 }
 
+function dbImageAttributes(entry, url) {
+  const iw = entry.iw ?? entry.width, ih = entry.ih ?? entry.height;
+  const dimensions = Number.isFinite(iw) && iw > 0 && Number.isFinite(ih) && ih > 0 ? ' width="' + iw + '" height="' + ih + '"' : "";
+  const media = /^\/media\/[^/?#]+$/.test(url) && !/\.(svg|gif)$/i.test(url) && !/^image\/(svg|gif)/i.test(entry.type || entry.mime || "");
+  const responsive = media ? ' srcset="' + [400, 800, 1600].map((w) => dbEscape(url) + '?w=' + w + ' ' + w + 'w').join(', ') + '" sizes="(max-width: 760px) 100vw, 760px"' : "";
+  return dimensions + responsive + ' decoding="async" loading="lazy"';
+}
+
 function dbFileCell(value) {
   const files = Array.isArray(value) ? value : [];
   const out = [];
@@ -67,7 +81,7 @@ function dbFileCell(value) {
     const isImage = /^image\//.test(entry.type || "") || /\.(png|jpe?g|gif|webp|avif)(\?|#|$)/i.test(url);
     const svg = /^image\/svg/.test(entry.type || "") || /\.svg(\?|#|$)/i.test(url);
     if (isImage && !svg) {
-      out.push('<a class="filethumb" href="' + dbEscape(url) + '" target="_blank" rel="noopener"><img src="' + dbEscape(url) + '" alt="' + dbEscape(name) + '" loading="lazy"></a>');
+      out.push('<a class="filethumb" href="' + dbEscape(url) + '" target="_blank" rel="noopener"><img src="' + dbEscape(url) + '" alt="' + dbEscape(name) + '"' + dbImageAttributes(entry, url) + '></a>');
     } else {
       out.push('<a class="filelink" href="' + dbEscape(url) + '" target="_blank" rel="noopener">' + dbEscape(name) + "</a>");
     }
@@ -107,6 +121,7 @@ function dbCellHtml(prop, value, context) {
   if (type === "checkbox") return value === true ? '<span class="check on" aria-label="체크됨">✓</span>' : '<span class="check" aria-label="체크 안 됨"></span>';
   if (type === "select" || type === "status") return dbTag(prop, value);
   if (type === "multi_select") return (Array.isArray(value) ? value : []).map((id) => dbTag(prop, id)).join(" ");
+  if (type === "person") return (Array.isArray(value) ? value : []).map((email) => '<span class="dbperson" title="' + dbEscape(email) + '"><span class="dbavatar" aria-hidden="true">' + dbEscape(personInitial(email)) + '</span><span class="dbpersonname">' + dbEscape(email) + "</span></span>").join(" ");
   if (type === "date") return dbDateCell(prop, value);
   if (type === "files") return dbFileCell(value);
   if (type === "url") {
@@ -122,9 +137,12 @@ function dbCellHtml(prop, value, context) {
     return !value ? "" : href ? '<a href="' + dbEscape(href) + '">' + dbEscape(value) + "</a>" : dbEscape(value);
   }
   if (type === "relation") return dbRelationCell(prop, value, context);
+  if (type === "unique_id") return value === null || value === undefined || value === "" ? "" : '<span class="idcell">' + dbEscape(displayValue(prop, value)) + "</span>";
+  if (type === "button") return '<button type="button" class="dbbtn" disabled>' + dbEscape(((prop.config && prop.config.icon) ? prop.config.icon + " " : "") + ((prop.config && prop.config.label) || prop.name)) + "</button>";
   if (type === "created_time" || type === "updated_time") return "<span class=\"stampcell\">" + dbEscape(formatRelativeTime(value, context && context.now)) + "</span>";
   if (type === "formula" || type === "rollup") {
     if (value === null || value === undefined || value === "") return "";
+    if (isRichValue(value)) return richValue(value).map((seg) => seg.classes.length ? '<span class="' + seg.classes.join(" ") + '">' + dbEscape(seg.text) + "</span>" : dbEscape(seg.text)).join("");
     if (typeof value === "number") return dbNumberCell(prop, value);
     if (Array.isArray(value)) return dbEscape(value.join(", "));
     return dbEscape(String(value));
@@ -144,6 +162,8 @@ function dbCellFor(prop, row, context) {
   const value = row.values ? row.values[prop.id] : undefined;
   if (prop.name === "진행률" && prop.type === "number" && value !== null && value !== undefined) return tableProgressHtml(value, context && context.complete);
   if (prop.type === "title") return dbTitleCell(prop, value, row);
+  const error = prop.type === "formula" && row.errors ? row.errors[prop.id] : "";
+  if (error && (value === null || value === undefined || value === "")) return '<span class="fxerror" title="' + dbEscape(error) + '">' + dbEscape(error) + "</span>";
   return dbCellHtml(prop, value, context);
 }
 
@@ -159,13 +179,14 @@ export function databaseTableHtml(properties, allRows, view, context) {
     const width = widths[prop.id] || columnWidth(prop, view);
     return '<th scope="col" style="min-width:' + width + 'px"><span class="thname">' + tableHeaderIcon(prop.name, prop.type) + dbEscape(prop.name) + "</span></th>";
   }).join("");
-  const check = '<span class="table-check" aria-hidden="true"></span>';
+  // #34: the leftmost box shows a status 완료 row, so it only exists when a status property has a 완료 option.
+  const status = properties.find((prop) => prop.type === "status");
+  const doneColumn = !!(status && ((status.config && status.config.options) || []).some((option) => option.name === "완료"));
 
   const body = rows.map((row) => {
-    const status = properties.find((prop) => prop.type === "status");
     const complete = status && optionById(status, row.values[status.id])?.name === "완료";
     const cells = columns.map((prop) => '<td class="c-' + dbEscape(prop.type) + '">' + dbCellFor(prop, row, Object.assign({}, context, { complete })) + "</td>").join("");
-    return '<tr><td class="table-select"><span class="table-check' + (complete ? ' on' : '') + '" aria-hidden="true"></span></td>' + cells + "</tr>";
+    return '<tr>' + (doneColumn ? '<td class="table-select"><span class="table-check' + (complete ? ' on' : '') + '" aria-hidden="true"></span></td>' : "") + cells + "</tr>";
   }).join("");
 
   const foot = columns.map((prop) => {
@@ -177,30 +198,38 @@ export function databaseTableHtml(properties, allRows, view, context) {
 
   return [
     '<div class="dbtablewrap" tabindex="0" role="region" aria-label="작업 표">',
-    '<table class="dbtable"><thead><tr><th class="table-select" scope="col" aria-label="선택">' + check + '</th>' + head + "</tr></thead>",
+    '<table class="dbtable"><thead><tr>' + (doneColumn ? '<th class="table-select" scope="col" aria-label="완료"></th>' : "") + head + "</tr></thead>",
     "<tbody>" + body + "</tbody>",
-    hasFooter ? '<tfoot><tr><td class="table-select"></td>' + foot + "</tr></tfoot>" : "",
+    hasFooter ? '<tfoot><tr>' + (doneColumn ? '<td class="table-select"></td>' : "") + foot + "</tr></tfoot>" : "",
     "</table>",
     "</div>",
     rows.length ? "" : '<p class="dbempty">아직 행이 없어요.</p>',
   ].join("");
 }
 
-function dbCardHtml(properties, row, context, groupProp) {
+function dbCardHtml(properties, row, context, groupProp, view) {
   const columns = visibleProperties(properties, { config: {} }).filter((prop) => prop.type !== "files");
   const titleProp = properties.find((prop) => prop.type === "title") || columns[0];
   const coverProp = properties.find((prop) => prop.type === "files");
-  const coverValue = coverProp && row.values ? row.values[coverProp.id] : null;
-  const cover = dbFileCell(coverValue);
+  const card = view && view.config && view.config.card ? normaliseCard(view.config.card) : null;
+  let cover;
+  if (!card) cover = dbFileCell(coverProp && row.values ? row.values[coverProp.id] : null);
+  else {
+    const src = dbSafeUrl(cardPreview(properties, view, row, row.values || {}));
+    const file = cardPreviewFile(properties, view, row, row.values || {}) || {};
+    cover = src ? '<img src="' + dbEscape(src) + '" alt=""' + dbImageAttributes(file, src) + ' style="object-fit:' + card.fit + ';height:' + CARD_SIZES[card.size].cover + 'px;width:100%">' : "";
+  }
+  const icon = card && card.icon && row.pageIcon ? '<span class="dbcardicon">' + (/^\/media\/[0-9a-f]{16}$/.test(row.pageIcon) ? '<img src="' + dbEscape(row.pageIcon) + '?w=400" alt="" width="18" height="18" style="border-radius:3px;object-fit:cover;vertical-align:-3px">' : dbEscape(row.pageIcon)) + "</span>" : "";
   const sub = columns
     .filter((prop) => prop !== titleProp && prop !== coverProp && prop !== groupProp)
     .slice(0, 4)
     .map((prop) => '<div class="dbcardrow"><span class="dbcardkey">' + dbEscape(prop.name) + "</span>" + dbCellHtml(prop, row.values ? row.values[prop.id] : null, context) + "</div>")
     .join("");
   return [
-    '<article class="dbcard">',
+    card ? '<article class="dbcard dbcard-' + card.size + '">' : '<article class="dbcard">',
     cover ? '<div class="dbcardcover">' + cover + "</div>" : "",
     '<div class="dbcardbody">',
+    icon,
     titleProp ? dbTitleCell(titleProp, row.values ? row.values[titleProp.id] : "", row) : "",
     sub,
     "</div>",
@@ -210,9 +239,10 @@ function dbCardHtml(properties, row, context, groupProp) {
 
 export function databaseGalleryHtml(properties, allRows, view, context) {
   const rows = dbViewRows(properties, allRows, view, context);
-  const cards = rows.map((row) => dbCardHtml(properties, row, context, null)).join("");
+  const cards = rows.map((row) => dbCardHtml(properties, row, context, null, view)).join("");
   if (!rows.length) return '<p class="dbempty">아직 행이 없어요.</p>';
-  return '<div class="dbgallery">' + cards + "</div>";
+  const card = view && view.config && view.config.card ? normaliseCard(view.config.card) : null;
+  return card ? '<div class="dbgallery" style="grid-template-columns:repeat(auto-fill,minmax(' + CARD_SIZES[card.size].min + 'px,1fr))">' + cards + "</div>" : '<div class="dbgallery">' + cards + "</div>";
 }
 
 export function databaseListHtml(properties, allRows, view, context) {
@@ -244,7 +274,7 @@ export function databaseBoardHtml(properties, allRows, view, context) {
   const columns = grouped.groups.map((group) => [
     '<section class="dbboardcol">',
     '<header class="dbboardhead"><span class="dot ' + dbEscape(group.color) + '"></span>' + dbEscape(group.label) + '<span class="dbcount">' + group.rows.length + "</span></header>",
-    '<div class="dbboardcards">' + group.rows.map((row) => dbCardHtml(properties, row, context, groupProp)).join("") + "</div>",
+    '<div class="dbboardcards">' + group.rows.map((row) => dbCardHtml(properties, row, context, groupProp, view)).join("") + "</div>",
     "</section>",
   ].join("")).join("");
   return '<div class="dbboard">' + columns + "</div>";
@@ -370,7 +400,7 @@ export function databaseHtml(properties, rows, views, options) {
     '<template class="db-reader-assets">' + tableHeadingHtml() + properties.map((prop) => '<span data-table-property="' + dbEscape(prop.id) + '">' + tableHeaderIcon(prop.name, prop.type) + '</span>').join('') + Object.entries({ table: "table", board: "layout-panel-left", calendar: "calendar", gallery: "layout-grid", plus: "plus", chevron: "chevron-down" }).map(([name, line]) => '<span data-table-icon="' + name + '">' + ico(line) + '</span>').join('') + ['도리', '오너'].map((name) => '<span data-table-person="' + name + '">' + tablePersonHtml(name) + '</span>').join('') + '</template>',
     tableHeadingHtml(),
     '<div class="dbbar"><div class="dbviewbar dbtabs" aria-label="보기">' + tabs + '<span class="dbcount-badge">' + dbViewRows(properties, rows, first, context).length + '행</span><span class="dbtab" aria-hidden="true">' + ico("plus") + '</span></div>' + (context.slug ? tableNewHtml(context.slug) : '') + '</div>',
-    body,
+    body.replace(/(<img\b[^>]*\b)loading="lazy"/, '$1loading="eager" fetchpriority="high"'),
     "</div>",
   ].join("");
 }

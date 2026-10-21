@@ -23,7 +23,8 @@
     if (markdown.length > 400_000) throw new AgentError("본문이 너무 길어요.", 413);
     const parsed = helpers.markdownToBlocks(markdown);
     if (!parsed.length) throw new AgentError("블록 내용이 비었어요. 삭제는 delete_block을 쓰세요.");
-    if (parsed.length > 2000 || parsed.some(block => block.text.length > 20000)) throw new AgentError("블록 내용이 너무 길어요.", 413);
+    if (parsed.length > 2000) throw new AgentError("페이지에는 블록을 2000개까지 넣을 수 있어요.", 413);
+    // normaliseBlocks refuses an over-long block (64 KB for HTML/visual/chart/diagram, 100,000 characters otherwise).
     return helpers.normaliseBlocks(parsed);
   }
 
@@ -32,6 +33,7 @@
       throw new AgentError("read_blocks의 version을 expected_version 숫자로 보내 주세요.");
     }
     const found = await foundPage(db, helpers, input);
+    await folderGuard(db, found.slug);
     if (found.page.updated !== input.expected_version) throw new AgentError("그사이 페이지가 바뀌었어요. 다시 읽고 합친 뒤 쓰세요.", 409);
     const blocks = found.blocks.slice();
     const anchor = action === "insert" ? input.after_block_id : input.block_id;
@@ -57,6 +59,9 @@
       }
       affected = added.map(block => block.id);
     }
+    // #36: an update or delete aimed at a paragraph a person edited becomes a suggestion under it instead.
+    const guard = humanGuard(found.blocks, blocks, principal.name);
+    blocks.splice(0, blocks.length, ...guard.blocks);
     // Compare in SQL, not only against the earlier read. Even same-millisecond
     // writes advance the stamp so only one caller can claim a read version.
     const version = Math.max(Date.now(), found.page.updated + 1);
@@ -69,7 +74,8 @@
     await helpers.saveBlocks(db, found.slug, blocks);
     await db.prepare("INSERT INTO agent_activity (id, page, agent, via, action, created) VALUES (?, ?, ?, ?, ?, ?)")
       .bind(crypto.randomUUID(), found.slug, principal.name, principal.via, "block-" + action, version).run();
-    return { page: found.slug, version, updated: version, block_ids: affected, ...(imageWarnings.length ? { imageWarnings } : {}) };
+    const written = action === "delete" ? [] : blocks.filter(block => affected.includes(block.id));
+    return withWarnings(humanNote({ page: found.slug, version, updated: version, block_ids: affected }, guard), imageWarnings, written);
   }
 
   registerFeature({

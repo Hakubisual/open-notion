@@ -28,9 +28,12 @@
       document.querySelector("#doc").dataset.font = settings.font || "default";
       if (window.acardFont) window.acardFont(settings.font);
       document.querySelector("#doc").classList.toggle("full-width", settings.width === "full");
+      document.querySelector("#doc").classList.toggle("width-normal", settings.width === "normal");
+      widthButtons.forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.width === (settings.width || "default") ? "true" : "false"); });
       cover.hidden = !settings.cover;
       if (settings.cover) cover.src = settings.cover; else cover.removeAttribute("src");
       iconButton.textContent = settings.icon || "아이콘 추가";
+      if ([settings.icon, settings.cover].some(function (v) { return /^(\/media\/|g\d$)/.test(v); })) look(function (ui) { ui.paint(cover, iconButton, settings); });
       favoriteButton.textContent = settings.favorite ? "즐겨찾기 해제" : "즐겨찾기";
     }
     function patch(value) {
@@ -47,12 +50,16 @@
       open(title);
       button(panel, "계속", function () { return Promise.resolve(action()).then(function () { panel.close(); }); });
     }
-    var iconButton = button(bar, "아이콘 추가", function () { inputPanel("페이지 아이콘", settings.icon, function (value) { return patch({ icon: value || null }); }); });
-    button(bar, "표지", function () { inputPanel("표지 이미지 HTTPS 주소 또는 / 경로", settings.cover, function (value) { return patch({ cover: value || null }); }); });
+    var widthButtons = [].slice.call(document.querySelectorAll("#more-menu [data-width]"));
+    widthButtons.forEach(function (b) { b.addEventListener("click", function () { patch({ width: b.dataset.width }).catch(fail); }); });
+    function look(fn) { return window.AcardEditor.lazy("page-look").then(fn); }
+    function pick(kind) { return function () { return look(function (ui) { ui.open(kind, kind == "icon" ? iconButton : coverButton, settings[kind], slug, function (v) { patch(kind == "icon" ? { icon: v } : { cover: v }).catch(fail); }); }); }; }
+    var iconButton = button(bar, "아이콘 추가", pick("icon"));
+    var coverButton = button(bar, "표지", pick("cover"));
     var favoriteButton = button(bar, "즐겨찾기", function () { return patch({ favorite: !settings.favorite }); });
     button(bar, "페이지 설정", function () {
       open("페이지 설정");
-      [["너비", "width", [["default", "기본"], ["full", "전체 너비"]]], ["글꼴", "font", [["default", "기본"], ["serif", "명조"], ["mono", "고정폭"]]]].forEach(function (field) {
+      [["너비", "width", [["default", "좁게"], ["normal", "보통"], ["full", "넓게"]]], ["글꼴", "font", [["default", "기본"], ["serif", "명조"], ["mono", "고정폭"]]]].forEach(function (field) {
         var label = document.createElement("label"); label.textContent = field[0];
         var select = document.createElement("select");
         field[2].forEach(function (pair) { var option = document.createElement("option"); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option); });

@@ -65,8 +65,12 @@ button, input { font: inherit; color: inherit; }
 .nav-links a:hover { color: var(--ink); }
 .nav-right { display: flex; justify-content: flex-end; align-items: center; gap: 26px; font-size: var(--fs-21); color: var(--ink-2); }
 .nav-right .btn { height: 56px; padding: 0 20px; font-size: var(--fs-21); }
+.nav-right .btn, .nav-right .login-link { white-space: nowrap; }
+@media (min-width: 761px) and (max-width: 1440px) { .nav-links { gap: clamp(20px, 2.8vw, 48px); font-size: var(--fs-17); } .nav-right { gap: 16px; font-size: var(--fs-17); } .nav-right .btn { height: 48px; font-size: var(--fs-17); } }
+@media (min-width: 761px) and (max-width: 1080px) { .nav-right > .lang-switch { display: none; } }
 .nav-menu { display: none; background: none; border: 0; padding: 6px; cursor: pointer; color: var(--ink); touch-action: manipulation; }
 .site-menu { display: none; }
+@media (min-width: 761px) and (max-width: 1080px) { .nav-menu { display: block; } .site-menu:not([hidden]) { display: flex; justify-content: flex-end; gap: 24px; padding: 8px 40px 12px; border-top: 1px solid var(--line); background: var(--bg); font-size: var(--fs-17); } }
 
 .hero { text-align: center; padding: 72px 24px 0; }
 .hero h1 {
@@ -179,8 +183,9 @@ button, input { font: inherit; color: inherit; }
   .nav-links { display: none; }
   .nav-right .login-link { font-size: var(--fs-16); white-space: nowrap; min-height: 44px; display: inline-flex; align-items: center; }
   .site-menu:not([hidden]) { display: flex; flex-direction: column; padding: 4px 20px 12px; border-top: 1px solid var(--line); background: var(--bg); }
-  .site-menu a { min-height: 48px; display: flex; align-items: center; font-size: var(--fs-17); color: var(--ink-2); border-bottom: 1px solid var(--line); }
-  .site-menu a:last-child { border-bottom: 0; font-weight: 600; color: var(--accent); }
+  .site-menu > a { min-height: 48px; display: flex; align-items: center; font-size: var(--fs-17); color: var(--ink-2); border-bottom: 1px solid var(--line); }
+  .site-menu > a:last-of-type { border-bottom: 0; font-weight: 600; color: var(--accent); }
+  .site-menu > .lang-switch { justify-content: flex-start; border-top: 1px solid var(--line); padding-top: 4px; }
   .brand { font-size: var(--fs-21); gap: 10px; }
   .brand img { width: 36px; height: 36px; }
   .nav-right { gap: 16px; }
@@ -251,6 +256,9 @@ body[data-beta="closed"] .waitlist[hidden] { display: block; }
 .wl-card { max-width: 560px; margin: 0 auto; border: 1px solid var(--line); border-radius: 14px; padding: 36px 32px 30px; background: var(--bg); box-shadow: 0 6px 24px rgba(25,25,25,.05); text-align: center; }
 .wl-tag { display: inline-block; background: var(--accent-soft); color: var(--accent-ink); border-radius: 999px; padding: 5px 14px; font-size: var(--fs-14); font-weight: 700; }
 .wl-card h2 { margin: 14px 0 6px; font-size: var(--fs-32); letter-spacing: -0.03em; }
+.wl-count { margin: 0 0 8px; font-size: var(--fs-16); font-weight: 600; color: var(--ink); }
+.wl-count[hidden] { display: none; }
+.wl-count b { color: var(--accent); }
 .wl-sub { margin: 0 0 24px; color: var(--muted); font-size: var(--fs-16); }
 .wl-form { text-align: left; }
 .wl-form label { display: block; font-size: var(--fs-15); font-weight: 600; margin-bottom: 18px; }

@@ -10,10 +10,14 @@
     { type: "heading1", label: "제목 1", hint: "큰 제목", ico: "H1" },
     { type: "heading2", label: "제목 2", hint: "중간 제목", ico: "H2" },
     { type: "heading3", label: "제목 3", hint: "작은 제목", ico: "H3" },
+    { type: "heading4", label: "제목 4", hint: "가장 작은 제목", ico: "H4" },
     { type: "bulleted", label: "글머리 목록", hint: "• 항목", ico: "•" },
     { type: "numbered", label: "번호 목록", hint: "1. 항목", ico: "1." },
     { type: "to_do", label: "할 일", hint: "체크박스", ico: "☑" },
     { type: "toggle", label: "토글", hint: "접었다 펴는 목록", ico: "▸" },
+    { type: "toggle_heading1", label: "토글 제목 1", hint: "접히는 큰 제목", ico: "▸H1" },
+    { type: "toggle_heading2", label: "토글 제목 2", hint: "접히는 중간 제목", ico: "▸H2" },
+    { type: "toggle_heading3", label: "토글 제목 3", hint: "접히는 작은 제목", ico: "▸H3" },
     { type: "callout", label: "콜아웃", hint: "강조 상자", ico: "!" },
     { type: "quote", label: "인용", hint: "인용문", ico: "❝" },
     { type: "code", label: "코드", hint: "코드 블록", ico: "{}" },
@@ -33,6 +37,7 @@
     { type: "columns", label: "열 나누기", hint: "2~3열", ico: "◫" },
     { type: "table", label: "간단 표", hint: "그냥 표", ico: "☐" },
     { type: "equation", label: "수식", hint: "라텍", ico: "∑" },
+    { type: "subpage", label: "하위 페이지", hint: "이 안에 새 페이지", ico: "⊕" },
     { type: "toc", label: "목차", hint: "제목 목록", ico: "≡" },
     { type: "breadcrumb", label: "이동 경로", hint: "위 계층", ico: "⌂" },
     { type: "button", label: "버튼", hint: "링크 버튼", ico: "◉" },
@@ -41,11 +46,17 @@
   ];
 
   var easy = null;
-  function loadEasy() { return lazy("easy-insert").then(function (e) { easy = e; }, function () {}); }
-  function slashMatches(query) { return easy ? easy.matches(BLOCK_TYPES, query) : BLOCK_TYPES; }
+  function loadEasy() { return Promise.all([lazy("easy-insert").then(function (e) { easy = e; }, function () {}), loadComponents()]); }
+  // ds10: registered components join the slash list once the components chunk is loaded (with easy-insert).
+  var componentItems = [];
+  function loadComponents() { return lazy("components").then(function (c) { componentItems = c.slashItems(); }, function () {}); }
+  function slashMatches(query) { var all = BLOCK_TYPES.concat(componentItems); return easy ? easy.matches(all, query) : all; }
 
   var MEDIA_TYPES = { image: 1, video: 1, audio: 1, file: 1, embed: 1, bookmark: 1 };
-  var LAYOUT_TYPES = { columns: 1, table: 1, equation: 1, toc: 1, breadcrumb: 1, button: 1, progress: 1 };
+  var LAYOUT_TYPES = { table: 1, equation: 1, toc: 1, breadcrumb: 1, button: 1, progress: 1 };
+  var cm = window.ColumnsModel;
+  // Columns hold blocks (notion-parity C13): old text-only columns convert on load, empty columns keep one paragraph.
+  function structure(blocks) { return cm.fillColumns(cm.clampColumnsDepth(cm.columnsFromLegacy(blocks)), newBlock); }
   var BLOCK_DEFAULTS = {
     image: function () { return { meta: { src: "", width: 100 } }; },
     video: function () { return { meta: { url: "" } }; },
@@ -53,7 +64,6 @@
     file: function () { return { meta: { url: "", name: "" } }; },
     embed: function () { return { meta: { url: "" } }; },
     bookmark: function () { return { meta: { url: "" } }; },
-    columns: function () { return { meta: { columns: [{ text: "" }, { text: "" }] } }; },
     table: function () { return { meta: { columns: ["열1", "열2", "열3"], rows: [["", "", ""], ["", "", ""]], header: true } }; },
     button: function () { return { meta: { url: "" } }; },
     progress: function () { return { meta: { value: 50, color: "blue" } }; }
@@ -64,6 +74,7 @@
     heading1: "제목 1",
     heading2: "제목 2",
     heading3: "제목 3",
+    heading4: "제목 4",
     bulleted: "목록 항목",
     numbered: "목록 항목",
     to_do: "할 일",
@@ -74,14 +85,20 @@
     progress: "진행률 라벨"
   };
 
-  var THEME_KEY = "dori-notes-theme";
+  var identity = document.querySelector('meta[name="acard-id"]')?.content || "";
+  var THEME_KEY = "dori-notes-theme:" + identity;
   try {
     var stored = localStorage.getItem(THEME_KEY);
     document.documentElement.setAttribute("data-theme", stored === "light" || stored === "dark" ? stored : "auto");
   } catch (e) {}
 
   var slug = decodeURIComponent((location.pathname.match(/^\/edit\/([^/]+)\/?$/) || [])[1] || "index");
-  var state = { title: "", blocks: [], pages: [], dirty: false, saving: false, lastSaved: null, kind: "note", dbRow: null };
+  var state = { title: "", blocks: [], pages: [], dirty: false, saving: false, lastSaved: null, kind: "note", dbRow: null, baseUpdated: null };
+  var dirty = false;
+  Object.defineProperty(state, "dirty", { enumerable: true, get: function () { return dirty; }, set: function (value) {
+    dirty = !!value;
+    window[dirty ? "addEventListener" : "removeEventListener"]("beforeunload", beforeUnload);
+  } });
   var els = {
     tree: document.getElementById("tree"),
     title: document.getElementById("title"),
@@ -100,6 +117,7 @@
   }
 
   function apiResponse(res) {
+    if (res.headers.get("x-acard-offline") === "1") return Promise.reject(new Error("오프라인 · 읽기 전용. 다시 연결한 뒤 새로고침해 주세요."));
     return res.json().catch(function () { return {}; }).then(function (body) {
       if (!res.ok) throw new Error(body.error || String(res.status));
       return body;
@@ -146,7 +164,8 @@
     get state() { return state; },
     api: api, slug: slug, loadTree: function () { return loadTree(); }, scheduleSave: scheduleSave, render: render, setSave: setSave, save: save,
     transport: function (pageSlug, payload) {
-      return fetch("/api/page/" + encodeURIComponent(pageSlug), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      if (!Number.isSafeInteger(payload.base_updated)) return Promise.resolve(new Response(JSON.stringify({ error: "불러오지 못했어요 · 읽기 전용. 새로고침해 주세요." }), { status: 428 }));
+      return fetch("/api/page/" + encodeURIComponent(pageSlug), { method: "PUT", headers: { "content-type": "application/json", "x-acard-client": this.clientId || "" }, body: JSON.stringify(payload) });
     },
     insertBlocksAfter: function (id, blocks) {
       var index = state.blocks.findIndex(function (block) { return block.id === id; });
@@ -193,7 +212,7 @@
     box.firstChild.textContent = text + " · Ctrl+Z";
     box.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { box.hidden = true; }, 5000);
+    toastTimer = setTimeout(function () { box.hidden = true; }, 10000);
   }
 
   var saveTimer = null;
@@ -204,13 +223,16 @@
     if (!from.length) return;
     to.push(snapshot());
     var value = JSON.parse(from.pop());
+    var hadSubpages = subpagesOf(state.blocks);
     state.title = value.title; state.blocks = value.blocks;
+    syncSubpages(hadSubpages, subpagesOf(state.blocks));
     previousSnapshot = snapshot();
     restoring = true;
     render(); scheduleSave();
     restoring = false;
   }
   function scheduleSave() {
+    startupEdited = true;
     var current = snapshot();
     if (!restoring && previousSnapshot && current !== previousSnapshot) {
       undoStack.push(previousSnapshot);
@@ -219,7 +241,8 @@
     }
     previousSnapshot = current;
     state.dirty = true;
-    emitFeature("change", { title: state.title, blocks: state.blocks });
+    paintTocs();
+    emitFeature("change", { title: state.title, blocks: state.blocks, base_updated: state.baseUpdated });
     setSave("저장 중…", true);
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(function () { save().catch(function (error) { setSave("저장 실패: " + error.message, true); }); }, 700);
@@ -228,17 +251,19 @@
   function save() {
     if (state.saving) return activeSave.then(function () { return state.dirty ? save() : undefined; });
     if (!state.dirty) return Promise.resolve();
+    if (!Number.isSafeInteger(state.baseUpdated)) return serverPage.then(function () {
+      if (!Number.isSafeInteger(state.baseUpdated)) throw Error("불러오지 못했어요 · 읽기 전용. 새로고침해 주세요.");
+      return save();
+    });
     state.saving = true;
-    state.dirty = false;
-    var payload = { title: state.title, blocks: state.blocks };
+    var payload = JSON.parse(JSON.stringify({ title: state.title, blocks: state.blocks, base_updated: state.baseUpdated }));
     emitFeature("beforeSave", payload);
-    var dbTitle = state.kind === "db" && window.DoriDB
-      ? fetch("/api/db/" + encodeURIComponent(slug), { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: state.title }) }).catch(function () {})
-      : Promise.resolve();
-    activeSave = dbTitle.then(function () {
+    activeSave = created.then(function () {
       return window.AcardEditor.transport(slug, payload).then(apiResponse);
     })
-      .then(function () {
+      .then(function (result) {
+        state.baseUpdated = result.updated;
+        state.dirty = JSON.stringify({ title: payload.title, blocks: payload.blocks }) !== snapshot();
         state.lastSaved = new Date();
         setSave("저장됨 " + state.lastSaved.toTimeString().slice(0, 5), false);
         loadBacklinks();
@@ -263,7 +288,9 @@
   }
 
   function render() {
-    els.title.value = state.title;
+    if (document.activeElement !== els.title) els.title.value = state.title;
+    var shaped = structure(state.blocks);
+    if (shaped !== state.blocks) state.blocks = shaped;
     els.blocks.innerHTML = "";
     var parents = [];
     state.blocks.forEach(function (block, index) {
@@ -272,7 +299,8 @@
       var parent = parents.length ? parents[parents.length - 1].host : els.blocks;
       parent.appendChild(row);
       var childHost = document.createElement("div");
-      childHost.className = "children";
+      childHost.className = block.type === "columns" ? "children cols cols-ed" : "children";
+      if (block.type === "columns") childHost.style.setProperty("--cols", columnTemplate(block));
       row.querySelector(".body").appendChild(childHost);
       parents.push({ block: block, host: childHost });
     });
@@ -286,7 +314,14 @@
     row.id = "block-" + block.id;
     row.dataset.index = String(index);
     row.classList.toggle("selected", selectedIds.has(block.id));
-    if (block.type === "toggle" && !(block.meta && block.meta.open)) row.classList.add("collapsed");
+    // Toggle heading (notion-parity C7): a heading with meta.toggle folds its indented blocks like a toggle.
+    var tgh = /^heading[1-4]$/.test(block.type) && block.meta && block.meta.toggle === true;
+    if (tgh) row.classList.add("tgh");
+    if ((block.type === "toggle" || tgh) && !(block.meta && block.meta.open)) row.classList.add("collapsed");
+    if (block.meta && block.meta.subpage) row.classList.add("subpage");
+    // Block color (notion-parity C6): same bc-* class as the reader; the rules come with the lazy block-style chunk.
+    var color = block.type !== "progress" && block.meta && /^(gray|brown|orange|yellow|green|blue|purple|pink|red)(_background)?$/.exec(block.meta.color);
+    if (color) { row.classList.add("bc-" + color[0]); lazy("block-style").catch(function () {}); }
 
     var gutter = document.createElement("div");
     gutter.className = "gutter";
@@ -341,6 +376,14 @@
       return row;
     }
 
+    if (block.type === "columns" || block.type === "column") {
+      row.classList.add(block.type === "columns" ? "colset" : "colcell");
+      if (block.type === "columns") body.appendChild(columnsBar(block, index));
+      else { gutter.remove(); columnResizer(row, index); }
+      row.appendChild(body);
+      return row;
+    }
+
     if (block.type === "database") {
       body.appendChild(dbBlock(block, index));
       row.appendChild(body);
@@ -353,10 +396,19 @@
       return row;
     }
 
-    if (/^(diagram|chart|visual|html)$/.test(block.type)) {
+    if (block.type === "component") {
+      var uh = document.createElement("div");
+      uh.textContent = "불러오는 중…";
+      lazy("components").then(function (c) { c.mount(uh, block, scheduleSave); }, function () { uh.textContent = "컴포넌트 편집기를 불러오지 못했어요."; });
+      body.appendChild(uh);
+      row.appendChild(body);
+      return row;
+    }
+
+    if (/^(diagram|chart|visual|html|part)$/.test(block.type)) {
       var vh = document.createElement("div");
       vh.textContent = "불러오는 중…";
-      lazy("visuals").then(function (v) { v.mount(vh, block, scheduleSave); }, function () { vh.textContent = "시각 자료 편집기를 불러오지 못했어요."; });
+      lazy(block.type == "part" ? "parts" : "visuals").then(function (v) { v.mount(vh, block, scheduleSave); }, function () { vh.textContent = "시각 자료 편집기를 불러오지 못했어요."; });
       body.appendChild(vh);
       row.appendChild(body);
       return row;
@@ -375,7 +427,7 @@
     }
 
     var host = body;
-    if (block.type === "toggle") {
+    if (block.type === "toggle" || tgh) {
       var trow = document.createElement("div");
       trow.className = "trow";
       var twist = document.createElement("button");
@@ -396,6 +448,23 @@
       host = trow;
     }
 
+    if (block.type === "callout") {
+      var icon = document.createElement("button");
+      icon.type = "button"; icon.className = "co-ico";
+      icon.textContent = (block.meta && block.meta.icon) || "✦";
+      icon.setAttribute("aria-label", "콜아웃 아이콘 바꾸기");
+      icon.addEventListener("click", function () {
+        lazy("icon-picker").then(function (picker) {
+          picker.open(icon, block.meta && block.meta.icon, function (next) {
+            var meta = Object.assign({}, block.meta);
+            if (next) meta.icon = next; else delete meta.icon;
+            block.meta = meta; render(); scheduleSave();
+          });
+        });
+      });
+      body.appendChild(icon);
+    }
+
     var text = document.createElement("div");
     text.className = "text";
     text.contentEditable = "true";
@@ -410,7 +479,7 @@
   }
 
   function cls(type) {
-    return ({ heading1: "h1", heading2: "h2", heading3: "h3", to_do: "todo" })[type] || type;
+    return ({ heading1: "h1", heading2: "h2", heading3: "h3", heading4: "h4", to_do: "todo" })[type] || type;
   }
 
   function wireText(text, block, row, index) {
@@ -441,27 +510,121 @@
         insertAfter(index, newBlock(block.type === "code" ? "code" : (block.type === "bulleted" || block.type === "numbered" || block.type === "to_do" ? block.type : "paragraph")), block.indent);
       } else if (ev.key === "Backspace" && text.textContent === "" && state.blocks.length > 1) {
         ev.preventDefault();
+        var column = cm.columnOf(state.blocks, index);
+        // The only block of a column stays (empty); the column itself never disappears from Backspace.
+        if (column && model.endOf(state.blocks, index) === model.endOf(state.blocks, state.blocks.indexOf(column)) && state.blocks[index - 1] === column) return;
         var prev = state.blocks[index - 1];
+        if (prev && (prev.type === "column" || prev.type === "columns")) prev = null;
         state.blocks.splice(index, model.endOf(state.blocks, index) - index);
         render();
         if (prev) focusBlock(prev.id);
         scheduleSave();
       } else if (ev.key === "Tab") {
         ev.preventDefault();
-        model.indent(state.blocks, index, ev.shiftKey ? -1 : 1);
+        if (cm.canIndent(state.blocks, index, ev.shiftKey ? -1 : 1)) model.indent(state.blocks, index, ev.shiftKey ? -1 : 1);
         render();
         focusBlock(block.id);
         scheduleSave();
       } else if (ev.key === "ArrowUp" && !text.textContent) {
-        var up = state.blocks[index - 1];
+        var up = nearText(index, -1);
         if (up) { ev.preventDefault(); focusBlock(up.id); }
       } else if (ev.key === "ArrowDown") {
-        var down = state.blocks[index + 1];
+        var down = nearText(index, 1);
         if (down) { ev.preventDefault(); focusBlock(down.id); }
       } else if (ev.key === "Escape") {
         hideSlash();
       }
     });
+  }
+
+  // The next block in the given direction that has a text field (columns and column rows have none).
+  function nearText(index, step) {
+    for (var i = index + step; i >= 0 && i < state.blocks.length; i += step) {
+      if (state.blocks[i].type !== "columns" && state.blocks[i].type !== "column") return state.blocks[i];
+    }
+    return null;
+  }
+
+  function columnTemplate(block) {
+    var n = Math.max(1, state.blocks.filter(function (item, i) { return item.type === "column" && cm.parentOf(state.blocks, i) === block; }).length);
+    var widths = block.meta && Array.isArray(block.meta.widths) && block.meta.widths.length === n ? block.meta.widths : cm.equalWidths(n);
+    return widths.map(function (w) { return Math.max(0.05, Number(w) || 0) + "fr"; }).join(" ");
+  }
+
+  // The border between a column and the next one is a handle: dragging it moves width between the two (meta.widths,
+  // sum 1, at least 0.15 each); the grid follows the pointer and the page saves on release.
+  function columnResizer(row, index) {
+    var head = cm.parentOf(state.blocks, index);
+    if (!head || head.type !== "columns") return;
+    var groups = cm.columnGroups(state.blocks, state.blocks.indexOf(head));
+    var at = groups.findIndex(function (group) { return group.index === index; });
+    if (at < 0 || at >= groups.length - 1) return;
+    var grip = document.createElement("div");
+    grip.className = "colresize";
+    grip.setAttribute("role", "separator");
+    grip.setAttribute("aria-label", "열 너비 조절");
+    var drag = null;
+    grip.addEventListener("pointerdown", function (ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      var host = row.parentElement;
+      var widths = head.meta && Array.isArray(head.meta.widths) && head.meta.widths.length === groups.length ? head.meta.widths.slice() : cm.equalWidths(groups.length);
+      drag = { x: ev.clientX, width: host.getBoundingClientRect().width, host: host, start: widths, now: widths };
+      grip.setPointerCapture(ev.pointerId);
+    });
+    grip.addEventListener("pointermove", function (ev) {
+      if (!drag) return;
+      var pair = drag.start[at] + drag.start[at + 1];
+      var left = Math.min(pair - 0.15, Math.max(0.15, drag.start[at] + (ev.clientX - drag.x) / drag.width));
+      drag.now = drag.start.slice();
+      drag.now[at] = Math.round(left * 10000) / 10000;
+      drag.now[at + 1] = Math.round((pair - left) * 10000) / 10000;
+      drag.host.style.setProperty("--cols", drag.now.map(function (w) { return w + "fr"; }).join(" "));
+    });
+    function done() {
+      if (!drag) return;
+      head.meta = Object.assign({}, head.meta, { widths: drag.now });
+      drag = null;
+      scheduleSave();
+    }
+    grip.addEventListener("pointerup", done);
+    grip.addEventListener("pointercancel", done);
+    row.appendChild(grip);
+  }
+
+  // Moves the block at index to the end of the column before (-1) or after (1) the one it sits in.
+  function moveToColumn(index, step) {
+    var column = cm.columnOf(state.blocks, index);
+    if (!column) return;
+    var head = cm.parentOf(state.blocks, state.blocks.indexOf(column));
+    var groups = cm.columnGroups(state.blocks, state.blocks.indexOf(head));
+    var at = groups.findIndex(function (group) { return group.index === state.blocks.indexOf(column); });
+    var next = groups[at + step];
+    if (!next) return;
+    if (model.move(state.blocks, index, next.end, model.depth(column) + 1)) { render(); scheduleSave(); }
+  }
+
+  // The small bar above columns: add a column (up to 4) or remove the last empty-able one (down to 2).
+  function columnsBar(block, index) {
+    var bar = document.createElement("div");
+    bar.className = "colbar";
+    var groups = cm.columnGroups(state.blocks, index);
+    function button(label, aria, act) {
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "minibtn"; b.textContent = label; b.setAttribute("aria-label", aria);
+      b.addEventListener("click", function () { act(); block.meta = Object.assign({}, block.meta, { widths: cm.equalWidths(cm.columnGroups(state.blocks, state.blocks.indexOf(block)).length) }); render(); scheduleSave(); });
+      bar.appendChild(b);
+    }
+    if (groups.length < 4) button("+ 열", "열 추가", function () {
+      var last = groups[groups.length - 1], column = newBlock("column"), para = newBlock();
+      column.indent = model.depth(block) + 1; para.indent = column.indent + 1;
+      state.blocks.splice(last ? last.end : index + 1, 0, column, para);
+    });
+    if (groups.length > 2) button("− 열", "마지막 열 지우기 (안의 블록은 앞 열로)", function () {
+      var last = groups[groups.length - 1];
+      state.blocks.splice(last.index, 1);
+    });
+    return bar;
   }
 
   function focusBlock(id) {
@@ -645,6 +808,10 @@
     table.className = "dbtable";
     var thead = document.createElement("thead");
     var hrow = document.createElement("tr");
+    // #73: no "[ ]" column -> a box per row anyway; the first tick adds a 완료 column.
+    var CHK = /^\[( |x|X)?\]$/;
+    var noBoxCol = rows.length && !columns.some(function (c) { return rows.some(function (r) { return CHK.test(String(r[c] || "").trim()); }); });
+    if (noBoxCol) hrow.appendChild(document.createElement("th"));
     columns.forEach(function (column, columnIndex) {
       var th = document.createElement("th");
       var cell = document.createElement("div");
@@ -670,9 +837,35 @@
     var tbody = document.createElement("tbody");
     rows.forEach(function (row, rowIndex) {
       var tr = document.createElement("tr");
+      if (noBoxCol) {
+        var addTd = document.createElement("td"), addBox = document.createElement("button");
+        addBox.type = "button"; addBox.className = "cell et-check";
+        addBox.setAttribute("role", "checkbox"); addBox.setAttribute("aria-label", "완료");
+        addBox.onclick = function () {
+          var name = "완료";
+          while (columns.indexOf(name) >= 0) name += "_";
+          columns.unshift(name);
+          rows.forEach(function (r) { r[name] = "[ ]"; });
+          row[name] = "[x]";
+          commit(); render();
+        };
+        addTd.appendChild(addBox); tr.appendChild(addTd);
+      }
       columns.forEach(function (column) {
         var td = document.createElement("td");
         var cell = document.createElement("div");
+        // #34: a "[ ]" / "[x]" cell is a checkbox; Backspace turns it back into text.
+        var box = CHK.exec(String(row[column] || "").trim());
+        if (box) {
+          var on = !!box[1] && box[1] !== " ";
+          cell = document.createElement("button");
+          cell.type = "button"; cell.className = "cell et-check" + (on ? " on" : "");
+          cell.setAttribute("role", "checkbox"); cell.setAttribute("aria-checked", String(on)); cell.setAttribute("aria-label", column);
+          cell.onclick = function () { row[column] = on ? "[ ]" : "[x]"; commit(); render(); };
+          cell.onkeydown = function (ev) { if (/^(Backspace|Delete)$/.test(ev.key)) { row[column] = ""; commit(); render(); } };
+          td.appendChild(cell); tr.appendChild(td);
+          return;
+        }
         cell.className = "cell";
         cell.contentEditable = "true";
         cell.textContent = row[column] || "";
@@ -776,6 +969,7 @@
   function uploadFile(file) {
     var form = new FormData();
     form.append("file", file, file.name);
+    form.append("page", slug);
     return fetch("/api/upload", { method: "POST", body: form }).then(function (res) {
       return res.json().then(function (body) {
         if (!res.ok) throw new Error(body.error || String(res.status));
@@ -789,9 +983,11 @@
     render();
     setSave("올리는 중…", true);
     var ready = /^image\//.test(file.type) ? downscaleImage(file, 1600) : Promise.resolve(file);
-    ready.then(function (f) { return uploadFile(f); }).then(function (res) {
+    return ready.then(function (f) { return created.then(function () { return uploadFile(f); }); }).then(function (res) {
       block._busy = false;
       block.meta = Object.assign({}, block.meta, { src: res.url, url: res.url, name: res.name, size: res.size });
+      delete block.meta.iw; delete block.meta.ih;
+      if (res.width > 0 && res.height > 0) { block.meta.iw = res.width; block.meta.ih = res.height; }
       render();
       setSave("저장됨", false);
       scheduleSave();
@@ -869,6 +1065,8 @@
         img.src = meta.src;
         img.alt = block.text || "이미지";
         img.loading = "lazy";
+        img.decoding = "async";
+        if (meta.iw > 0 && meta.ih > 0) { img.width = meta.iw; img.height = meta.ih; img.style.height = "auto"; }
         view.appendChild(img);
         view.addEventListener("click", function (ev) { ev.preventDefault(); openLightbox(img.src, img.alt); });
         fig.appendChild(view);
@@ -932,6 +1130,7 @@
       row.appendChild(up);
     }
     wrap.appendChild(row);
+    if (block.type === "embed") wrap.appendChild(embedSizer(block, meta));
     if (block.type === "bookmark") {
       var note = document.createElement("div");
       note.className = "mbnote";
@@ -958,48 +1157,43 @@
     return wrap;
   }
 
+  // notion-parity C11: an https embed shows a sandboxed preview with a bottom handle; dragging sets meta.height (120..2000 px,
+  // the reader clamps the same way). Acard's own origins are not previewed (block-html.js embedMode refuses them too).
+  function embedSizer(block, meta) {
+    var box = document.createElement("div");
+    box.className = "embed-size";
+    if (!/^https:\/\/(?![^/]*(acard\.dev|pages\.dev|localhost)[/:]?)/i.test(meta.url || "")) return box;
+    var h = Number(meta.height) || 0;
+    box.style.height = (h || 320) + "px";
+    var frame = document.createElement("iframe");
+    frame.src = meta.url; frame.title = "임베드 미리보기"; frame.loading = "lazy";
+    frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups allow-forms");
+    frame.referrerPolicy = "no-referrer";
+    var grip = document.createElement("span");
+    grip.className = "embed-grip"; grip.setAttribute("role", "slider"); grip.setAttribute("aria-label", "임베드 높이");
+    grip.setAttribute("aria-valuenow", String(h || 320)); grip.tabIndex = 0;
+    function set(px) { px = Math.max(120, Math.min(2000, Math.round(px))); box.style.height = px + "px"; grip.setAttribute("aria-valuenow", String(px)); return px; }
+    function done(px) { block.meta = Object.assign({}, block.meta, { height: px }); scheduleSave(); }
+    grip.addEventListener("pointerdown", function (ev) {
+      ev.preventDefault();
+      var y0 = ev.clientY, h0 = box.offsetHeight, px = h0;
+      grip.setPointerCapture(ev.pointerId); box.classList.add("sizing");
+      function move(e) { px = set(h0 + e.clientY - y0); }
+      function up() { grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up); box.classList.remove("sizing"); done(px); }
+      grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+    });
+    grip.addEventListener("keydown", function (ev) {
+      var d = { ArrowDown: 20, ArrowUp: -20 }[ev.key];
+      if (d) { ev.preventDefault(); done(set(box.offsetHeight + d)); }
+    });
+    box.appendChild(frame); box.appendChild(grip);
+    return box;
+  }
+
   function layoutBlock(block, index) {
     var meta = block.meta || (block.meta = {});
     var wrap = document.createElement("div");
     wrap.className = "layoutblock lb-" + block.type;
-
-    if (block.type === "columns") {
-      var cols = Array.isArray(meta.columns) && meta.columns.length ? meta.columns : (meta.columns = [{ text: "" }, { text: "" }]);
-      var grid = document.createElement("div");
-      grid.className = "cols cols" + cols.length;
-      cols.forEach(function (col, ci) {
-        var cell = document.createElement("div");
-        cell.className = "col";
-        var ed = document.createElement("div");
-        ed.className = "text coled";
-        ed.contentEditable = "true";
-        ed.spellcheck = false;
-        ed.dataset.ph = (ci + 1) + "번째 열";
-        ed.textContent = col.text || "";
-        ed.addEventListener("input", function () { col.text = ed.textContent; block.meta = meta; scheduleSave(); });
-        cell.appendChild(ed);
-        if (cols.length > 2) {
-          var del = document.createElement("button");
-          del.type = "button";
-          del.className = "minibtn col-del";
-          del.textContent = "✕";
-          del.setAttribute("aria-label", (ci + 1) + "번째 열 지우기");
-          del.addEventListener("click", function () { cols.splice(ci, 1); block.meta = meta; render(); scheduleSave(); });
-          cell.appendChild(del);
-        }
-        grid.appendChild(cell);
-      });
-      wrap.appendChild(grid);
-      if (cols.length < 3) {
-        var addCol = document.createElement("button");
-        addCol.type = "button";
-        addCol.className = "minibtn";
-        addCol.textContent = "+ 열";
-        addCol.addEventListener("click", function () { cols.push({ text: "" }); block.meta = meta; render(); scheduleSave(); });
-        wrap.appendChild(addCol);
-      }
-      return wrap;
-    }
 
     if (block.type === "table") {
       wrap.textContent = "표를 불러오는 중…";
@@ -1046,6 +1240,12 @@
       url.addEventListener("input", function () { meta.url = url.value.trim(); block.meta = meta; scheduleSave(); });
       line.appendChild(label);
       line.appendChild(url);
+      var acts = document.createElement("button");
+      acts.type = "button";
+      acts.className = "minibtn btnacts";
+      acts.textContent = "동작 " + (Array.isArray(meta.actions) ? meta.actions.length : 0);
+      acts.addEventListener("click", function () { lazy("button-editor").then(function (ed) { ed.open(acts, block, function () { acts.textContent = "동작 " + ((block.meta && block.meta.actions) || []).length; scheduleSave(); }); }); });
+      line.appendChild(acts);
       wrap.appendChild(line);
       return wrap;
     }
@@ -1104,13 +1304,120 @@
       return wrap;
     }
 
+    if (block.type === "toc") {
+      // The editor draws the same heading list as the reader and repaints it as headings change (#26).
+      var nav = document.createElement("nav");
+      nav.className = "tocblock";
+      nav.setAttribute("aria-label", "목차");
+      paintToc(nav);
+      wrap.appendChild(nav);
+      return wrap;
+    }
     var note = document.createElement("div");
     note.className = "lbnote";
-    note.textContent = block.type === "toc"
-      ? "읽기 화면에서 이 페이지의 제목 목차가 여기에 표시돼요."
-      : "읽기 화면에서 상위 페이지 경로가 여기에 표시돼요.";
+    note.textContent = "읽기 화면에서 상위 페이지 경로가 여기에 표시돼요.";
     wrap.appendChild(note);
     return wrap;
+  }
+
+  var HEADING_LEVEL = { heading1: 2, heading2: 3, heading3: 4, heading4: 5 };
+  function paintToc(nav) {
+    var heads = state.blocks.filter(function (b) { return HEADING_LEVEL[b.type] && String(b.text || "").trim(); });
+    var key = JSON.stringify(heads.map(function (b) { return [b.id, b.type, b.text]; }));
+    if (nav.dataset.key === key) return;
+    nav.dataset.key = key;
+    nav.textContent = "";
+    var head = document.createElement("div");
+    head.className = "tochead";
+    var h = document.createElement("h3");
+    h.textContent = "목차";
+    head.appendChild(h);
+    if (heads.length) { var n = document.createElement("span"); n.className = "tcount"; n.textContent = String(heads.length); head.appendChild(n); }
+    nav.appendChild(head);
+    var ul = document.createElement("ul");
+    heads.forEach(function (b) {
+      var li = document.createElement("li");
+      li.className = "lvl" + HEADING_LEVEL[b.type];
+      var a = document.createElement("a");
+      a.href = "#block-" + b.id;
+      a.textContent = b.text;
+      a.addEventListener("click", function (ev) { ev.preventDefault(); var row = document.getElementById("block-" + b.id); if (row) { row.scrollIntoView({ block: "center" }); focusBlock(b.id); } });
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+    if (!heads.length) { var empty = document.createElement("li"); empty.className = "tempty"; empty.textContent = "아래에 제목이 없어요"; ul.appendChild(empty); }
+    nav.appendChild(ul);
+  }
+  function paintTocs() {
+    Array.prototype.forEach.call(els.blocks.querySelectorAll(".lb-toc .tocblock"), paintToc);
+  }
+
+  // The slash item 하위 페이지 makes a child page under this one, linked from the block where the slash was typed (#26).
+  // The link is a normal paragraph with a page mention, so the reader, export and backlinks already understand it.
+  function subpageLink(block, page) {
+    block.type = "paragraph";
+    block.text = page.title;
+    block.meta = { subpage: page.slug, richText: [{ text: page.title, mention: { type: "page", slug: page.slug } }] };
+  }
+  function createSubpage(block) {
+    block.text = "";
+    if (block.meta) delete block.meta.richText;
+    render();
+    setSave("하위 페이지 만드는 중…", true);
+    var id = block.id;
+    api("/pages", { method: "POST", body: JSON.stringify({ title: "제목 없음", parent: slug }) }).then(function (page) {
+      // By id: the new page's live notice can make live.js swap state.blocks for a fresh server copy before this returns.
+      var at = state.blocks.findIndex(function (b) { return b.id === id; });
+      if (at < 0) { at = state.blocks.length; state.blocks.push(newBlock()); state.blocks[at].id = id; }
+      block = state.blocks[at];
+      subpageLink(block, { slug: page.slug, title: page.title || "제목 없음" });
+      var next = newBlock();
+      state.blocks.splice(model.endOf(state.blocks, at), 0, next);
+      render();
+      focusBlock(next.id);
+      scheduleSave();
+      refreshTree();
+    }).catch(function (error) { setSave("하위 페이지를 만들지 못했어요: " + error.message, true); });
+  }
+  function subpagesOf(blocks) {
+    var out = {};
+    blocks.forEach(function (b) { if (b.meta && b.meta.subpage) out[b.meta.subpage] = true; });
+    return out;
+  }
+  // Undo of a 하위 페이지 insert puts the new page in the trash; redo brings it back.
+  // One queue: a quick Ctrl+Z then Ctrl+Shift+Z must reach the server as trash then restore, never restore first.
+  var subpageQueue = Promise.resolve();
+  function syncSubpages(before, after) {
+    var steps = [];
+    Object.keys(before).forEach(function (s) { if (!after[s]) steps.push([s, "trash"]); });
+    Object.keys(after).forEach(function (s) { if (!before[s]) steps.push([s, "restore"]); });
+    if (!steps.length) return;
+    steps.forEach(function (step) {
+      subpageQueue = subpageQueue.then(function () {
+        return api("/page/" + encodeURIComponent(step[0]) + "/" + step[1], { method: "POST", body: "{}" })
+          .catch(function (error) { setSave("하위 페이지를 정리하지 못했어요: " + error.message, true); });
+      });
+    });
+    subpageQueue = subpageQueue.then(refreshTree);
+  }
+  function refreshTree() {
+    loadTree();
+    document.dispatchEvent(new CustomEvent("acard:tree-fresh"));
+  }
+  // A child renamed on its own page shows the new title here the next time the tree is read.
+  function syncSubpageTitles() {
+    var titles = {};
+    state.pages.forEach(function (p) { titles[p.slug] = p.title; });
+    var changed = false;
+    state.blocks.forEach(function (b) {
+      var s = b.meta && b.meta.subpage;
+      if (s && titles[s] && titles[s] !== b.text) { subpageLink(b, { slug: s, title: titles[s] }); changed = true; }
+    });
+    if (!changed) return;
+    render();
+    previousSnapshot = snapshot();
+    state.dirty = true;
+    save().catch(function () {});
   }
 
   var slashIndex = -1;
@@ -1158,6 +1465,31 @@
         .catch(function () { window.alert("사진 도구를 불러오지 못했어요. 새로고침해 주세요."); });
       return;
     }
+    if (type === "subpage") {
+      if (easy) easy.remember(type);
+      createSubpage(block);
+      return;
+    }
+    if (type === "columns") {
+      // /열 나누기 makes two columns with an empty paragraph each, at the nearest depth columns may sit at.
+      if (easy) easy.remember(type);
+      var made = cm.newColumns(model.depth(block), 2, newBlock);
+      var empty = !block.text || /^\/[^\s/]{0,12}$/.test(block.text);
+      state.blocks.splice.apply(state.blocks, [empty ? index : index + 1, empty ? 1 : 0].concat(made));
+      render(); focusBlock(made[2].id); scheduleSave();
+      return;
+    }
+    var ui = /^component:([a-z][a-z0-9-]{1,39})$/.exec(type);
+    if (ui) {
+      if (easy) easy.remember(type);
+      block.type = "component";
+      block.meta = { ui: ui[1] };
+      block.text = "";
+      render(); scheduleSave();
+      return;
+    }
+    var th = /^toggle_(heading[1-3])$/.exec(type);
+    if (th) { type = th[1]; block.meta = Object.assign({}, block.meta, { toggle: true, open: true }); }
     block.type = type;
     if (type === "db_ref") {
       var target = window.prompt("연결할 데이터베이스 슬러그 (예: mcp-master-facet)");
@@ -1224,11 +1556,19 @@
       ["복제", function () { var copies = JSON.parse(JSON.stringify(state.blocks.slice(index, model.endOf(state.blocks, index)))); copies.forEach(function (copy) { copy.id = uid(); }); state.blocks.splice.apply(state.blocks, [model.endOf(state.blocks, index), 0].concat(copies)); render(); scheduleSave(); }],
       ["블록 링크 복사", function () { navigator.clipboard.writeText(location.origin + "/edit/" + encodeURIComponent(slug) + "/#block-" + encodeURIComponent(block.id)).then(function () { setSave("블록 링크 복사됨", false); }).catch(function (error) { setSave("복사 실패: " + error.message, true); }); }],
       ["종류 바꾸기", function () { openSlash(anchor, index); }],
+      cm.columnOf(state.blocks, index) ? ["왼쪽 열로", function () { moveToColumn(index, -1); }] : null,
+      cm.columnOf(state.blocks, index) ? ["오른쪽 열로", function () { moveToColumn(index, 1); }] : null,
+      /^heading[1-4]$/.test(block.type) ? [block.meta && block.meta.toggle ? "접기 끄기" : "접히는 제목으로", function () {
+        var meta = Object.assign({}, block.meta);
+        if (meta.toggle) { delete meta.toggle; delete meta.open; } else { meta.toggle = true; meta.open = true; }
+        block.meta = meta; render(); scheduleSave();
+      }] : null,
+      ["색", function () { lazy("block-style").then(function (s) { s.open(anchor, block); }); }],
       ["댓글", function () { if (pageContext) pageContext.comments(block.id); }],
       ["삭제", function () { state.blocks.splice(index, model.endOf(state.blocks, index) - index); render(); scheduleSave(); undoToast("블록을 지웠어요"); }]
     ];
     els.ctx.innerHTML = "<h3>블록</h3>";
-    actions.forEach(function (pair) {
+    actions.filter(Boolean).forEach(function (pair) {
       var button = document.createElement("button");
       button.type = "button";
       button.textContent = pair[0];
@@ -1250,7 +1590,7 @@
   }
 
   function indent(index, delta) {
-    if (!model.indent(state.blocks, index, delta)) return;
+    if (!cm.canIndent(state.blocks, index, delta) || !model.indent(state.blocks, index, delta)) return;
     render();
     scheduleSave();
   }
@@ -1285,10 +1625,12 @@
       if (!start || Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 6) return;
       dragged = true;
       row.classList.add("dragging");
-      if (target) target.classList.remove("drop-before", "drop-after");
+      if (target) target.classList.remove("drop-before", "drop-after", "drop-into");
       var hit = document.elementFromPoint(ev.clientX, ev.clientY);
       target = hit && hit.closest(".blk");
       if (!target || target === row || row.contains(target)) { target = null; return; }
+      // A column row itself (its empty space or border) takes the block at the end of that column (notion-parity C13).
+      if (target.classList.contains("colcell")) { target.classList.add("drop-into"); return; }
       var rect = target.getBoundingClientRect();
       target.classList.add(ev.clientY < rect.top + rect.height / 2 ? "drop-before" : "drop-after");
     });
@@ -1298,9 +1640,10 @@
         var index = state.blocks.findIndex(function (item) { return item.id === block.id; });
         var destination = Number(target.dataset.index);
         var after = target.classList.contains("drop-after");
-        var targetDepth = model.depth(state.blocks[destination]);
-        target.classList.remove("drop-before", "drop-after");
-        if (ev.type !== "pointercancel" && moveSelection(index, after ? model.endOf(state.blocks, destination) : destination, targetDepth)) {
+        var into = target.classList.contains("drop-into");
+        var targetDepth = model.depth(state.blocks[destination]) + (into ? 1 : 0);
+        target.classList.remove("drop-before", "drop-after", "drop-into");
+        if (ev.type !== "pointercancel" && moveSelection(index, after || into ? model.endOf(state.blocks, destination) : destination, targetDepth)) {
           render(); scheduleSave();
         }
       }
@@ -1320,6 +1663,7 @@
     return api("/tree").then(function (data) {
       state.pages = data.pages || [];
       renderTree();
+      syncSubpageTitles();
     }).catch(function () {});
   }
 
@@ -1345,7 +1689,7 @@
       row.className = "row";
       var link = document.createElement("a");
       link.href = "/edit/" + encodeURIComponent(page.slug) + "/";
-      link.textContent = (page.icon ? page.icon + " " : "") + page.title;
+      link.textContent = (page.icon && !/^\/media\//.test(page.icon) ? page.icon + " " : "") + page.title;
       if (page.slug === slug) link.className = "on";
       if (page.kind === "db") {
         var mark = document.createElement("span");
@@ -1477,15 +1821,32 @@
 
   // New pages open untitled with the cursor in the title field (no blocking window.prompt - #18).
   function newPage() {
-    api("/pages", { method: "POST", body: JSON.stringify({ title: "제목 없음" }) }).then(function (page) {
-      location.href = "/edit/" + encodeURIComponent(page.slug) + "/?new";
-    });
+    location.href = "/edit/" + ("page-" + Math.random().toString(36).slice(2, 8)) + "/?new&create";
   }
   document.getElementById("new-page").addEventListener("click", newPage);
 
   els.menu.addEventListener("click", function () {
     var open = els.sidebar.classList.toggle("open");
     els.menu.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  // Desktop sidebar collapse, same key as the reader (app.js); #side-open brings it back (#27).
+  var SIDE_KEY = "dori-notes-sidebar:" + identity, sideCollapse = document.getElementById("collapse"), sideOpen = document.getElementById("side-open");
+  function paintSide(c) {
+    document.documentElement.classList.toggle("side-collapsed", c);
+    if (sideCollapse) sideCollapse.setAttribute("aria-expanded", c ? "false" : "true");
+  }
+  function toggleSide() {
+    var c = !document.documentElement.classList.contains("side-collapsed"), a = document.activeElement;
+    try { if (identity) localStorage.setItem(SIDE_KEY, c ? "1" : "0"); } catch (e) {}
+    paintSide(c);
+    if (a === sideCollapse || a === sideOpen) (c ? sideOpen : sideCollapse).focus();
+  }
+  try { paintSide(localStorage.getItem(SIDE_KEY) === "1"); } catch (e) {}
+  if (sideCollapse) sideCollapse.addEventListener("click", toggleSide);
+  if (sideOpen) sideOpen.addEventListener("click", toggleSide);
+  document.addEventListener("keydown", function (ev) {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === "\\") { ev.preventDefault(); toggleSide(); }
   });
 
   // --- 더보기 메뉴 + 노션 내보내기 가져오기 ---
@@ -1632,9 +1993,9 @@
   var paletteList = document.getElementById("palette-list");
   var paletteItems = [];
   var paletteSel = 0, pSeq = 0, pWait, pGo;
-  var RECENT_KEY = "dori-notes-recent";
+  var RECENT_KEY = "dori-notes-recent:" + (typeof identity === "undefined" ? "" : identity);
   var recents = [];
-  try { recents = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { recents = []; }
+  try { if (identity) recents = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { recents = []; }
 
   function renderPalette() {
     if (!paletteList) return;
@@ -1752,18 +2113,20 @@
     var current = document.documentElement.getAttribute("data-theme") || "auto";
     var next = current === "auto" ? "dark" : current === "dark" ? "light" : "auto";
     document.documentElement.setAttribute("data-theme", next);
-    try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
+    try { if (identity) localStorage.setItem(THEME_KEY, next); } catch (e) {}
   });
 
-  window.addEventListener("beforeunload", function (ev) {
+  function beforeUnload(ev) {
     if (!state.dirty) return;
     save().catch(function (error) { setSave("저장 실패: " + error.message, true); });
     ev.preventDefault();
     ev.returnValue = "";
-  });
+  }
 
   var previewHash;
+  var startupEdited = false;
   function previewPage(data) {
+    if (startupEdited) return;
     previewHash = JSON.stringify(data);
     state.title = data.page.title;
     state.blocks = data.blocks || [];
@@ -1773,7 +2136,26 @@
   // Seed sync takes seconds and rarely changes anything; load the page now and refetch only if sync imported or updated pages.
   var pageUrl = "/page/" + encodeURIComponent(slug);
   var synced = api("/sync", { method: "POST" }).catch(function () { return null; });
-  var serverPage = api(pageUrl);
+  // ?create (editor.html focuses the title first): create the page here; saves wait for it (#30).
+  var params = new URLSearchParams(location.search), fresh = params.has("create");
+  var created = fresh ? api("/pages", { method: "POST", body: JSON.stringify({ title: "제목 없음", slug: slug, parent: params.get("parent") || null }) }).then(function (page) {
+    if (page.slug !== slug) { location.replace("/edit/" + encodeURIComponent(page.slug) + "/?new"); throw Error("moved"); }
+    history.replaceState(history.state, "", location.pathname + "?new");
+    loadTree();
+    return page.page;
+  }) : Promise.resolve();
+  var serverPage = (fresh ? created : api(pageUrl)).then(function (data) {
+    state.baseUpdated = data.page.updated;
+    window.AcardEditor.base = { title: data.page.title, blocks: JSON.parse(JSON.stringify(data.blocks || [])), updated: data.page.updated };
+    return data;
+  });
+  if (fresh) {
+    state.title = els.title.value || "제목 없음";
+    state.blocks = [{ id: "b1", type: "paragraph", text: "", checked: false, indent: 0, meta: null }];
+    render();
+    els.title.focus();
+    if (state.title !== "제목 없음") scheduleSave();
+  }
   loadTree();
   synced.then(function (sync) {
     if (!sync || !(sync.imported || sync.updated)) return;
@@ -1781,17 +2163,19 @@
     // A seed update can rewrite this page; take the new copy only if the owner has not typed yet.
     serverPage.then(function (first) { return api(pageUrl).then(function (next) { if (!state.dirty && JSON.stringify(next) !== JSON.stringify(first)) location.reload(); }); }).catch(function () {});
   });
-  els.title.placeholder = "불러오는 중…";
-  els.title.setAttribute("aria-busy", "true");
   serverPage.catch(function () {});
   new Promise(function (resolve) {
     document.addEventListener("DOMContentLoaded", resolve, { once: true });
   }).then(function () {
+    if (fresh) return serverPage;
     return lazy("recent-cache").then(function (cache) {
       return cache.load(serverPage, previewPage, function (data) { state.pages = data.pages || []; renderTree(); });
     }, function () { return serverPage; });
   })
     .then(function (data) {
+      // Cache preview and network completion may straddle an edit, even its acknowledgement.
+      // A startup snapshot is not newer typing and must never become a rebased draft.
+      if (fresh || startupEdited) { data = Object.assign({}, data, { page: Object.assign({}, data.page, { title: state.title }), blocks: state.blocks }); previewHash = JSON.stringify(data); }
       state.title = data.page.title;
       state.kind = data.page.kind;
       state.dbRow = data.dbRow || null;
@@ -1801,7 +2185,9 @@
       els.title.value = state.title;
       els.title.placeholder = "제목 없음";
       els.title.removeAttribute("aria-busy");
-      if (/[?&]new(&|=|$)/.test(location.search) && state.title === "제목 없음") {
+      els.title.readOnly = false;
+      if (fresh) els.title.value = state.title === "제목 없음" ? "" : state.title;
+      else if (/[?&]new(&|=|$)/.test(location.search) && state.title === "제목 없음") {
         els.title.value = "";
         els.title.focus();
       }
@@ -1809,18 +2195,18 @@
       document.title = state.title + " 고치기 · " + window.DoriSite.name;
       els.meta.textContent = (data.page.source === "markdown" ? "AI가 쓴 페이지" : "직접 고친 페이지") + " · 블록 " + state.blocks.length + "개";
       if (!same) render();
-      if (state.kind === "db" && window.DoriDB) {
+      if (state.kind === "db" && typeof window.DoriDB?.load === "function") {
         els.blocks.hidden = true;
         document.getElementById("add-block").hidden = true;
         var dbRoot = document.createElement("div");
         dbRoot.id = "db-root";
         els.blocks.parentNode.insertBefore(dbRoot, els.blocks);
-        window.DoriDB.load(slug, { mountId: "db-root", titleInput: els.title });
-      } else if (state.dbRow && data.database && window.DoriDB) {
+        window.DoriDB.load(slug, { initial: data.database, mountId: "db-root", titleInput: els.title });
+      } else if (state.dbRow && data.database && typeof window.DoriDB?.loadRow === "function") {
         var rowProps = document.createElement("div");
         rowProps.id = "db-row-props";
         els.blocks.parentNode.insertBefore(rowProps, els.blocks);
-        window.DoriDB.loadRow(data.database.database.slug, state.dbRow, "db-row-props");
+        window.DoriDB.loadRow(data.database.database.slug, state.dbRow, "db-row-props", { initial: data.database });
       }
       pageContext = { api: api, slug: slug, state: state, save: save, setSave: setSave, loadTree: loadTree };
       window.mountEditorPages(pageContext);

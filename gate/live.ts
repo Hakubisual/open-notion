@@ -11,6 +11,8 @@ const TABLE_KIND: Record<string, string> = {
   pages: "tree", blocks: "page", editor_trash: "tree", editor_page_settings: "tree", page_tags: "tags",
   databases: "tree", db_rows: "page", db_properties: "page", db_views: "page", editor_comments: "page",
   journal_sessions: "journal", journal_events: "journal", folder_prefs: "tree", quick_notes: "page",
+  // #61: shared pages are edge-cached per feed number, so share settings and files must move it too.
+  share_rules: "share", share_pages: "share", share_links: "share", media: "media", parts: "page", part_themes: "page",
 };
 const WRITE = /^\s*(?:with\b[\s\S]*?\)\s*)?(insert(?:\s+or\s+\w+)?\s+into|update|delete\s+from|replace\s+into)\s+"?([a-z_]+)"?/i;
 
@@ -77,6 +79,12 @@ export function trackDb<T>(db: T, sink: Sink): T {
     const out = await inner.batch(raw);
     for (const s of raw) note(sink, s.sql, s.params ?? []);
     return out;
+  };
+  const script = (inner as { script?: (list: Stmt[]) => Promise<void> }).script;
+  if (typeof script === "function") (tracked as { script?: unknown }).script = async (list: Stmt[]) => {
+    const raw = list.map((s) => ((s as unknown as { __inner?: Stmt }).__inner ?? s));
+    await script(raw);
+    for (const s of raw) note(sink, s.sql, s.params ?? []);
   };
   return tracked as unknown as T;
 }

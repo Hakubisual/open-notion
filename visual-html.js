@@ -362,7 +362,7 @@ function mindmapSvg(lines, title) {
   return svgOpen(width, height, title || root.text, "acv-mind") + edges + nodes + "</svg>";
 }
 
-export const VISUAL_CSS = ".acv-fig{container-type:inline-size}.acv-narrow{display:none}@container (max-width:560px){.acv-wide:has(+.acv-narrow){display:none}.acv-narrow{display:block}}@media (prefers-reduced-motion:no-preference){.acv .acv-node,.acv .acv-bar,.acv .acv-edge{animation:acv-in .5s ease-out both;animation-delay:calc(var(--i,0)*60ms)}.acv .acv-bar{transform-box:fill-box;transform-origin:50% 100%;animation-name:acv-grow}.acv-gantt .acv-bar{transform-origin:0 50%;animation-name:acv-grow-x}.acv .acv-line{stroke-dasharray:var(--len);animation:acv-draw 1s ease-out both}}@keyframes acv-in{from{opacity:0}}@keyframes acv-grow{from{transform:scaleY(0)}}@keyframes acv-grow-x{from{transform:scaleX(0)}}@keyframes acv-draw{from{stroke-dashoffset:var(--len)}}";
+export const VISUAL_CSS = ".acv-fig{container-type:inline-size}.acv-chart>svg.acv-chart{width:100%;max-height:520px}.acv-narrow{display:none}@container (max-width:560px){.acv-wide:has(+.acv-narrow){display:none}.acv-narrow{display:block}}@media (prefers-reduced-motion:no-preference){.acv .acv-node,.acv .acv-bar,.acv .acv-edge{animation:acv-in .5s ease-out both;animation-delay:calc(var(--i,0)*60ms)}.acv .acv-bar{transform-box:fill-box;transform-origin:50% 100%;animation-name:acv-grow}.acv-gantt .acv-bar{transform-origin:0 50%;animation-name:acv-grow-x}.acv .acv-line{stroke-dasharray:var(--len);animation:acv-draw 1s ease-out both}}@keyframes acv-in{from{opacity:0}}@keyframes acv-grow{from{transform:scaleY(0)}}@keyframes acv-grow-x{from{transform:scaleX(0)}}@keyframes acv-draw{from{stroke-dashoffset:var(--len)}}";
 const MOTION = "<style>" + VISUAL_CSS + "</style>";
 
 export function diagramSvg(source, title, uid) {
@@ -459,9 +459,43 @@ export function chartSvg(spec, title) {
 }
 
 export const VISUAL_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:";
+// #43: the frame follows the page theme. A sandboxed frame's prefers-color-scheme is the used color-scheme of its
+// <iframe> element, which inherits the page's (tokens.css sets it per data-theme), so it switches live with no page
+// script, also on shared pages. The frame gets the Acard color variables for both modes, mirrors the mode into
+// html[data-theme], and a default look for un-styled agent HTML (tables, cards, pills, headings) in :where() so any
+// CSS the agent wrote still wins. HTML written only for a light page (dark text or large white boxes, no theme hooks)
+// is inverted in dark mode instead of showing a white box. The frame reports its full height (no 1200 px cap).
+const VISUAL_VARS_LIGHT = "--bg:#fff;--bg-soft:#f6f6f8;--surface:#fff;--raised:#fff;--fg:#26252c;--fg-dim:#5f5d69;--line:#ececf0;--accent:#6450dc;--accent-strong:#5b47d6;--accent-soft:#efecfd;--on-accent:#fff;--code-bg:#f5f5f7;--bar-track:#ececf2;--tag-green-bg:#e3f5ec;--tag-green-fg:#1d7550;--tag-blue-bg:#e5f0fd;--tag-blue-fg:#2563b8;--tag-purple-bg:#efe9fd;--tag-purple-fg:#7048d6;--tag-red-bg:#fdeaec;--tag-red-fg:#b13443;--tag-yellow-bg:#fdf3d8;--tag-yellow-fg:#7f590b;--tag-orange-bg:#fdeedd;--tag-orange-fg:#9a5112;--tag-pink-bg:#fce9f3;--tag-pink-fg:#b13f7c;--tag-gray-bg:#efeff2;--tag-gray-fg:#5d5b66";
+const VISUAL_VARS_DARK = "--bg:#1b1b20;--bg-soft:#26262d;--surface:#1b1b20;--raised:#26262d;--fg:#ecebf2;--fg-dim:#a3a1ad;--line:#31313a;--accent:#a597ff;--accent-strong:#b6abff;--accent-soft:#312c4f;--on-accent:#16131f;--code-bg:#26262d;--bar-track:#33333c;--tag-green-bg:#1f3a2e;--tag-green-fg:#8ee0b5;--tag-blue-bg:#1e3149;--tag-blue-fg:#9cc6fb;--tag-purple-bg:#322a52;--tag-purple-fg:#c7b6ff;--tag-red-bg:#45252b;--tag-red-fg:#ffadb6;--tag-yellow-bg:#3f3520;--tag-yellow-fg:#f2d38a;--tag-orange-bg:#432f1e;--tag-orange-fg:#f8c08c;--tag-pink-bg:#43263a;--tag-pink-fg:#f6b2d6;--tag-gray-bg:#2e2e36;--tag-gray-fg:#c4c2cc";
+export const VISUAL_FRAME_CSS = '@font-face{font-family:"Acard Frame";src:local("Pretendard Variable"),local("Pretendard"),local("Malgun Gothic"),local("Apple SD Gothic Neo"),local("Noto Sans KR");size-adjust:94.2%}'
+  + ":root{color-scheme:light;" + VISUAL_VARS_LIGHT + ';--font-body:"Acard Frame",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;--font-mono:"JetBrains Mono",ui-monospace,Consolas,monospace;--fs-12:12px;--fs-13:13px;--fs-14:14px;--fs-15:15px;--fs-17:17px;--fs-19:19px;--fs-21:21px;--radius-sm:10px;--radius-md:14px}'
+  + "@media (prefers-color-scheme:dark){:root{color-scheme:dark;" + VISUAL_VARS_DARK + "}}"
+  + ":where(html){background:transparent;color:var(--fg);font:var(--fs-15)/1.65 var(--font-body);overflow-x:auto;overflow-y:hidden;-webkit-text-size-adjust:100%;word-break:keep-all;overflow-wrap:break-word}"
+  + "html,body{margin:0}body{display:flow-root}:where(html.acv-inv){filter:invert(.9) hue-rotate(180deg)}:where(html.acv-inv) :is(img,video,canvas,picture,[style*=url]){filter:invert(1) hue-rotate(180deg)}"
+  + ":where(h1,h2,h3,h4){margin:1em 0 .45em;line-height:1.35;font-weight:700;letter-spacing:-.01em}:where(h1){font-size:var(--fs-21)}:where(h2){font-size:var(--fs-19)}:where(h3){font-size:var(--fs-17)}:where(h4){font-size:var(--fs-15)}:where(body>:first-child){margin-top:0}:where(body>:last-child){margin-bottom:0}"
+  + ":where(p,ul,ol){margin:.5em 0}:where(a){color:var(--accent)}:where(hr){border:0;border-top:1px solid var(--line)}:where(small){color:var(--fg-dim)}"
+  + ":where(table){width:100%;border-collapse:collapse;font-size:var(--fs-14);line-height:1.5}:where(th,td){padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}:where(th){color:var(--fg-dim);font-weight:500;font-size:var(--fs-13)}:where(thead th){background:var(--bg-soft)}"
+  + ":where(code,kbd,pre){font-family:var(--font-mono);font-size:.9em}:where(code,kbd){padding:1px 6px;border-radius:6px;background:var(--code-bg)}:where(pre){padding:12px;border-radius:var(--radius-sm);background:var(--code-bg);overflow:auto}"
+  + ":where(.card,.box){border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px;margin:0 0 10px;background:var(--surface)}:where(.tag,.pill,.badge,.chip){display:inline-block;padding:2px 9px;border-radius:999px;background:var(--tag-gray-bg);color:var(--tag-gray-fg);font-size:var(--fs-12);line-height:1.6}"
+  + ":where(.muted,.dim,.note){color:var(--fg-dim)}:where(button,input,select,textarea){font:inherit;color:inherit}";
+// Runs in the frame: theme mirror, light-only HTML inversion and the height report. It sits in <head> and runs before the
+// block's HTML (#63): a block script that rewrites text nodes as they are added (a MutationObserver on body) mangled the
+// bootstrap when it came after the block, so it threw and the frame stayed at its 320 px placeholder.
+const VISUAL_FRAME_JS = '(function(){var R=document.documentElement,M=matchMedia("(prefers-color-scheme: dark)"),hooks=' + "%HOOKS%" + ';'
+  + 'function lum(c){var m=/rgba?\\(([\\d.]+)[, ]+([\\d.]+)[, ]+([\\d.]+)(?:[, /]+([\\d.]+))?/.exec(c);if(!m||(m[4]!=null&&+m[4]<.5))return -1;return (.2126*m[1]+.7152*m[2]+.0722*m[3])/255}'
+  + 'function lightOnly(){var all=document.body.getElementsByTagName("*"),area=0,big=Math.max(1,R.scrollWidth*R.scrollHeight),dark=0,text=0;for(var i=0;i<all.length&&i<800;i++){var e=all[i],s=getComputedStyle(e),b=lum(s.backgroundColor);if(b>.8){var r=e.getBoundingClientRect();area+=r.width*r.height}'
+  + 'for(var n=e.firstChild;n;n=n.nextSibling)if(n.nodeType===3&&n.nodeValue.trim()){text++;var c=lum(s.color);if(c>=0&&c<.4)dark++;break}}return area/big>.25||(text>0&&dark/text>.5)}'
+  + 'function theme(){var d=M.matches;R.setAttribute("data-theme",d?"dark":"light");R.classList.remove("acv-inv");if(d&&!hooks&&document.body&&lightOnly())R.classList.add("acv-inv")}'
+  + 'function h(){var v=Math.ceil(R.getBoundingClientRect().height+(innerHeight-R.clientHeight));if(v>0)parent.postMessage({acvH:v},"*")}'
+  + 'theme();h();if(M.addEventListener)M.addEventListener("change",function(){theme();h()});addEventListener("DOMContentLoaded",function(){theme();h();new ResizeObserver(h).observe(document.body)});addEventListener("load",function(){theme();h()});addEventListener("resize",h);new ResizeObserver(h).observe(R);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(h)})()';
+// Source that already handles the theme itself is never inverted.
+const THEME_HOOKS = /var\(--|prefers-color-scheme|data-theme/;
 export function visualSrcdoc(source) {
-  return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + VISUAL_CSP + '"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;font-family:system-ui,sans-serif}body{display:flow-root}</style></head><body>' + String(source) + '<script>(function(){function h(){parent.postMessage({acvH:Math.ceil(document.body.getBoundingClientRect().height)},"*")}addEventListener("load",h);new ResizeObserver(h).observe(document.body)})()</scr' + 'ipt></body></html>';
+  const text = String(source);
+  return '<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + VISUAL_CSP + '"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><style>' + VISUAL_FRAME_CSS + '</style><script>' + VISUAL_FRAME_JS.replace("%HOOKS%", THEME_HOOKS.test(text) ? "1" : "0") + '</scr' + 'ipt></head><body>' + text + '</body></html>';
 }
+// Page side: size a frame to the height it reported. Shared by the reader, the editor preview and shared pages.
+export const VISUAL_MAX_HEIGHT = 20000;
 
 function figure(type, inner, meta, fallback) {
   const caption = meta && meta.caption ? String(meta.caption) : "";
@@ -490,8 +524,8 @@ export function visualBlockHtml(block, uid) {
     if (new TextEncoder().encode(source).length > VISUAL_MAX_BYTES) return figure(block.type, failed(source.slice(0, 400), "64KB 를 넘어서 보여 주지 않아요."), meta, true);
     const height = Number.isFinite(meta.height) ? Math.max(120, Math.min(1200, Math.trunc(meta.height))) : 320;
     const fid = "acv-f" + String(uid).replace(/[^\w-]/g, "");
-    const resize = '<script>addEventListener("message",function(e){var f=document.getElementById("' + fid + '"),h=e.data&&+e.data.acvH;if(f&&e.source===f.contentWindow&&h)f.style.height=Math.min(1200,Math.max(120,h))+"px"})</scr' + 'ipt>';
-    return figure(block.type, resize + '<iframe id="' + fid + '" class="acv-frame" sandbox="allow-scripts" referrerpolicy="no-referrer" loading="lazy" title="' + esc(name || (block.type === "html" ? "HTML 블록" : "시각 자료")) + '" style="width:100%;height:' + height + 'px;border:0;border-radius:8px;background:#fff" srcdoc="' + esc(visualSrcdoc(source)) + '"></iframe>', meta);
+    const resize = '<script>addEventListener("message",function(e){var f=document.getElementById("' + fid + '"),h=e.data&&+e.data.acvH;if(f&&e.source===f.contentWindow&&h>0)f.style.height=Math.min(' + VISUAL_MAX_HEIGHT + ',h)+"px"})</scr' + 'ipt>';
+    return figure(block.type, resize + '<iframe id="' + fid + '" class="acv-frame" sandbox="allow-scripts" referrerpolicy="no-referrer" title="' + esc(name || (block.type === "html" ? "HTML 블록" : "시각 자료")) + '" style="display:block;width:100%;height:' + height + 'px;border:0;background:transparent" srcdoc="' + esc(visualSrcdoc(source)) + '"></iframe>', meta);
   }
   return "";
 }

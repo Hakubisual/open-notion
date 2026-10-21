@@ -1,6 +1,9 @@
 (function (root) {
   "use strict";
   var NAME = "acard-recent-cache", KEY = "/__recent-cache", EPOCH = "acard-cache-epoch";
+  var id = root.document?.querySelector('meta[name="acard-id"]')?.content;
+  var member = typeof id === "string" && /^[0-9a-f]{16}$/.test(id);
+  NAME += "-" + id;
   var sb = root.document && (root.AcardLazy || {}).scrollbars;
   if (sb) root.document.head.appendChild(Object.assign(root.document.createElement("script"), { src: "/lazy/scrollbars.js?v=" + sb.js }));
   function touch(entries, key, value) {
@@ -27,16 +30,19 @@
   var editor = root.AcardEditor;
   if (!editor) return;
   var epoch = localStorage.getItem(EPOCH), stopped = false;
+  // Another tab holding the lock or a stuck CacheStorage must not keep the editor locked: give up after 2 s.
   function access(change) {
-    if (!root.caches || !navigator.locks) return Promise.resolve(null);
-    return navigator.locks.request(NAME, async function () {
-      if (stopped || localStorage.getItem(EPOCH) !== epoch) return null;
+    if (!member || !root.caches || !navigator.locks) return Promise.resolve(null);
+    return Promise.race([new Promise(function (resolve) { setTimeout(resolve, 2000, null); }), navigator.locks.request(NAME, async function () {
+      if (stopped || localStorage.getItem(EPOCH) !== epoch || document.querySelector('meta[name="acard-id"]')?.content !== id) return null;
+      for (var name of await caches.keys()) if (name.startsWith("acard-recent-cache") && name !== NAME) await caches.delete(name);
       var cache = await caches.open(NAME), response = await cache.match(KEY);
       var entries = response ? await response.json() : [];
+      if (stopped || localStorage.getItem(EPOCH) !== epoch) return null;
       var result = change(entries);
       if (result.entries) await cache.put(KEY, new Response(JSON.stringify(result.entries)));
       return result.value;
-    }).catch(function () { return null; });
+    }).catch(function () { return null; })]);
   }
   function read(key) {
     return access(function (entries) {

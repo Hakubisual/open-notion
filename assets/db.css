@@ -149,3 +149,32 @@
   .reader .dbbrowser input.table-check { width: 44px; height: 44px; margin: 0; background-clip: content-box; padding: 14px; box-sizing: border-box; }
   .reader .table-tab { min-height: 44px; }
 }
+
+/* Formula style() results (db-formula.js fStyle, db-model.js richValue) use the tag color tokens; brown has none in tokens.css. */
+.fx-brown { color: #7a5230; } .fx-brown_background { background: #f3ece5; }
+html[data-theme="dark"] .fx-brown { color: #e3bf98; } html[data-theme="dark"] .fx-brown_background { background: #3a2e24; }
+@media (prefers-color-scheme: dark) { html:not([data-theme="light"]) .fx-brown { color: #e3bf98; } html:not([data-theme="light"]) .fx-brown_background { background: #3a2e24; } }
+.fx-gray { color: var(--tag-gray-fg); } .fx-gray_background { background: var(--tag-gray-bg); } .fx-orange { color: var(--tag-orange-fg); } .fx-orange_background { background: var(--tag-orange-bg); } .fx-yellow { color: var(--tag-yellow-fg); } .fx-yellow_background { background: var(--tag-yellow-bg); } .fx-green { color: var(--tag-green-fg); } .fx-green_background { background: var(--tag-green-bg); } .fx-blue { color: var(--tag-blue-fg); } .fx-blue_background { background: var(--tag-blue-bg); } .fx-purple { color: var(--tag-purple-fg); } .fx-purple_background { background: var(--tag-purple-bg); } .fx-pink { color: var(--tag-pink-fg); } .fx-pink_background { background: var(--tag-pink-bg); } .fx-red { color: var(--tag-red-fg); } .fx-red_background { background: var(--tag-red-bg); }
+[class*="_background"][class*="fx-"] { border-radius: 4px; padding: 0 4px; }
+.fx-b { font-weight: 700; } .fx-i { font-style: italic; } .fx-u { text-decoration: underline; } .fx-s { text-decoration: line-through; } .fx-u.fx-s { text-decoration: underline line-through; }
+.fxerror { color: var(--fg-dim); font-size: var(--fs-12); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-c { font-family: var(--font-mono); font-size: .92em; background: var(--code-bg); border-radius: 4px; padding: 0 4px; }
+.dbformulaexamples code { display: block; font-family: var(--font-mono); overflow-wrap: anywhere; }
+/* 하위 항목(C12): 표 뷰 중첩 행 */
+.dbtable tr.dbsub .c-title { display: flex; align-items: center; gap: 2px; }
+.dbtable tr.dbsub.d1 .c-title { padding-left: 22px; } .dbtable tr.dbsub.d2 .c-title { padding-left: 44px; } .dbtable tr.dbsub.d3 .c-title { padding-left: 66px; }
+.dbtable tr.dbsub.dim td { opacity: .5; }
+.dbsubtoggle { flex: none; width: 22px; height: 22px; border: 0; padding: 0; background: none; color: var(--fg-dim); cursor: pointer; font-size: var(--fs-12); transition: transform .12s ease; }
+.dbsubtoggle.open { transform: rotate(90deg); } .dbsubtoggle.none { cursor: default; }
+@media (max-width: 640px) { .dbtable tr.dbsub.d1 .c-title { padding-left: 14px; } .dbtable tr.dbsub.d2 .c-title { padding-left: 28px; } .dbtable tr.dbsub.d3 .c-title { padding-left: 42px; } }
+/* 사람 속성(C10) */
+.dbperson { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; padding: 2px 8px 2px 2px; border-radius: 999px; background: var(--surface-2, color-mix(in srgb, var(--fg) 6%, transparent)); font-size: var(--fs-13); line-height: 1.4; }
+.dbavatar { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent, #3aa9c4); color: #fff; font-size: var(--fs-11); font-weight: 600; }
+.dbpersonname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dbpeople { flex-wrap: wrap; gap: 4px; }
+.dbpersonopt { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dbbtn { appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 8px; padding: 3px 10px; font: inherit; font-size: var(--fs-13); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.dbbtn:hover { background: var(--bg-soft); }
+.dbbtn:disabled { opacity: .5; cursor: not-allowed; }
+.dbbtn[aria-busy="true"] { opacity: .7; cursor: progress; }
+.dbbtn.btn-failed { border-color: var(--tag-red-fg); }

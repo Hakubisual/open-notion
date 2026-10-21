@@ -80,6 +80,36 @@ describe("chart SVG", () => {
   });
 });
 
+describe("horizontal bar and number charts", () => {
+  test("hbar bars start at the same x and their widths follow the values", () => {
+    const svg = chart.svg(model({ kind: "hbar", aggregation: "sum" }, rows.slice(0, 3)));
+    const bars = [...svg.matchAll(/<rect class="ac-chart-bar" x="([\d.]+)"[^>]*width="([\d.]+)"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    expect(bars).toHaveLength(2);
+    expect(bars[0][0]).toBe(bars[1][0]);
+    expect(bars[0][1]).toBeGreaterThan(0);
+    expect(bars[1][1]).toBe(0);
+    const counts = [...chart.svg(model({ kind: "hbar" })).matchAll(/<rect class="ac-chart-bar" x="([\d.]+)"[^>]*width="([\d.]+)"/g)].map((m) => Number(m[2]));
+    expect(counts[0] / counts[1]).toBeCloseTo(2 / 3);
+    expect(svg).toContain("<title>Alpha: 12</title>");
+  });
+  test("number is one aggregate over every row: count, sum and the mean of all rows", () => {
+    expect(chart.model(properties, rows, { kind: "number" }).points.map((p: any) => p.value)).toEqual([5]);
+    expect(chart.model(properties, rows, { kind: "number", aggregation: "sum", value: "number" }).points.map((p: any) => p.value)).toEqual([10]);
+    expect(chart.model(properties, rows, { kind: "number", aggregation: "avg", value: "number" }).points.map((p: any) => p.value)).toEqual([2.5]);
+    const html = chart.svg(chart.model(properties, rows, { kind: "number", aggregation: "sum", value: "number" }));
+    expect(html).toContain("<strong>10</strong>");
+    expect(html).toContain("값 합계");
+  });
+  test("number with sum and no number property says there is nothing to show", () => {
+    const html = chart.svg(chart.model([properties[0]], rows, { kind: "number", aggregation: "sum" }));
+    expect(html).toContain("표시할 숫자 데이터가 없어요.");
+    expect(html).not.toContain("<strong>");
+  });
+  test("normaliseView keeps hbar and number", () => {
+    for (const kind of ["hbar", "number"]) expect(normaliseView({ type: "chart", config: { chart: { kind } } }, 0).config.chart?.kind).toBe(kind);
+  });
+});
+
 test("chart configuration survives the same normalizer used by API writes and reads", () => {
   const config = { chart: { kind: "donut", category: "category", aggregation: "avg", value: "number", bucket: "month" } };
   const view = normaliseView({ type: "chart", config }, 0);

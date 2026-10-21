@@ -83,9 +83,9 @@ test("creates one inbox, appends timestamped paragraphs, and indexes through sav
 });
 
 test("adopts an existing inbox without replacing its blocks, metadata, or links", async () => {
-  await call("/api/pages", "POST", { slug: "existing-inbox", title: "빠른 메모" });
+  const created = await (await call("/api/pages", "POST", { slug: "existing-inbox", title: "빠른 메모" })).json();
   const original = { id: "original", type: "paragraph", text: "[[linked]] original", checked: true, indent: 2, meta: { color: "blue", custom: { keep: true } } };
-  await call("/api/page/existing-inbox", "PUT", { blocks: [original] });
+  await call("/api/page/existing-inbox", "PUT", { blocks: [original], base_updated: created.updated });
   const result = await capture("append", "[[another]] capture");
   expect(result.status).toBe(200);
   expect(result.data.slug).toBe("existing-inbox");
@@ -104,7 +104,8 @@ test("durable clientId retries return the original receipt across workers", asyn
   expect((await capture("retry", "different")).status).toBe(409);
   expect(sqlite.query("SELECT id FROM blocks").all()).toHaveLength(1);
   // Removing a captured block intentionally must not make a retry resurrect it.
-  await call("/api/page/" + first.data.slug, "PUT", { blocks: [] });
+  const page = await (await call("/api/page/" + first.data.slug)).json();
+  await call("/api/page/" + first.data.slug, "PUT", { blocks: [], base_updated: page.page.updated });
   expect(await capture("retry", "stable")).toEqual(first);
   expect(sqlite.query("SELECT id FROM blocks").all()).toHaveLength(0);
 });
@@ -182,7 +183,8 @@ test("an editor write and another capture before commit cannot be overwritten by
   const pending = capture("paused", "last");
   await entered.promise;
   try {
-    expect((await call("/api/page/" + initial.data.slug, "PUT", { blocks: [{ id: "edited", type: "paragraph", text: "editor changes" }] })).status).toBe(200);
+    const page = await (await call("/api/page/" + initial.data.slug)).json();
+    expect((await call("/api/page/" + initial.data.slug, "PUT", { blocks: [{ id: "edited", type: "paragraph", text: "editor changes" }], base_updated: page.page.updated })).status).toBe(200);
     expect((await capture("interleaved", "middle", other)).status).toBe(200);
   } finally { release.resolve(); }
   expect((await pending).status).toBe(200);

@@ -91,6 +91,15 @@ $("home-save").addEventListener("click", async () => {
   finally { btn.disabled = false; }
 });
 
+fetch("/api/media-usage").then((r) => (r.ok ? r.json() : null)).then((d) => {
+  if (!d || typeof d.used !== "number") return;
+  const mb = (n) => (n / 1e6 < 10 ? (n / 1e6).toFixed(1) : Math.round(n / 1e6).toLocaleString("ko-KR")) + "MB";
+  $("media-usage-used").textContent = d.quota ? mb(d.used) + " / " + mb(d.quota) + " 사용 중" : mb(d.used) + " 사용 중";
+  $("media-usage-bar").style.width = d.quota ? Math.min(100, (d.used / d.quota) * 100).toFixed(1) + "%" : "0%";
+  $("media-usage-rule").textContent = "아이콘·표지 이미지는 png, jpg, webp, gif, avif 로 한 장에 " + mb(d.fileLimit) + " 까지 올릴 수 있어요.";
+  $("media-usage").hidden = false;
+}).catch(() => {});
+
 fetch("/api/me/ai-usage").then((r) => (r.ok ? r.json() : null)).then((d) => {
   if (!d || !d.usage) return;
   const cap = (v) => (v === null || v === undefined ? "제한 없음" : Number(v).toLocaleString("ko-KR") + "회");

@@ -149,8 +149,8 @@ export async function runHook(client, input) {
     if (!/^mcp__/.test(String(input.tool_name || "")) || !/acard/i.test(String(input.tool_name)) || !cfg.token) return "ignored";
     let mod;
     try { mod = await import(new URL("./local-images.mjs", import.meta.url)); } catch { mod = await import(new URL("./local-images.js", import.meta.url)); }
-    const local = await mod.rewriteLocalImages(cfg, tool, input.tool_input, input.cwd || process.cwd());
-    if (!local.uploaded) return "ignored";
+    const local = await mod.rewriteLocalImages(cfg, tool, input.tool_input, input.cwd || process.cwd(), String(input.transcript_path || ""));
+    if (local.args === input.tool_input) return "ignored";
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: local.args } }) + "\n");
     return "images";
   }

@@ -6,6 +6,11 @@ const action = form.dataset.action;
 
 const show = (kind, text) => { msg.className = `msg ${kind}`; msg.textContent = text; };
 
+// #45: the sidebar keeps its last tree in localStorage under this epoch; whoever signs in next starts without it.
+try { localStorage.setItem("acard-cache-epoch", String(Date.now())); } catch {}
+navigator.serviceWorker?.controller?.postMessage({ type: "acard-id", id: null });
+const cleared = window.caches ? caches.keys().then(names => Promise.all(names.map(name => caches.delete(name)))).catch(() => {}) : Promise.resolve();
+
 const params = new URLSearchParams(location.search);
 if (params.get("e") === "link") show("err", T("js.auth.link"));
 if (params.get("e") === "oauth") show("err", T("js.auth.oauth"));
@@ -28,6 +33,7 @@ form.addEventListener("submit", async (event) => {
   const data = Object.fromEntries(new FormData(form));
   button.disabled = true;
   try {
+    await Promise.race([cleared, new Promise(resolve => setTimeout(resolve, 2000))]);
     const res = await fetch(`/api/auth/${action}`, {
       method: "POST",
       headers: { "content-type": "application/json" },

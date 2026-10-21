@@ -10,11 +10,15 @@
   const LIMITS = { name: 60, summary: 2000, markdown: 60000, docs: 80, tasks: 100, files: 200, text: 300, answer: 500 };
   const fail = (message, status = 400) => Object.assign(new Error(message), { status });
   const clip = (s, n) => { const t = String(s == null ? "" : s).trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
-  const ready = new WeakSet();
+  // A member workspace gets a new D1-shaped adapter on every request, so the schema is remembered by its store key
+  // (as gate/_worker.js ensureSchema does); otherwise every request re-ran the CREATE ... IF NOT EXISTS list as
+  // round trips to the workspace Durable Object before its first read (#17).
+  const ready = new WeakSet(), readyKeys = new Set();
   async function schema(db) {
-    if (ready.has(db)) return;
+    if (ready.has(db) || (db.acardKey && readyKeys.has(db.acardKey))) return;
     for (const sql of SCHEMA) await db.prepare(sql).run();
     ready.add(db);
+    if (db.acardKey) readyKeys.add(db.acardKey);
   }
   async function load(db) {
     await schema(db);
@@ -91,13 +95,11 @@
     const tag = "프로젝트:" + clip(name, 30);
     const at = new Date().toISOString().slice(0, 10);
 
-    const top = await createPage(db, helpers, name, null, [
-      summary || name + " 프로젝트를 에이전트가 정리한 공간이에요.",
-      "",
-      "> [!info] " + principal.name + " 이(가) 사용자 동의를 받고 " + at + "에 만들었어요. 사용자 답: \"" + answer.replace(/"/g, "'") + "\"",
-    ].join("\n"), [tag]);
+    const top = await createPage(db, helpers, name, null, "", [tag]);
+    await markFolder(db, top.slug, clip(summary || name + " 프로젝트를 에이전트가 정리한 공간이에요.", 200), "agent");
+    const consentNote = "> [!info] " + principal.name + " 이(가) 사용자 동의를 받고 " + at + "에 만들었어요. 사용자 답: \"" + answer.replace(/"/g, "'") + "\"";
     const pages = [];
-    pages.push({ ...(await createPage(db, helpers, "프로젝트 개요", top.slug, overview || summary || "개요", [tag])), kind: "overview" });
+    pages.push({ ...(await createPage(db, helpers, "프로젝트 개요", top.slug, (overview || summary || "개요") + "\n\n" + consentNote, [tag])), kind: "overview" });
     const docsMd = docs.length
       ? docs.map((d) => "- **" + line(d && d.title || d && d.path || "문서") + "**" + (d && d.path ? " `" + line(d.path) + "`" : "") + (d && d.summary ? " - " + line(d.summary) : "")).join("\n")
       : "아직 찾은 문서가 없어요.";

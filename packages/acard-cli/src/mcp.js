@@ -33,7 +33,7 @@ export async function runMcpProxy(cfg, version) {
   server.setRequestHandler(ListToolsRequestSchema, (req) => client.listTools(req.params));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const local = await rewriteLocalImages(cfg, req.params.name, req.params.arguments);
-    if (local.uploaded) log(`로컬 이미지 ${local.uploaded}개를 올리고 주소를 바꿨어요`);
+    if (local.uploaded) log(`로컬 이미지·영상 ${local.uploaded}개를 올리고 주소를 바꿨어요`);
     const out = await client.callTool({ ...req.params, arguments: local.args });
     if (local.errors.length) out.content = [...(out.content || []), { type: "text", text: "로컬 이미지를 올리지 못했어요: " + local.errors.join("; ") }];
     return out;

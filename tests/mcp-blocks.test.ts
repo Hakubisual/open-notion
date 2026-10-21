@@ -71,6 +71,22 @@ test("MCP update preserves every other block and records history and attribution
   expect(JSON.parse(history[0].snapshot).blocks.map((b: any) => b.text)).toEqual(["first", "second", "third"]);
 });
 
+test("patch_block changes only the found text of one block; a missing or repeated find is refused and nothing changes (#38)", async () => {
+  await worker.acardHost.run(env, writer, "createPage", { slug: "kit", title: "Kit", markdown: "```html-embed\n<style>.n{color:red}</style><b class=n>$31.02</b><i>$1</i><i>$1</i>\n```\n\nafter" });
+  const read = await mcp("read_blocks", { page: "kit" });
+  const html = read.blocks[0];
+  const done = await mcp("patch_block", { page: "kit", block_id: html.id, edits: [{ find: "$31.02", replace: "$31.50" }, { find: "color:red", replace: "color:blue" }], expected_version: read.version });
+  expect(done.block_ids).toEqual([html.id]);
+  const after = await mcp("read_blocks", { page: "kit" });
+  expect(after.blocks[0]).toMatchObject({ id: html.id, type: "html", text: "<style>.n{color:blue}</style><b class=n>$31.50</b><i>$1</i><i>$1</i>" });
+  expect(after.blocks[1].text).toBe("after");
+  for (const edits of [[{ find: "$1<", replace: "$2<" }], [{ find: "nope", replace: "x" }]]) {
+    const failed = await client.callTool({ name: "patch_block", arguments: { page: "kit", block_id: html.id, edits, expected_version: after.version } });
+    expect(failed.isError).toBe(true);
+  }
+  expect((await mcp("read_blocks", { page: "kit" })).blocks[0].text).toBe(after.blocks[0].text);
+});
+
 test("stale writes return HTTP and MCP 409 without history or content changes", async () => {
   const before = await mcp("read_blocks", { page: "blocks" });
   const input = { page: "blocks", block_id: before.blocks[0].id, markdown: "new", expected_version: before.version };
@@ -81,6 +97,25 @@ test("stale writes return HTTP and MCP 409 without history or content changes", 
   expect(failed.structuredContent).toMatchObject({ status: 409 });
   expect(sqlite.query("SELECT COUNT(*) AS n FROM editor_history").get()).toEqual({ n: 1 });
   expect((await mcp("read_blocks", { page: "blocks" })).blocks[0].text).toBe("new");
+});
+
+test("MCP update_page keeps a person's later edit to block 3: 409 without or with a stale expectedUpdated, 200 with the fresh one (#25)", async () => {
+  const read = await mcp("read_page", { slug: "blocks" });
+  // The person edits block 3 in the editor after the agent's read: blocks change and the page stamp moves past the agent's write.
+  const personAt = read.updated + 60000;
+  sqlite.query("UPDATE blocks SET text = '사람이 고친 문장' WHERE page = 'blocks' AND ord = 2").run();
+  sqlite.query("UPDATE pages SET updated = ? WHERE slug = 'blocks'").run(personAt);
+  const texts = () => (sqlite.query("SELECT text FROM blocks WHERE page = 'blocks' ORDER BY ord").all() as any[]).map((row) => row.text);
+  for (const args of [{ slug: "blocks", markdown: "agent only" }, { slug: "blocks", markdown: "agent only", expectedUpdated: read.updated }]) {
+    const refused = await client.callTool({ name: "update_page", arguments: args });
+    expect(refused.isError).toBe(true);
+    expect(refused.structuredContent).toMatchObject({ status: 409 });
+  }
+  expect(texts()).toEqual(["first", "second", "사람이 고친 문장"]);
+  const fresh = await mcp("read_page", { slug: "blocks" });
+  expect(fresh.updated).toBe(personAt);
+  await mcp("update_page", { slug: "blocks", markdown: "first\n\nsecond (agent)\n\n사람이 고친 문장", expectedUpdated: fresh.updated });
+  expect(texts()).toEqual(["first", "second (agent)", "사람이 고친 문장"]);
 });
 
 test("read token cannot update, insert or delete through REST or the shared runner", async () => {
@@ -149,4 +184,30 @@ test("skills discovery creates one editable page, preserves owner changes and re
   sqlite.exec("DELETE FROM pages WHERE slug = 'agent-skills'");
   expect((await rest("/agent-skills")).status).toBe(404);
   expect(sqlite.query("SELECT slug FROM pages WHERE slug = 'agent-skills'").all()).toHaveLength(0);
+});
+
+// #39: agents pass the page as the address the person sees; every form reaches the same page for every write tool.
+test("agent writes accept the page address, encoded slug or NFD Hangul, and name a page outside the workspace", async () => {
+  await worker.acardHost.run(env, writer, "createPage", { slug: "샘플프로젝트-구성도", title: "샘플프로젝트 구성도", markdown: "첫 문단" });
+  const slug = "샘플프로젝트-구성도", enc = encodeURIComponent(slug);
+  const forms = ["https://notes.example.com/" + enc + "/", "https://notes.example.com/edit/" + enc + "/?new", "/" + slug + "/", enc, slug.normalize("NFD")];
+  for (const form of forms) expect((await mcp("read_page", { slug: form })).slug).toBe(slug);
+  await mcp("append_to_page", { slug: forms[0], markdown: "덧붙임" });
+  const read = await mcp("read_page", { slug: forms[1] });
+  await mcp("update_page", { slug: forms[2], markdown: "새 본문", expectedUpdated: read.updated });
+  let blocks = await mcp("read_blocks", { page: forms[3] });
+  await mcp("update_block", { page: forms[4], block_id: blocks.blocks[0].id, markdown: "블록 교체", expected_version: blocks.version });
+  blocks = await mcp("read_blocks", { page: forms[0] });
+  await mcp("insert_blocks", { page: forms[1], after_block_id: blocks.blocks[0].id, markdown: "끼운 문단", expected_version: blocks.version });
+  blocks = await mcp("read_blocks", { page: forms[2] });
+  await mcp("set_part_data", { page: forms[3], part: "badge", data: { items: [{ value: "1", label: "a", badge: "ok" }] }, expected_version: blocks.version });
+  expect(sqlite.query("SELECT text FROM blocks WHERE page = ? ORDER BY ord").all(slug).map((row: any) => row.text).slice(0, 2)).toEqual(["블록 교체", "끼운 문단"]);
+  expect(sqlite.query("SELECT slug FROM pages WHERE slug LIKE '%샘플프로젝트%'").all()).toHaveLength(1);
+  expect((await rest("/pages/" + encodeURIComponent("https://notes.example.com/" + enc + "/"))).status).toBe(200);
+
+  const missing = await client.callTool({ name: "read_page", arguments: { slug: "샘플프로젝트-작업-기록" } });
+  expect(missing.isError).toBe(true);
+  const text = (missing.content as any)[0].text;
+  expect(text).toContain("워크스페이스");
+  expect(text).toContain(slug);
 });

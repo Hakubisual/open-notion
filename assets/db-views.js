@@ -18,6 +18,8 @@
     '.dbv-move{margin-top:6px;font-size:var(--fs-12,12px);max-width:100%}',
     '.dbv-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}',
     '.dbv-cover{width:100%;height:140px;object-fit:cover;border-radius:4px;margin-bottom:6px;display:block;background:var(--bg-soft,#eee)}',
+    '.dbv-card-s .dbv-cover{height:100px}.dbv-card-l .dbv-cover{height:200px}.dbv-fit-contain .dbv-cover{object-fit:contain}',
+    '.dbv-card-icon{margin-right:6px}',
     '.dbv-list{display:flex;flex-direction:column}',
     '.dbv-li{display:flex;align-items:center;gap:12px;padding:6px 8px;border-bottom:1px solid rgba(127,127,127,.2)}',
     '.dbv-li-title{flex:1 1 auto;cursor:pointer;font-weight:500;background:none;border:0;text-align:left;padding:0;color:inherit;font:inherit}',
@@ -60,6 +62,17 @@
     if (cls) n.className = cls;
     if (text != null) n.textContent = String(text);
     return n;
+  }
+
+  function imageAttributes(file, url) {
+    var iw = file.iw || file.width, ih = file.ih || file.height;
+    var attrs = { decoding: 'async', loading: 'lazy' };
+    if (Number.isFinite(iw) && iw > 0 && Number.isFinite(ih) && ih > 0) { attrs.width = iw; attrs.height = ih; }
+    if (/^\/media\/[^/?#]+$/.test(url) && !/\.(svg|gif)$/i.test(url) && !/^image\/(svg|gif)/i.test(file.type || file.mime || '')) {
+      attrs.srcset = [400, 800, 1600].map(function (w) { return url + '?w=' + w + ' ' + w + 'w'; }).join(', ');
+      attrs.sizes = '(max-width: 760px) 100vw, 760px';
+    }
+    return attrs;
   }
 
   function root(ctx, cls) {
@@ -117,7 +130,18 @@
         if (c) return c;
       } catch (e) { /* fall back */ }
     }
-    return mk(doc, 'span', 'dbv-cell', text(ctx, prop, (vals || rowValues(ctx, row))[prop.id]));
+    var value = (vals || rowValues(ctx, row))[prop.id];
+    var fxError = prop.type === 'formula' && row && row.errors ? row.errors[prop.id] : '';
+    if (fxError && (value === null || value === undefined || value === '')) return mk(doc, 'span', 'dbv-cell fxerror', fxError);
+    var model = (typeof window !== 'undefined' && window.DoriDBModel) || null;
+    if (model && model.isRichValue && model.isRichValue(value)) {
+      var out = mk(doc, 'span', 'dbv-cell');
+      model.richValue(value).forEach(function (seg) {
+        out.appendChild(seg.classes.length ? mk(doc, 'span', seg.classes.join(' '), seg.text) : doc.createTextNode(seg.text));
+      });
+      return out;
+    }
+    return mk(doc, 'span', 'dbv-cell', text(ctx, prop, value));
   }
 
   function openRow(ctx, id) {
@@ -180,6 +204,7 @@
     if (!all.length && !opts.length) return empty(doc, '표시할 항목이 없습니다.');
 
     var wrap = mk(doc, 'div', 'dbv dbv-board');
+    var setup = cardSetup(ctx);
     cols.forEach(function (col) {
       var c = mk(doc, 'div', 'dbv-col');
       var h = mk(doc, 'div', 'dbv-col-h');
@@ -200,7 +225,7 @@
       });
       col.rows.forEach(function (row) {
         var vals = rowValues(ctx, row);
-        var card = mk(doc, 'div', 'dbv-card');
+        var card = mk(doc, 'div', 'dbv-card' + (setup ? ' dbv-card-' + setup.size + ' dbv-fit-' + setup.fit : ''));
         card.setAttribute('draggable', 'true');
         card.addEventListener('dragstart', function (e) {
           if (e.dataTransfer) {
@@ -210,7 +235,8 @@
           if (card.classList) card.classList.add('dragging');
         });
         card.addEventListener('dragend', function () { if (card.classList) card.classList.remove('dragging'); });
-        var t = mk(doc, 'div', 'dbv-card-title', rowTitle(ctx, row, tp));
+        if (setup) addCover(doc, card, cardCover(ctx, row, vals, null));
+        var t = setup ? cardTitle(ctx, doc, row, tp, setup) : mk(doc, 'div', 'dbv-card-title', rowTitle(ctx, row, tp));
         t.addEventListener('click', function () { openRow(ctx, row.id); });
         card.appendChild(t);
         otherProps(ctx, tp).filter(function (q) { return q.id !== gp.id; }).slice(0, 3).forEach(function (q) {
@@ -242,6 +268,49 @@
     return wrap;
   }
 
+  // 카드 설정(C8): ctx.view.config.card 가 없으면 예전 그대로(첫 파일 속성 커버, 중간 크기).
+  function cardSetup(ctx) {
+    var raw = ctx.view && ctx.view.config && ctx.view.config.card;
+    if (!raw) return null;
+    return {
+      preview: raw.preview || 'property',
+      size: raw.size === 's' || raw.size === 'l' ? raw.size : 'm',
+      fit: raw.fit === 'contain' ? 'contain' : 'cover',
+      icon: raw.icon !== false
+    };
+  }
+
+  function cardCover(ctx, row, vals, fallbackProp) {
+    if (typeof ctx.cardPreview === 'function') return ctx.cardPreview(row, vals);
+    if (!fallbackProp) return null;
+    var f = vals[fallbackProp.id];
+    var first = Array.isArray(f) ? f[0] : f;
+    return first || null;
+  }
+
+  function addCover(doc, card, file) {
+    var url = file && typeof file === 'object' ? (file.url || file.src || file.path) : file;
+    if (typeof url !== 'string' || !url) return;
+    var img = mk(doc, 'img', 'dbv-cover');
+    img.setAttribute('src', url);
+    img.setAttribute('alt', '');
+    var attrs = imageAttributes(file || {}, url);
+    Object.keys(attrs).forEach(function (key) { img.setAttribute(key, attrs[key]); });
+    card.appendChild(img);
+  }
+
+  function cardTitle(ctx, doc, row, tp, setup) {
+    var t = mk(doc, 'div', 'dbv-card-title');
+    var icon = row.pageIcon || row.icon;
+    if (setup && setup.icon && icon) {
+      var ic = mk(doc, 'span', 'dbv-card-icon', /^\/media\//.test(icon) ? null : icon);
+      if (/^\/media\//.test(icon)) { var im = mk(doc, 'img'); im.src = icon + '?w=400'; im.alt = ''; im.width = im.height = 18; im.style.cssText = 'border-radius:3px;object-fit:cover;vertical-align:-3px'; ic.appendChild(im); }
+      t.appendChild(ic);
+    }
+    t.appendChild(doc.createTextNode(rowTitle(ctx, row, tp)));
+    return t;
+  }
+
   // ---------- gallery ----------
   function gallery(ctx) {
     var r = root(ctx, 'dbv-gallery');
@@ -251,10 +320,15 @@
     var tp = titleProp(ctx);
     var fp = null;
     props(ctx).forEach(function (q) { if (!fp && q.type === 'files') fp = q; });
+    var setup = cardSetup(ctx);
     var others = otherProps(ctx, tp).filter(function (q) { return !fp || q.id !== fp.id; });
+    if (setup) {
+      var sizes = { s: 180, m: 240, l: 320 };
+      r.el.style.gridTemplateColumns = 'repeat(auto-fill,minmax(' + sizes[setup.size] + 'px,1fr))';
+    }
     all.forEach(function (row) {
       var vals = rowValues(ctx, row);
-      var card = mk(doc, 'div', 'dbv-card');
+      var card = mk(doc, 'div', 'dbv-card' + (setup ? ' dbv-card-' + setup.size + ' dbv-fit-' + setup.fit : ''));
       card.addEventListener('click', function (e) {
         var n = e.target;
         while (n && n !== card) {
@@ -263,19 +337,8 @@
         }
         openRow(ctx, row.id);
       });
-      if (fp) {
-        var f = vals[fp.id];
-        var first = Array.isArray(f) ? f[0] : f;
-        var url = first && typeof first === 'object' ? (first.url || first.src || first.path) : first;
-        if (typeof url === 'string' && url) {
-          var img = mk(doc, 'img', 'dbv-cover');
-          img.setAttribute('src', url);
-          img.setAttribute('alt', '');
-          img.setAttribute('loading', 'lazy');
-          card.appendChild(img);
-        }
-      }
-      card.appendChild(mk(doc, 'div', 'dbv-card-title', rowTitle(ctx, row, tp)));
+      addCover(doc, card, cardCover(ctx, row, vals, fp));
+      card.appendChild(setup ? cardTitle(ctx, doc, row, tp, setup) : mk(doc, 'div', 'dbv-card-title', rowTitle(ctx, row, tp)));
       others.forEach(function (q) {
         var pr = mk(doc, 'div', 'dbv-prop');
         pr.setAttribute('data-dbv-cell', '1');
@@ -482,5 +545,5 @@
     return r.el;
   }
 
-  window.DoriDBViews = { board: board, gallery: gallery, list: list, calendar: calendar, timeline: timeline };
+  window.DoriDBViews = { board: board, gallery: gallery, list: list, calendar: calendar, timeline: timeline, imageAttributes: imageAttributes };
 })();

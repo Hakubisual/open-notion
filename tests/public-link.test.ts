@@ -140,3 +140,26 @@ test("trash and missing gate configuration fail closed", async () => {
   delete h.env.GATE_SECRET;
   expect((await request(link.url)).status).toBe(503);
 });
+
+test("a public link keeps block colors, callout icons, heading 4 and toggle headings, and still drops widget embeds (notion-parity-1)", async () => {
+  const styled = [
+    { id: "c", type: "paragraph", text: "red text", meta: { color: "red" } },
+    { id: "k", type: "callout", text: "careful", meta: { tone: "note", icon: "🔥", color: "yellow_background" } },
+    { id: "h", type: "heading4", text: "small heading" },
+    { id: "t", type: "heading2", text: "folding", meta: { toggle: true } },
+    { id: "u", type: "paragraph", text: "inside", indent: 1 },
+    { id: "e", type: "embed", text: "", meta: { url: "https://x.github.io/widget", height: 480 } },
+  ];
+  expect((await h.call("PUT", "/api/page/shared", { title: "Shared title", blocks: styled })).status).toBe(200);
+  const link = await create();
+  const html = await (await request(link.url)).text();
+  expect(html).toContain('<p class="bc-red">red text</p>');
+  expect(html).toContain('<span class="callout-ico" aria-hidden="true">🔥</span>');
+  expect(html).toContain(".bc-red{color:var(--tag-red-fg)}");
+  expect(html).toContain(".blocks .callout.bc-yellow_background{background:var(--tag-yellow-bg)}");
+  expect(html).toContain('<h5 id="small-heading">small heading</h5>');
+  expect(html).toContain('<details class="toggle heading"><summary><h3 id="folding">folding</h3></summary>');
+  expect(html).toContain("details.toggle.heading>summary");
+  expect(html).not.toContain("x.github.io");
+  expect(html).not.toContain("<script>(function(){function o()");
+});

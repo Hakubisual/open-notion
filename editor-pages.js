@@ -10,21 +10,28 @@ const EDITOR_SCHEMA = [
 
 const DEFAULT_SETTINGS = { icon: null, cover: null, width: "default", font: "default", favorite: false };
 
+// Remembered per store key, like ensureAgentSchema (#17).
+const editorSchemaReady = new Set();
 export async function ensureEditorSchema(db) {
+  if (db.acardKey && editorSchemaReady.has(db.acardKey)) return;
   await db.batch(EDITOR_SCHEMA.map((sql) => db.prepare(sql)));
+  if (db.acardKey) editorSchemaReady.add(db.acardKey);
 }
 
 export async function readEditorPageMeta(db, slug) {
-  const [settings, trash] = await Promise.all([
-    db.prepare("SELECT * FROM editor_page_settings WHERE page = ?").bind(slug).first(),
-    db.prepare("SELECT deleted, permanent FROM editor_trash WHERE page = ?").bind(slug).first(),
-  ]);
-  if (settings) delete settings.page;
+  const row = await db.prepare("SELECT s.*, t.page AS trash_page, t.deleted AS trash_deleted, t.permanent AS trash_permanent FROM (SELECT ? AS page) p LEFT JOIN editor_page_settings s ON s.page = p.page LEFT JOIN editor_trash t ON t.page = p.page").bind(slug).first();
+  return editorPageMeta(row);
+}
+
+// Row shape: editor_page_settings columns plus trash_page / trash_deleted / trash_permanent.
+export function editorPageMeta(row) {
+  const { page, trash_page, trash_deleted, trash_permanent, ...stored } = row || {};
+  const settings = page ? { ...stored, favorite: stored.favorite === 1 } : { ...DEFAULT_SETTINGS };
   return {
-    settings: settings ? { ...settings, favorite: settings.favorite === 1 } : { ...DEFAULT_SETTINGS },
-    trashed: Boolean(trash),
-    deletedAt: trash?.deleted ?? null,
-    permanent: trash?.permanent === 1,
+    settings,
+    trashed: Boolean(trash_page),
+    deletedAt: trash_deleted ?? null,
+    permanent: trash_permanent === 1,
   };
 }
 
@@ -84,13 +91,13 @@ function settingsPatch(body) {
   fields(body, Object.keys(DEFAULT_SETTINGS));
   if (!Object.keys(body).length) throw new EditorInputError("Settings are empty.");
   if ("icon" in body && body.icon !== null && (typeof body.icon !== "string" || body.icon.length > 100)) throw new EditorInputError("Invalid icon.");
-  if ("cover" in body && body.cover !== null) {
+  if ("cover" in body && body.cover !== null && !/^g[1-6]$/.test(String(body.cover))) {
     if (typeof body.cover !== "string" || body.cover.length > 2048 || /[\s\\\u0000-\u001f\u007f]/.test(body.cover)) throw new EditorInputError("Invalid cover URL.");
     let cover;
     try { cover = new URL(body.cover, "https://editor.invalid"); } catch { throw new EditorInputError("Invalid cover URL."); }
     if (!(body.cover.startsWith("https://") || /^\/(?!\/)/.test(body.cover)) || cover.protocol !== "https:" || cover.username || cover.password) throw new EditorInputError("Invalid cover URL.");
   }
-  if ("width" in body && !["default", "full"].includes(body.width)) throw new EditorInputError("Invalid width.");
+  if ("width" in body && !["default", "normal", "full"].includes(body.width)) throw new EditorInputError("Invalid width.");
   if ("font" in body && !["default", "serif", "mono"].includes(body.font)) throw new EditorInputError("Invalid font.");
   if ("favorite" in body && typeof body.favorite !== "boolean") throw new EditorInputError("Invalid favorite.");
   return body;

@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
-import { createOfflineWorker, route, shouldCache } from "../offline-sw.js";
+import { createOfflineWorker, route, shellRefs, shouldCache } from "../offline-sw.js";
 import { assembleWorkerSource } from "./assemble-worker";
 
 const origin = "https://notes.test";
+const id = "aaaaaaaaaaaaaaaa";
+const cacheName = (kind: string) => "acard-" + kind + "-test-" + id;
 const req = (path: string, method = "GET") => new Request(origin + path, { method });
-const html = (text = "private") => new Response('<main id="main">' + text + '</main>', { headers: { "content-type": "text/html" } });
+const html = (text = "private") => new Response('<main id="main">' + text + '</main>', { headers: { "content-type": "text/html", "x-acard-id": id } });
 
 test("anonymous update can fetch only the generated worker script, not private routes", async () => {
   const worker = new Function(assembleWorkerSource())();
@@ -81,14 +83,90 @@ test("install precaches exact versioned shell assets only", async () => {
   f.offline();
   expect((await f.sw.handle(req("/app.js?v=abc"))).status).toBe(200);
   expect((await f.sw.handle(req("/unknown/"))).status).toBe(503);
-  expect(await f.caches.keys()).toEqual(["acard-shell-test"]);
+  expect(await f.caches.keys()).toEqual([cacheName("shell")]);
 });
 
-test("failed install never stores an unauthorized shell response", async () => {
+test("failed install never stores an unauthorized shell response, and still installs", async () => {
   const f = fixture();
   f.network(async () => new Response("denied", { status: 401 }));
-  await expect(f.sw.install()).rejects.toThrow("Shell precache failed");
+  await f.sw.install();
   expect(await f.caches.keys()).toEqual([]);
+});
+
+test("a shell file this account cannot read (member 404) is skipped, the rest is precached", async () => {
+  const caches = new MemoryCaches();
+  const sw = createOfflineWorker({ caches, origin, report: () => {}, fetch: async (r: Request) => new URL(r.url).pathname.startsWith("/img/") ? new Response("no", { status: 404 }) : html() }, { version: "test", shell: ["/app.js?v=abc", "/img/avatars/owner-96.webp?v=x"] });
+  await sw.install();
+  expect((await (await caches.open(cacheName("shell"))).keys()).map((r) => new URL(r.url).pathname)).toEqual(["/app.js"]);
+});
+
+// A CacheStorage that never answers: what a broken profile looks like to the worker.
+class HungCaches extends MemoryCaches {
+  hang = false;
+  never = () => new Promise<never>(() => {});
+  override async open(name: string) { if (this.hang) return this.never(); return super.open(name); }
+  override async keys() { if (this.hang) return this.never(); return super.keys(); }
+  override async has(name: string) { if (this.hang) return this.never(); return super.has(name); }
+}
+
+test("a hung cache never holds a page, a tree read, a sign-in or a logout longer than the cache step limit", async () => {
+  const caches = new HungCaches();
+  let body = "page";
+  const pending: Promise<unknown>[] = [];
+  const sw = createOfflineWorker({ caches, origin, report: () => {}, fetch: async () => new Response(body, { status: 200, headers: { "content-type": "text/html", "x-acard-id": id } }) }, { version: "test", shell: [] });
+  await sw.handle(req("/api/tree"), (p: Promise<unknown>) => pending.push(p));
+  caches.hang = true;
+  const started = Date.now();
+  expect(await (await sw.handle(req("/one/"), (p: Promise<unknown>) => pending.push(p))).text()).toBe("page");
+  expect(Date.now() - started).toBeLessThan(4500);
+  body = "tree";
+  expect(await (await sw.handle(req("/api/tree"), (p: Promise<unknown>) => pending.push(p))).text()).toBe("tree");
+  expect((await sw.handle(req("/api/auth/login", "POST"))).status).toBe(200);
+  expect((await sw.handle(req("/__logout", "POST"))).status).toBe(200);
+  expect(Date.now() - started).toBeLessThan(20000);
+}, 25000);
+
+test("offline, a cached page whose scripts are not cached is not shown (no half-loaded shell)", async () => {
+  const f = fixture();
+  const page = '<script src="/app.js?v=abc"></script><script src="/gone.js?v=old"></script><main id="main">old</main>';
+  f.network(async () => new Response(page, { headers: { "content-type": "text/html", "x-acard-id": id } }));
+  await f.sw.install();
+  await f.sw.handle(req("/one/"));
+  f.offline();
+  expect((await f.sw.handle(req("/one/"))).status).toBe(503);
+  expect(shellRefs(page)).toEqual(["/app.js?v=abc", "/gone.js?v=old"]);
+});
+
+test("offline, a cached page whose scripts are all cached is shown", async () => {
+  const f = fixture();
+  f.network(async () => new Response('<script src="/app.js?v=abc"></script><main id="main">kept</main>', { headers: { "content-type": "text/html", "x-acard-id": id } }));
+  await f.sw.install();
+  await f.sw.handle(req("/one/"));
+  f.offline();
+  const r = await f.sw.handle(req("/one/"));
+  expect(r.status).toBe(200);
+  expect(await r.text()).toContain("kept");
+});
+
+test("?sw=off wipes every cache, unregisters the worker and loads from the network", async () => {
+  const caches = new MemoryCaches();
+  let unregistered = 0;
+  const sw = createOfflineWorker({ caches, origin, report: () => {}, unregister: async () => { unregistered++; }, fetch: async () => html("fresh") }, { version: "test", shell: ["/app.js?v=abc"] });
+  await sw.install();
+  await sw.handle(req("/one/"));
+  await (await caches.open("acard-shell-old")).put(req("/x"), html());
+  const r = await sw.handle(req("/one/?sw=off"));
+  expect(await r.text()).toContain("fresh");
+  expect(unregistered).toBe(1);
+  expect(await caches.keys()).toEqual([]);
+});
+
+test("activate deletes caches of older worker versions only", async () => {
+  const f = fixture();
+  for (const name of ["acard-shell-old", "acard-pages-old", "acard-lru-old", "acard-recent-cache"]) await f.caches.open(name);
+  await f.sw.install();
+  await f.sw.activate();
+  expect((await f.caches.keys()).sort()).toEqual([cacheName("shell")]);
 });
 
 test("network first updates content and offline HTML carries a status banner", async () => {
@@ -107,13 +185,13 @@ test("network first updates content and offline HTML carries a status banner", a
 
 test("API cache fallback preserves JSON and tree does not consume page slots", async () => {
   const f = fixture();
-  f.network(async () => Response.json({ page: { title: "saved" } }));
+  f.network(async () => Response.json({ page: { title: "saved" } }, { headers: { "x-acard-id": id } }));
   await f.sw.handle(req("/api/page/one"));
   await f.sw.handle(req("/api/tree"));
   f.offline();
   expect(await (await f.sw.handle(req("/api/page/one"))).json()).toEqual({ page: { title: "saved" } });
   expect((await f.sw.handle(req("/api/tree"))).status).toBe(200);
-  expect(await (await (await f.caches.open("acard-lru-test")).match(origin + "/__offline_lru"))?.json()).toEqual(["one"]);
+  expect(await (await (await f.caches.open(cacheName("lru"))).match(origin + "/__offline_lru"))?.json()).toEqual(["one"]);
 });
 
 test("LRU retains fifty page groups and evicts HTML and API together", async () => {

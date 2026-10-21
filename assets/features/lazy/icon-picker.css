@@ -1,0 +1,8 @@
+.icon-picker{position:fixed;z-index:45;width:min(340px,calc(100vw - 16px));max-height:min(380px,calc(100vh - 16px));display:flex;flex-direction:column;background:var(--raised);color:var(--fg);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-menu)}
+.ip-head{display:flex;gap:6px;padding:8px;border-bottom:1px solid var(--line)}
+.ip-search{flex:1;min-width:0;font:inherit;font-size:var(--fs-14);padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+.ip-remove{appearance:none;border:0;background:var(--bg-soft);color:var(--fg-dim);font:inherit;font-size:var(--fs-12);border-radius:8px;padding:0 10px;cursor:pointer;white-space:nowrap}
+.ip-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;padding:8px;overflow:auto}
+.ip-label{grid-column:1/-1;margin:4px 2px;font-size:var(--fs-11);color:var(--fg-dim)}
+.ip-cell{appearance:none;border:0;background:transparent;font-size:var(--fs-21);line-height:1;height:36px;border-radius:8px;cursor:pointer}
+.ip-cell:hover,.ip-cell:focus-visible,.ip-cell.on{background:var(--accent-soft)}

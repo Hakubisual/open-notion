@@ -50,7 +50,7 @@ export async function cookie() {
   return "dn_auth=" + expires + "." + hex;
 }
 
-export function setup(options: { seed?: unknown; notesSeed?: unknown; assets?: Record<string, string>; assetFetch?: (request: Request) => Promise<Response>; config?: boolean; sqlite?: Database; worker?: ReturnType<typeof loadWorker> } = {}) {
+export function setup(options: { seed?: unknown; notesSeed?: unknown; assets?: Record<string, string>; assetFetch?: (request: Request) => Promise<Response>; config?: boolean; sqlite?: Database; worker?: ReturnType<typeof loadWorker>; rawSaves?: boolean } = {}) {
   const sqlite = options.sqlite ?? new Database(":memory:");
   const worker = options.worker ?? loadWorker();
   const assets = {
@@ -75,15 +75,26 @@ export function setup(options: { seed?: unknown; notesSeed?: unknown; assets?: R
     env.GATE_SECRET = SECRET;
   }
   let auth = "";
+  const versions = new Map<string, number>();
   const call = async (method: string, path: string, body?: unknown, anonymous = false) => {
     if (!auth) auth = await cookie();
     const headers: Record<string, string> = {};
     if (!anonymous) headers.cookie = auth;
     if (body !== undefined) headers["content-type"] = "application/json";
+    const page = /^\/api\/page\/([^/?]+)$/.exec(path)?.[1];
+    if (!options.rawSaves && !anonymous && method === "PUT" && page && body && typeof body === "object" && !("base_updated" in body)) {
+      // Ordinary fixture edits use the version already observed, never retry a conflict with a fresh version.
+      if (!versions.has(page)) await call("GET", path);
+      body = { ...body, base_updated: versions.get(page) };
+    }
     const response = await worker.fetch(new Request("https://notes.test" + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }), env);
     const text = await response.text();
     let data: any = null;
     try { data = JSON.parse(text); } catch { data = text; }
+    if (!anonymous && response.ok) {
+      if (page && Number.isSafeInteger(data?.page?.updated ?? data?.updated)) versions.set(page, data.page?.updated ?? data.updated);
+      if (method === "POST" && path === "/api/pages" && Number.isSafeInteger(data?.updated)) versions.set(encodeURIComponent(data.slug), data.updated);
+    }
     return { status: response.status, data };
   };
   return { sqlite, call, worker, env };

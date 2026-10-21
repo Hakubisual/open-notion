@@ -50,6 +50,10 @@ async function jwt(sub: string) {
 
 type Opts = { cookie?: string; bearer?: string; body?: unknown; form?: Record<string, string>; origin?: string };
 async function call(method: string, path: string, opts: Opts = {}) {
+  if (method === "PUT" && /^\/api\/page\/[^/]+$/.test(path) && opts.body && typeof opts.body === "object" && !("base_updated" in opts.body)) {
+    const page = await call("GET", path, { cookie: opts.cookie });
+    opts = { ...opts, body: { ...opts.body, base_updated: page.data?.page?.updated } };
+  }
   const headers: Record<string, string> = { accept: "text/html,application/json" };
   if (opts.cookie) headers.cookie = opts.cookie;
   if (opts.bearer) headers.authorization = "Bearer " + opts.bearer;
@@ -167,6 +171,8 @@ describe("sharing", () => {
     expect(JSON.stringify((await call("GET", "/api/search?q=zebra", { cookie: guest })).data)).not.toContain("other");
     expect((await call("GET", "/media/" + ROOT_MEDIA, { cookie: guest })).status).toBe(200);
     expect((await call("GET", "/media/" + OTHER_MEDIA, { cookie: guest })).status).toBe(401);
+    expect((await call("GET", "/api/media/" + ROOT_MEDIA + "/meta", { cookie: guest })).status).toBe(200);
+    expect((await call("GET", "/api/media/" + OTHER_MEDIA + "/meta", { cookie: guest })).status).toBe(401);
     expect((await call("GET", "/search-index.json", { cookie: guest })).status).toBe(401);
     expect((await call("GET", "/api/backlinks?slug=root", { cookie: guest })).data).toEqual({ backlinks: [] });
     expect((await call("PUT", "/api/page/root", { cookie: guest, body: { blocks: [] } })).status).toBe(401);
@@ -221,6 +227,112 @@ describe("sharing", () => {
     expect((await call("GET", url)).status).toBe(401);
   });
 
+  // #61: shared pages sent every original image (31 JPEGs, 7 MB on the owner's page) at full size with no dimensions.
+  test("a link page draws components with their styles and an unknown block as a fallback card (ds10)", async () => {
+    const blocks = [{ id: "r1", type: "paragraph", text: "root body" }, { id: "u1", type: "component", text: '{"label":"방문","value":"1,284","delta":"+8%"}', meta: { ui: "stat" } }, { id: "u2", type: "component", text: "{ bad", meta: { ui: "stat" } }, { id: "u3", type: "future_block", text: "", meta: null }];
+    expect((await asOwner("PUT", "/api/page/root", { body: { blocks } })).status).toBe(200);
+    const url = (await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } })).data.link.url as string;
+    const page = await call("GET", url);
+    expect(page.status).toBe(200);
+    expect(page.text).toContain('data-ui="stat"');
+    expect(page.text).toContain("1,284");
+    expect(page.text).toContain('data-ui-invalid="1"');
+    expect(page.text).toContain('class="ui-fallback"');
+    expect(page.text).toContain(".ui-stat{");
+  });
+
+  test("a link page sends sized AVIF/WebP copies with width/height, lazy below the first image, original kept as the link", async () => {
+    const on = await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } });
+    const url = on.data.link.url as string;
+    const calls: string[] = [];
+    env.IMAGE_RESIZER = { fetch: async (target: string) => {
+      calls.push(new URL(target).pathname + new URL(target).search);
+      if (target.endsWith("/meta")) return Response.json({ width: 1600, height: 900, format: "image/jpeg", lqip: "data:image/webp;base64,AAAA" });
+      return new Response(new Uint8Array([9, 9]), { headers: { "content-type": "image/webp" } });
+    } };
+    try {
+      const blocks = [{ id: "r1", type: "paragraph", text: "root body" }, { id: "img", type: "image", text: "", meta: { src: "/media/" + ROOT_MEDIA } }, { id: "img2", type: "image", text: "", meta: { src: "/media/" + ROOT_MEDIA, width: 50 } }];
+      expect((await asOwner("PUT", "/api/page/root", { body: { blocks } })).status).toBe(200);
+      const page = await call("GET", url);
+      expect(page.status).toBe(200);
+      const imgs = [...page.text.matchAll(/<img [^>]*src="[^"]*\/media\/[^>]*>/g)].map((m) => m[0]);
+      expect(imgs.length).toBe(2);
+      for (const img of imgs) {
+        expect(img).toContain('width="1600"');
+        expect(img).toContain('height="900"');
+        expect(img).toContain(url + "/media/" + ROOT_MEDIA + "/480.webp 480w, " + url + "/media/" + ROOT_MEDIA + "/960.webp 960w, " + url + "/media/" + ROOT_MEDIA + "/1440.webp 1440w\"");
+        expect(img).toContain("sizes=");
+      }
+      expect(imgs[0]).toContain('loading="eager"');
+      expect(imgs[0]).toContain("data:image/webp;base64,AAAA");
+      expect(imgs[1]).toContain('loading="lazy"');
+      expect(imgs[1]).toContain("calc(0.5 * 760px)");
+      expect(page.text).toContain('<source type="image/avif" srcset="' + url + "/media/" + ROOT_MEDIA + "/480.avif 480w");
+      expect(page.text).toContain('href="' + url + "/media/" + ROOT_MEDIA + '"');
+      expect(page.text).not.toContain('"/media/' + ROOT_MEDIA);
+      expect(page.text).not.toContain(" /media/" + ROOT_MEDIA);
+      const variant = await call("GET", url + "/media/" + ROOT_MEDIA + "/960.webp");
+      expect(variant.status).toBe(200);
+      expect(variant.headers.get("content-type")).toBe("image/webp");
+      expect(variant.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+      expect(calls).toContain("/resize?w=960&f=webp");
+      expect((await call("GET", url + "/media/" + OTHER_MEDIA + "/960.webp")).status).toBe(404);
+      expect((await call("GET", url + "/media/" + ROOT_MEDIA + "/123.webp")).status).toBe(404);
+    } finally {
+      delete env.IMAGE_RESIZER;
+      await asOwner("PUT", "/api/page/root", { body: { blocks: [{ id: "r1", type: "paragraph", text: "root body" }, { id: "img", type: "image", text: "", meta: { src: "/media/" + ROOT_MEDIA } }, { id: "lnk", type: "paragraph", text: "see [[other]]" }] } });
+    }
+  });
+
+  test("a link page is served from the edge cache until the live feed number moves, then read again", async () => {
+    const on = await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } });
+    const url = on.data.link.url as string;
+    const store = new Map<string, Response>();
+    let seq = 7;
+    (globalThis as any).caches = { default: {
+      match: async (key: Request) => store.get(key.url)?.clone() ?? undefined,
+      put: async (key: Request, res: Response) => { store.set(key.url, res.clone()); },
+    } };
+    env.LIVE = { idFromName: (name: string) => name, get: () => ({ fetch: async () => Response.json({ id: seq }) }) };
+    try {
+      const first = await call("GET", url);
+      expect(first.headers.get("x-acard-share-cache")).toBe("miss");
+      expect(first.headers.get("cache-control")).toBe("private, no-store");
+      owner.query("UPDATE blocks SET text = 'changed directly' WHERE page = 'root' AND id = 'r1'").run();
+      const second = await call("GET", url);
+      expect(second.headers.get("x-acard-share-cache")).toBe("hit");
+      expect(second.text).toContain("root body");
+      seq = 8;
+      const third = await call("GET", url);
+      expect(third.headers.get("x-acard-share-cache")).toBe("miss");
+      expect(third.text).toContain("changed directly");
+      expect((await call("GET", url, { cookie: "acard_guest=o." + "A".repeat(43) })).headers.get("x-acard-share-cache")).toBeNull();
+    } finally {
+      delete (globalThis as any).caches;
+      delete env.LIVE;
+      owner.query("UPDATE blocks SET text = 'root body' WHERE page = 'root' AND id = 'r1'").run();
+    }
+  });
+
+  // #57: a dropped Hyperdrive socket on a shared link page answered 500 / Cloudflare 1101 (10 of 40 concurrent on preview).
+  test("a dropped database socket on a link page is a 503 retry, not a 500", async () => {
+    const on = await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } });
+    const url = on.data.link.url as string;
+    const db = env.DB;
+    const lost = () => { throw Object.assign(new Error("write CONNECTION_CLOSED 7fbe.hyperdrive.local:5432"), { code: "CONNECTION_CLOSED" }); };
+    const stmt: any = { bind: () => stmt, first: lost, all: lost, run: lost, raw: lost };
+    env.DB = { ...db, prepare: () => stmt, batch: lost };
+    try {
+      const page = await call("GET", url);
+      expect(page.status).toBe(503);
+      expect(page.headers.get("retry-after")).toBe("2");
+    } finally {
+      env.DB = db;
+    }
+    expect((await call("GET", url)).status).toBe(200);
+    await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "invited" } });
+  });
+
   test("an HTML block reaches link visitors only inside the sandbox, and only while the link allows it", async () => {
     const put = (slug: string, blocks: unknown[]) => asOwner("PUT", "/api/page/" + slug, { body: { blocks } });
     const before = { root: (await asOwner("GET", "/api/page/root")).data.blocks, other: (await asOwner("GET", "/api/page/other")).data.blocks };
@@ -234,16 +346,181 @@ describe("sharing", () => {
     const frame = /<iframe[^>]*class="acv-frame"[^>]*>/.exec(page.text)?.[0] ?? "";
     expect(frame).toContain('sandbox="allow-scripts"');
     expect(frame).not.toContain("allow-same-origin");
-    expect(frame).toContain("chart-on-root");
-    expect(page.text).not.toContain("<b id=chart>");
+    expect(frame).not.toContain("srcdoc");
+    expect(frame).toContain('src="' + url + '/frame/h1"');
+    expect(page.text).not.toContain("chart-on-root");
     expect(page.text).not.toContain("chart-on-other");
+    const pageCsp = page.headers.get("content-security-policy") ?? "";
+    expect(pageCsp).toContain("frame-src 'self'");
+    expect(pageCsp).toMatch(/script-src 'sha256-[A-Za-z0-9+/]+=*';/);
+    expect(pageCsp).not.toContain("script-src 'unsafe-inline'");
+    const inline = [...page.text.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    expect(inline.length).toBe(1);
+    const digest = new Bun.CryptoHasher("sha256").update(inline[0]).digest("base64");
+    expect(pageCsp).toContain("script-src 'sha256-" + digest + "'");
+    const doc = await call("GET", url + "/frame/h1");
+    expect(doc.status).toBe(200);
+    expect(doc.text).toContain("<b id=chart>chart-on-root</b><script>document.title='x'</script>");
+    const frameCsp = doc.headers.get("content-security-policy") ?? "";
+    expect(frameCsp).toContain("sandbox allow-scripts");
+    expect(frameCsp).not.toContain("allow-same-origin");
+    expect(frameCsp).toContain("default-src 'none'");
+    expect(frameCsp).toContain("frame-ancestors 'self'");
+    expect(doc.headers.get("set-cookie")).toBeNull();
+    expect((await call("GET", url + "/frame/h2")).status).toBe(404);
+    expect((await call("GET", url + "/frame/r1")).status).toBe(404);
+    expect((await call("GET", url + "/other/frame/h2")).status).toBe(404);
     expect((await call("GET", url + "/other/")).status).toBe(404);
     expect((await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "invited" } })).status).toBe(200);
     const off = await call("GET", url);
     expect(off.status).toBe(401);
     expect(off.text).not.toContain("chart-on-root");
+    expect((await call("GET", url + "/frame/h1")).status).toBe(401);
     expect((await put("root", before.root)).status).toBe(200);
     expect((await put("other", before.other)).status).toBe(200);
+  });
+
+  const np5Guests: Record<string, string> = {};
+  async function np5Guest(role: "read" | "edit" | "full") {
+    if (!np5Guests[role]) np5Guests[role] = await verify(await invite("root", "np5-" + role + "@example.com", role), "np5-" + role + "@example.com");
+    return np5Guests[role];
+  }
+
+  test("a guest can change a two-way relation only when it may edit both databases (notion-parity-5 C2)", async () => {
+    const trips = (await asOwner("POST", "/api/db", { body: { title: "여행", slug: "np5-trips", parent: "root", page: true } })).data;
+    const plans = (await asOwner("POST", "/api/db", { body: { title: "일정", slug: "np5-plans", parent: "other", page: true } })).data;
+    const rel = (await asOwner("POST", "/api/db/" + plans.slug + "/properties", { body: { name: "여행", type: "relation", config: { database: trips.slug, synced: true }, pairName: "일정" } })).data;
+    const trip = (await asOwner("POST", "/api/db/" + trips.slug + "/rows", { body: { props: {} } })).data.row;
+    const plan = (await asOwner("POST", "/api/db/" + plans.slug + "/rows", { body: { props: {} } })).data.row;
+    const values = async () => [
+      (await asOwner("GET", "/api/db/" + trips.slug)).data.rows.find((r: any) => r.id === trip.id).props[rel.pair.id],
+      (await asOwner("GET", "/api/db/" + plans.slug)).data.rows.find((r: any) => r.id === plan.id).props[rel.property.id],
+    ];
+    const reader = await np5Guest("read");
+    const denied = await call("PATCH", "/api/db/" + trips.slug + "/rows/" + trip.id, { cookie: reader, body: { props: { [rel.pair.id]: [plan.id] } } });
+    expect(denied.status).toBe(401);
+    expect(await values()).toEqual([[], []]);
+    const editor = await np5Guest("edit");
+    const otherSide = await call("PATCH", "/api/db/" + trips.slug + "/rows/" + trip.id, { cookie: editor, body: { props: { [rel.pair.id]: [plan.id] } } });
+    expect(otherSide.status).toBe(401);
+    expect(await values()).toEqual([[], []]);
+    expect((await asOwner("PATCH", "/api/db/" + trips.slug + "/rows/" + trip.id, { body: { props: { [rel.pair.id]: [plan.id] } } })).status).toBe(200);
+    expect(await values()).toEqual([[plan.id], [trip.id]]);
+    await asOwner("DELETE", "/api/db/" + trips.slug);
+    await asOwner("DELETE", "/api/db/" + plans.slug);
+  });
+
+  test("an edit guest cannot save or run a button whose target database it may not edit; readers and visitors cannot press at all (notion-parity-7 C3 C4)", async () => {
+    const mine = (await asOwner("POST", "/api/db", { body: { title: "내 할 일", slug: "np7-mine", parent: "root", page: true } })).data;
+    const theirs = (await asOwner("POST", "/api/db", { body: { title: "남의 기록", slug: "np7-theirs", parent: "other", page: true } })).data;
+    const count = async (slug: string) => (await asOwner("GET", "/api/db/" + slug)).data.rows.length;
+    const editor = await np5Guest("edit");
+    const reader = await np5Guest("read");
+
+    const before = (await asOwner("GET", "/api/page/child")).data.blocks;
+    const save = (cookie: string, actions: unknown) => call("GET", "/api/page/child", { cookie }).then((page) =>
+      call("PUT", "/api/page/child", { cookie, body: { base_updated: page.data.page.updated, blocks: [...before, { id: "np7", type: "button", text: "추가", meta: { actions } }] } }));
+    expect((await save(editor, [{ type: "create_row", database: theirs.slug }])).status).toBe(200);
+    expect((await asOwner("GET", "/api/page/child")).data.blocks.find((b: any) => b.id === "np7").meta.actions).toBeUndefined();
+    expect((await save(editor, [{ type: "create_row", database: mine.slug }])).status).toBe(200);
+    expect((await asOwner("GET", "/api/page/child")).data.blocks.find((b: any) => b.id === "np7").meta.actions).toEqual([{ type: "create_row", database: mine.slug, values: {} }]);
+    expect((await call("POST", "/api/page/child/button/np7", { cookie: editor, body: {} })).status).toBe(200);
+    expect(await count(mine.slug)).toBe(1);
+
+    expect((await asOwner("PUT", "/api/page/child", { body: { blocks: [...before, { id: "np7", type: "button", text: "추가", meta: { actions: [{ type: "create_row", database: theirs.slug }] } }] } })).status).toBe(200);
+    const forbidden = await call("POST", "/api/page/child/button/np7", { cookie: editor, body: {} });
+    expect(forbidden.status).toBe(403);
+    expect(await count(theirs.slug)).toBe(0);
+
+    const linked = (await asOwner("POST", "/api/db/" + mine.slug + "/properties", { body: { name: "기록", type: "relation", config: { database: theirs.slug } } })).data.property;
+    const theirRow = (await asOwner("POST", "/api/db/" + theirs.slug + "/rows", { body: { props: {} } })).data.row;
+    const myRow = (await asOwner("POST", "/api/db/" + mine.slug + "/rows", { body: { props: { [linked.id]: [theirRow.id] } } })).data.row;
+    const theirTitle = (await asOwner("GET", "/api/db/" + theirs.slug)).data.properties.find((p: any) => p.type === "title").id;
+    const related = (await asOwner("POST", "/api/db/" + mine.slug + "/properties", { body: { name: "기록 바꾸기", type: "button", config: { actions: [{ type: "update_related", relation: linked.id, values: { [theirTitle]: "바뀜" } }] } } })).data.property;
+    const relatedPress = await call("POST", "/api/db/" + mine.slug + "/rows/" + myRow.id + "/button/" + related.id, { cookie: editor, body: {} });
+    expect(relatedPress.status).toBe(403);
+    expect((await asOwner("GET", "/api/db/" + theirs.slug)).data.rows[0].pageTitle).not.toBe("바뀜");
+    const stealProp = await call("POST", "/api/db/" + mine.slug + "/properties", { cookie: editor, body: { name: "훔치기", type: "button", config: { actions: [{ type: "create_row", database: theirs.slug }] } } });
+    expect(stealProp.status).toBe(403);
+
+    const rowsBefore = await count(mine.slug);
+    expect((await call("POST", "/api/page/child/button/np7", { cookie: reader, body: {} })).status).toBe(401);
+    expect((await call("POST", "/api/db/" + mine.slug + "/rows/" + myRow.id + "/button/" + related.id, { cookie: reader, body: {} })).status).toBe(401);
+    expect((await call("POST", "/api/page/child/button/np7", { body: {} })).status).toBe(401);
+    expect(await count(mine.slug)).toBe(rowsBefore);
+    expect(await count(theirs.slug)).toBe(1);
+
+    expect((await asOwner("PUT", "/api/page/child", { body: { blocks: before } })).status).toBe(200);
+    await asOwner("DELETE", "/api/db/" + mine.slug);
+    await asOwner("DELETE", "/api/db/" + theirs.slug);
+  });
+
+  test("person candidates are this database page's shared emails, all for full, self and assigned for edit, none for read (notion-parity-5 C10)", async () => {
+    const team = (await asOwner("POST", "/api/db", { body: { title: "팀 할 일", slug: "np5-team", parent: "root", page: true, properties: [{ id: "title", name: "이름", type: "title" }, { id: "who", name: "담당", type: "person" }] } })).data;
+    const schema = (await asOwner("GET", "/api/db/" + team.slug)).data;
+    const who = schema.properties.find((p: any) => p.type === "person").id;
+    const edit = await np5Guest("edit");
+    const read = await np5Guest("read");
+    await invite("root", "np5-full@example.com", "full");
+    const full = await verify(await invite("root", "np5-full@example.com", "full"), "np5-full@example.com");
+    await invite("other", "np5-elsewhere@example.com", "edit");
+    const owner = await asOwner("GET", "/api/db/" + team.slug + "/people");
+    expect(owner.status).toBe(200);
+    const emails = owner.data.people.map((p: any) => p.email);
+    expect(emails).toEqual(expect.arrayContaining(["owner@test.dev", "np5-full@example.com", "np5-edit@example.com", "np5-read@example.com"]));
+    expect(emails).not.toContain("np5-elsewhere@example.com");
+    const asFull = await call("GET", "/api/db/" + team.slug + "/people", { cookie: full });
+    expect(asFull.data.people.map((p: any) => p.email).sort()).toEqual([...emails].sort());
+    expect((await asOwner("POST", "/api/db/" + team.slug + "/rows", { body: { props: { [who]: ["np5-full@example.com"] } } })).status).toBe(200);
+    const asEdit = await call("GET", "/api/db/" + team.slug + "/people", { cookie: edit });
+    expect(asEdit.status).toBe(200);
+    expect(asEdit.data.people.map((p: any) => p.email).sort()).toEqual(["np5-edit@example.com", "np5-full@example.com"]);
+    const blocked = await call("POST", "/api/db/" + team.slug + "/rows", { cookie: edit, body: { props: { [who]: ["np5-read@example.com"] } } });
+    expect(blocked.status).toBe(400);
+    expect((await call("POST", "/api/db/" + team.slug + "/rows", { cookie: edit, body: { props: { [who]: ["np5-edit@example.com"] } } })).status).toBe(200);
+    const asRead = await call("GET", "/api/db/" + team.slug + "/people", { cookie: read });
+    expect(asRead.status).toBe(401);
+    expect(JSON.stringify(asRead.data)).not.toContain("@example.com");
+    await asOwner("DELETE", "/api/db/" + team.slug);
+  });
+
+  test("a button round-trips through the agent read_page/update_page operations; actions on a database the token may not write are not saved (notion-parity-7 C3)", async () => {
+    const ok = (await asOwner("POST", "/api/db", { body: { title: "할 일", slug: "np7-mcp-ok", parent: "root", page: true } })).data;
+    const hidden = (await asOwner("POST", "/api/db", { body: { title: "숨긴 DB", slug: "np7-mcp-hidden", parent: "other", page: true } })).data;
+    const made = await asOwner("POST", "/api/agents/tokens", { body: { name: "np7-writer", scopes: ["read", "write"] } });
+    const ops: Record<string, (args: any) => [string, string, unknown]> = {
+      create_page: (a) => ["POST", "/api/v1/pages", a],
+      read_page: (a) => ["GET", "/api/v1/pages/" + encodeURIComponent(a.slug) + "?format=json", undefined],
+      update_page: (a) => ["PUT", "/api/v1/pages/" + encodeURIComponent(a.slug), a],
+    };
+    const tool = (name: string, args: unknown) => { const [m, p, b] = ops[name](args); return call(m, p, { bearer: made.data.token, body: b }); };
+    const content = (res: any) => { expect(res.status).toBeLessThan(300); return res.data; };
+    const md = (label: string, db: string) => '---\nacard_meta: 1\n---\n\n- [button] ' + label + '\n<!--acard {"actions":[{"type":"create_row","database":"' + db + '"},{"type":"open","target":"created"}],"color":"blue"}-->\n';
+    const created = content(await tool("create_page", { title: "np7 버튼", parent: "root", markdown: md("추가", ok.slug) }));
+    const read = content(await tool("read_page", { slug: created.slug }));
+    expect(read.markdown).toContain("- [button] 추가\n<!--acard ");
+    expect(read.markdown).toContain('"database":"' + ok.slug + '"');
+    const updated = content(await tool("update_page", { slug: created.slug, markdown: read.markdown.replace("- [button] 추가", "- [button] 할 일 더하기"), expectedUpdated: read.updated }));
+    expect(updated.updated).toBe(true);
+    const page = (await asOwner("GET", "/api/page/" + encodeURIComponent(created.slug))).data.blocks[0];
+    expect(page.text).toBe("할 일 더하기");
+    expect(page.meta.actions[0]).toEqual({ type: "create_row", database: ok.slug, values: {} });
+    const pressed = await asOwner("POST", "/api/page/" + encodeURIComponent(created.slug) + "/button/" + page.id, { body: {} });
+    expect(pressed.status).toBe(200);
+    expect((await asOwner("GET", "/api/db/" + ok.slug)).data.rows.length).toBe(1);
+
+    expect((await asOwner("PUT", "/api/page/other/access/agents", { body: { token: made.data.record.id, level: "read" } })).status).toBe(200);
+    const sneaky = content(await tool("create_page", { title: "np7 숨김", parent: "root", markdown: md("몰래", hidden.slug) }));
+    expect(sneaky.buttons).toContain("버튼 1개");
+    const stored = (await asOwner("GET", "/api/page/" + encodeURIComponent(sneaky.slug))).data.blocks[0];
+    expect(stored.meta.actions).toBeUndefined();
+    expect(stored.meta.color).toBe("blue");
+
+    await asOwner("PUT", "/api/page/other/access/agents", { body: { token: made.data.record.id, level: "inherit" } });
+    await asOwner("DELETE", "/api/agents/tokens/" + made.data.record.id);
+    for (const slug of [created.slug, sneaky.slug]) owner.query("DELETE FROM pages WHERE slug = ?").run(slug);
+    await asOwner("DELETE", "/api/db/" + ok.slug);
+    await asOwner("DELETE", "/api/db/" + hidden.slug);
   });
 
   test("agent tokens are narrowed per page and never widened", async () => {
@@ -347,7 +624,17 @@ describe("sharing", () => {
     expect((await asOwner("PUT", "/api/page/root", { origin: "https://evil.test", body: { blocks: [] } })).status).toBe(403);
   });
 
-  test("invite codes stop after five wrong tries and expire after 15 minutes", async () => {
+  // Invite mail is not wired yet, so codes are handed over by hand and last 24 hours (owner call 2026-10-20).
+  test("invite codes last 24 hours: a 23-hour-old code still opens the page", async () => {
+    const found = await invite("root", "day@example.com");
+    const row = owner.query("SELECT created, expires FROM share_invites WHERE rule = ? AND used IS NULL").get(found.rule) as { created: number; expires: number };
+    expect(row.expires - row.created).toBe(24 * 60 * 60 * 1000);
+    owner.query("UPDATE share_invites SET created = created - ?, expires = expires - ? WHERE rule = ? AND used IS NULL").run(23 * 3600e3, 23 * 3600e3, found.rule);
+    expect((await call("POST", found.url, { form: { email: "day@example.com", code: found.code } })).status).toBe(303);
+    await asOwner("DELETE", "/api/page/root/access/rules/" + found.rule);
+  });
+
+  test("invite codes stop after five wrong tries and refuse once expired", async () => {
     const found = await invite("root", "tries@example.com");
     for (let i = 0; i < 5; i += 1) expect((await call("POST", found.url, { form: { email: "tries@example.com", code: "x" } })).status).toBe(401);
     expect((await call("POST", found.url, { form: { email: "tries@example.com", code: found.code } })).status).toBe(401);
@@ -373,7 +660,7 @@ describe("sharing", () => {
       }
     }
     const samples = [
-      "/api/sync", "/api/upload", "/api/media/" + OTHER_MEDIA, "/api/link-preview?url=https://x.test", "/api/media/import", "/api/page/other/attachments", "/api/import", "/api/import/md", "/api/export?slug=other",
+      "/api/sync", "/api/upload", "/api/media-usage", "/api/media/" + OTHER_MEDIA, "/api/link-preview?url=https://x.test", "/api/media/import", "/api/page/other/attachments", "/api/import", "/api/import/md", "/api/export?slug=other",
       "/api/export?scope=all", "/api/tree", "/api/search?q=zebra", "/api/backlinks?slug=other", "/api/pages", "/api/page/other", "/api/page/other/rename",
       "/api/page/other/move", "/api/page/other/blocks", "/api/page/other/settings", "/api/page/other/comments", "/api/page/other/comments/oc",
       "/api/page/other/history", "/api/page/other/history/h1/restore", "/api/page/other/trash", "/api/page/other/restore", "/api/page/other/permanent",
@@ -382,15 +669,16 @@ describe("sharing", () => {
       "/api/page/other/access/rules/r1", "/api/page/other/access/requests/" + "a".repeat(32), "/api/editor/trash", "/api/editor/trash/empty", "/api/editor/templates", "/api/db", "/api/db/list",
       "/api/db/other", "/api/db/other/rows", "/api/db/other/rows/r1", "/api/db/other/properties", "/api/db/other/views", "/api/db/other/templates",
       "/api/db/other/rules", "/api/db/other/rules/x", "/api/db/other/form", "/api/forms/f1", "/api/forms/f1/submit", "/api/templates", "/api/templates/welcome",
-      "/api/ai/polish", "/api/ai/write", "/api/ai/ask", "/api/ai/photo-text", "/api/quick-note", "/api/home/starter", "/api/home/summary", "/api/first-run", "/api/projects", "/api/projects/settings", "/api/projects/backfill", "/api/v1/memo", "/api/v1/pages/other/blocks", "/api/v1/agent-skills", "/api/v1/media", "/form/f1",
+      "/api/ai/polish", "/api/ai/write", "/api/ai/ask", "/api/ai/photo-text", "/api/quick-note", "/api/home/starter", "/api/home/summary", "/api/first-run", "/api/projects", "/api/projects/settings", "/api/projects/backfill", "/api/projects/other/drafts", "/api/projects/other/drafts/apply", "/api/v1/memo", "/api/v1/pages/other/blocks", "/api/v1/agent-skills", "/api/v1/media", "/form/f1",
       "/api/agent", "/api/agent/status", "/api/agent/chat", "/api/agent/sessions", "/api/agent/chat/other", "/api/agent/pages/other/sessions",
       "/api/agent/pages/other/rule", "/api/agent/sessions/s1/step", "/api/agent/suggestions/g1/accept",
       "/api/agent/warm", "/api/agent/latency", "/api/agent/chat-suggestions/g1/apply",
       "/api/journal/sessions", "/api/journal/sessions/j1", "/api/journal/memory/x", "/api/journal/digest", "/api/journal/agents",
       "/api/folders/tree", "/api/folders/prefs", "/api/folders/undo", "/api/folders/activity", "/api/folders/bulk", "/api/folders/suggest", "/api/folders/suggest/apply",
-      "/api/tags", "/api/tags/merge", "/api/tags/x", "/api/tags/x/pages", "/api/page/other/tags", "/api/v1/folders/tags", "/api/v1/folders/move",
-      "/api/v1/journal/start", "/api/v1/journal/log", "/api/v1/journal/end", "/api/v1/journal/memory", "/api/v1/journal/visual",
-      "/other/", "/edit/other/", "/print/other/", "/media/" + OTHER_MEDIA, "/p/" + "A".repeat(43), "/s/i/" + "A".repeat(43), "/s/logout", "/s/r/other",
+      "/api/parts", "/api/parts/kit", "/api/parts/kit/share", "/api/parts/themes", "/api/parts/themes/kit", "/api/parts/themes/kit/share", "/p/" + "A".repeat(43) + "/acard-part.json", "/api/tags", "/api/tags/merge", "/api/tags/x", "/api/tags/x/pages", "/api/page/other/tags", "/api/v1/folders/tags", "/api/v1/folders/move",
+      "/api/page-view/migrate", "/api/page-view/undo", "/api/v1/page-view/migrate", "/api/v1/pages/other/view", "/api/page/other/view",
+      "/api/v1/journal/start", "/api/v1/journal/log", "/api/v1/journal/end", "/api/v1/journal/memory", "/api/v1/journal/visual", "/api/v1/doc-guides/split", "/api/v1/components", "/api/v1/components/stat",
+      "/other/", "/edit/other/", "/print/other/", "/media/" + OTHER_MEDIA, "/api/media/" + OTHER_MEDIA + "/meta", "/p/" + "A".repeat(43), "/s/i/" + "A".repeat(43), "/s/logout", "/s/r/other",
     ];
     const uncovered = [...[...literals].filter((path) => !samples.some((sample) => sample.split("?")[0] === path)), ...patterns.filter((re) => !samples.some((sample) => re.test(sample.split("?")[0]))).map(String)];
     expect(uncovered).toEqual([]);

@@ -41,7 +41,8 @@ function call(path: string, method = "GET", body?: unknown) {
 }
 
 async function save(slug: string, title: string, text: string) {
-  const response = await call("/api/page/" + slug, "PUT", { title, blocks: [{ id: "b1", type: "paragraph", text }] });
+  const page = await (await call("/api/page/" + slug)).json();
+  const response = await call("/api/page/" + slug, "PUT", { title, base_updated: page.page.updated, blocks: [{ id: "b1", type: "paragraph", text }] });
   expect(response.status).toBe(200);
 }
 

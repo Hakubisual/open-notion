@@ -24,7 +24,7 @@
   <nav class="sidebar" id="sidebar" aria-label="설정 메뉴">
     <div class="navgroup">
       <h2>설정</h2>
-      <ul><li><a href="/settings/agents/" class="on" aria-current="page">에이전트 연결</a></li><li><a href="#auto-notes">자동 메모</a></li></ul>
+      <ul><li><a href="/settings/agents/" class="on" aria-current="page">에이전트 연결</a></li><li><a href="#auto-notes">자동 메모</a></li><li><a href="/agent-journal/">작업 기록 보기</a></li></ul>
     </div>
     <div class="navgroup">
       <h2>노트</h2>
@@ -91,12 +91,31 @@
       <div class="ag-detail" id="client-detail" role="tabpanel" tabindex="0"></div>
     </section>
 
+    <section class="ag-section" id="instructions" aria-labelledby="h-rule">
+      <h2 id="h-rule" class="ag-h2">개인 지침에 붙여 넣을 한 줄</h2>
+      <p class="ag-help">쓰는 도구의 지침 자리에 붙여 넣으면 대화할 때마다 노트가 알아서 정리돼요.</p>
+      <div class="ag-token-row"><input class="ag-token" id="mcp-rule" readonly aria-label="개인 지침 문구"><button type="button" class="ag-btn ag-primary" id="mcp-rule-copy">복사</button></div>
+      <ul class="ag-help ag-where">
+        <li><b>Claude Desktop</b> 설정 &gt; 프로필(또는 프로젝트 지침)</li>
+        <li><b>ChatGPT</b> 설정 &gt; 개인 맞춤 설정 &gt; 맞춤형 지침</li>
+        <li><b>Claude Code</b> ~/.claude/CLAUDE.md (모든 프로젝트) 또는 프로젝트의 CLAUDE.md</li>
+        <li><b>Codex CLI</b> ~/.codex/AGENTS.md (모든 프로젝트) 또는 프로젝트의 AGENTS.md</li>
+        <li><b>Codex 앱</b> 설정 &gt; 개인 맞춤 설정 &gt; 맞춤 지침 (~/.codex/AGENTS.md 와 같은 파일이라 저장하면 그 파일을 덮어써요)</li>
+      </ul>
+    </section>
+
     <section class="ag-section" aria-labelledby="h-other">
       <h2 id="h-other" class="ag-h2">다른 방법</h2>
       <p class="ag-help">위 목록에 없는 앱이라면 이 주소를 직접 넣어요.</p>
       <div class="ag-grid" id="endpoint-cards"></div>
       <p class="ag-docs" id="endpoint-docs" hidden></p>
     </section>
+
+    <details class="ag-section ag-advanced" id="advanced">
+      <summary class="ag-h2">고급</summary>
+      <h3 id="h-lat" class="ag-lat-h">채팅 응답 속도 <small>최근 14일</small></h3>
+      <table class="ag-lat" id="latency" aria-labelledby="h-lat"><tr><td>불러오는 중…</td></tr></table>
+    </details>
   </main>
 </div>
 <div class="ag-toast" id="toast" role="status" aria-live="polite"></div>

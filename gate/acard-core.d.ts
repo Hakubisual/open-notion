@@ -1,6 +1,6 @@
 import type { AgentOperation, AgentPrincipal, FeatureMcpTool } from "../agents/mcp-tools";
 
-export type CorePrincipal = AgentPrincipal & { readonly tokenId?: string };
+export type CorePrincipal = AgentPrincipal & { readonly tokenId?: string; readonly agentRules?: boolean };
 
 export type TokenRecord = {
   readonly id: string;
@@ -23,6 +23,7 @@ export declare const acardHost: {
   run(env: CoreEnv, principal: AgentPrincipal, operation: AgentOperation, input: Record<string, unknown>): Promise<unknown>;
   serveV1(request: Request, env: CoreEnv, principal: AgentPrincipal): Promise<Response>;
   agentStep(env: CoreEnv, session: string): Promise<{ status: number; done?: boolean; busy?: boolean; error?: string }>;
+  recurringTick(env: CoreEnv, now: number): Promise<{ created: { template: string; occurrence: number; row: string }[]; next: number | null }>;
   hasHumanTicket(request: Request, env: CoreEnv): Promise<boolean>;
   trust<E extends CoreEnv>(env: E): E;
   tokenAdmin(env: CoreEnv): Promise<{

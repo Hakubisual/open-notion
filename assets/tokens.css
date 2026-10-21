@@ -60,9 +60,24 @@
   --shell-width: 1440px;
   --sidebar-width: 260px;
   --motion-fast: 120ms;
-  --dur-1: 120ms; --dur-2: 180ms; --dur-3: 240ms;
+  --dur-1: 100ms; --dur-2: 140ms; --dur-3: 150ms;
   --ease-out: cubic-bezier(.2,.8,.2,1); --ease-spring: cubic-bezier(.34,1.4,.64,1);
   --raised: #fff;
+  /* ds10 design system: semantic aliases. New UI uses these names; the raw palette above stays for existing rules. */
+  --color-bg: var(--bg); --color-surface: var(--surface); --color-surface-soft: var(--bg-soft); --color-raised: var(--raised);
+  --color-text: var(--fg); --color-text-dim: var(--fg-dim); --color-border: var(--line);
+  --color-accent: var(--accent); --color-accent-strong: var(--accent-strong); --color-accent-soft: var(--accent-soft); --color-on-accent: var(--on-accent);
+  --color-info-bg: var(--tag-blue-bg); --color-info-fg: var(--tag-blue-fg);
+  --color-success-bg: var(--tag-green-bg); --color-success-fg: var(--tag-green-fg);
+  --color-warning-bg: var(--tag-yellow-bg); --color-warning-fg: var(--tag-yellow-fg);
+  --color-danger-bg: var(--tag-red-bg); --color-danger-fg: var(--tag-red-fg);
+  --color-neutral-bg: var(--tag-gray-bg); --color-neutral-fg: var(--tag-gray-fg);
+  --space-0: 0; --space-7: 28px; --space-12: 48px; --space-16: 64px;
+  --radius-pill: 999px; --radius-xl: 24px;
+  --shadow-sm: var(--shadow); --shadow-md: 0 4px 14px rgba(30, 28, 50, .08); --shadow-lg: var(--shadow-menu);
+  --focus-ring: 0 0 0 3px var(--accent-soft), 0 0 0 1px var(--accent);
+  --control-h-sm: 28px; --control-h-md: 36px; --control-h-lg: 44px;
+  --dur-fast: var(--dur-1); --dur-base: var(--dur-2); --dur-slow: 240ms;
 }
 html[data-theme="dark"] {
   color-scheme: dark;
@@ -94,6 +109,7 @@ html[data-theme="dark"] {
   --shadow: 0 1px 2px rgba(0, 0, 0, .3);
   --shadow-menu: 0 14px 36px rgba(0, 0, 0, .5);
   --raised: #26262d;
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, .35);
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]):not([data-theme="dark"]) {
@@ -108,7 +124,7 @@ html[data-theme="dark"] {
     --tag-pink-bg: #43263a; --tag-pink-fg: #f6b2d6; --tag-gray-bg: #2e2e36; --tag-gray-fg: #c4c2cc;
     --bar-track: #33333c;
     --cover: linear-gradient(120deg, #2e2950 0%, #1f3149 48%, #1f3a2e 100%);
-    --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-menu: 0 14px 36px rgba(0, 0, 0, .5); --raised: #26262d;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-menu: 0 14px 36px rgba(0, 0, 0, .5); --raised: #26262d; --shadow-md: 0 4px 14px rgba(0, 0, 0, .35);
   }
 }
 

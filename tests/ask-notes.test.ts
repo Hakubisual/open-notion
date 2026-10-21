@@ -40,8 +40,9 @@ function call(path: string, method = "GET", body?: unknown, authenticated = true
 }
 const ask = (question: string) => call("/api/ai/ask", "POST", { question });
 async function page(slug = "launch", text = "프로젝트 출시는 금요일이에요.", count = 1) {
-  expect((await call("/api/pages", "POST", { slug, title: "출시 계획" })).status).toBe(200);
-  expect((await call("/api/page/" + slug, "PUT", { title: "출시 계획", blocks: Array.from({ length: count }, (_, i) => ({ id: "source-" + i, type: "paragraph", text })) })).status).toBe(200);
+  const created = await call("/api/pages", "POST", { slug, title: "출시 계획" });
+  expect(created.status).toBe(200);
+  expect((await call("/api/page/" + slug, "PUT", { title: "출시 계획", base_updated: (await created.json()).updated, blocks: Array.from({ length: count }, (_, i) => ({ id: "source-" + i, type: "paragraph", text })) })).status).toBe(200);
 }
 
 test("retrieves real search results and numbered block passages for the prompt", async () => {

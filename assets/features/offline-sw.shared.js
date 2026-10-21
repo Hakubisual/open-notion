@@ -1,4 +1,11 @@
 (function () {
-  if (!(window.AcardReader || window.AcardEditor) || !("serviceWorker" in navigator)) return;
-  navigator.serviceWorker.register("/sw.js", { type: "module", scope: "/", updateViaCache: "none" }).catch(function (error) { console.warn("Offline registration failed", error); });
+  var sw = navigator.serviceWorker;
+  if (!sw) return;
+  function identify() {
+    sw.controller?.postMessage({ type: "acard-id", id: document.querySelector('meta[name="acard-id"]')?.content || null });
+  }
+  identify();
+  sw.addEventListener("controllerchange", identify);
+  window.addEventListener("pageshow", identify);
+  sw.register("/sw.js", { type: "module" }).catch(console.warn);
 })();
