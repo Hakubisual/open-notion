@@ -77,7 +77,8 @@ test("acard mcp proxies tools/list and tools/call over stdio", async () => {
   } finally {
     await client.close();
   }
-});
+// Spawns the CLI several times (node start-up each); a cold Windows CI runner needs more than bun's 5 s default.
+}, 20000);
 
 test("acard mcp uploads local image paths before forwarding a write and rewrites them to /media/", async () => {
   const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
@@ -115,6 +116,8 @@ test("attach_images uploads local paths and the image the user pasted (from the 
   writeFileSync(transcript, pasted(png) + "\n" + pasted(Buffer.concat([png, Buffer.from([9, 9, 9])])) + "\n");
   let ffmpeg = true;
   try { execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "testsrc=duration=4:size=160x120:rate=10", "-pix_fmt", "yuv420p", "-y", join(dir, "clip.mp4")], { stdio: "ignore" }); } catch { ffmpeg = false; }
+  // Without ffmpeg the clip still has to exist, so attach_video reaches the "install ffmpeg" note instead of "file not found".
+  if (!ffmpeg) writeFileSync(join(dir, "clip.mp4"), Buffer.from([0, 0, 0, 24, 102, 116, 121, 112]));
   const start = uploads.length;
   const env = { ...process.env, ACARD_TOKEN: TOKEN, ACARD_URL: `http://localhost:${remote.port}`, ACARD_TRANSCRIPT: transcript };
   const client = new Client({ name: "test-client", version: "1.0.0" });

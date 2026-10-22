@@ -80,7 +80,8 @@ test("install keeps other hooks, a turn posts start + one log, uninstall restore
   expect(JSON.parse(readFileSync(settings, "utf8"))).toEqual(mine);
   expect(existsSync(join(dir, "acard-custom", "config.json"))).toBe(false);
   expect((await run([BIN, "hooks", "status"], e)).stdout).toContain("Claude Code: 꺼짐");
-});
+// Spawns the CLI several times (node start-up each); a cold Windows CI runner needs more than bun's 5 s default.
+}, 20000);
 
 test("a failing server never breaks the agent: exit 0, no output, token kept out of the log", async () => {
   api = startJournal(500);

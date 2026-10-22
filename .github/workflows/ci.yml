@@ -24,4 +24,8 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run build
+      # Several tests drive the editor in a headless browser (Bun.WebView). Chrome's first start on a fresh runner can
+      # outlast a test's 30 s setup, so start it once here and log how long it took.
+      - name: Warm up the headless browser
+        run: bun -e "const t = Date.now(); const v = new Bun.WebView(); await v.navigate('about:blank'); await v.close(); console.log('webview ready in', Date.now() - t, 'ms')"
       - run: bun test
