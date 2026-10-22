@@ -196,11 +196,11 @@ test("entry routes attach member identity and never attach it to public shares",
   const human = { ws: "owner", session: { user: { sub: "owner-user" } }, set: [], env: {} };
   const env = { GATE_PASSWORD: "p", GATE_SECRET: "s", ACARD_IDENTITY: (value: string | null) => identify.push(value) };
   const core = { fetch: async () => Response.json({ ok: true }) };
-  const entry = new Function("unforward", "LEGACY_HOSTS", "AGENT_PATH", "langSwitch", "resourceFor", "bearer", "ACCOUNT_API", "MEMBER_SHARE", "SHARE_PATH", "scoped", "core", "OWNER_WS", "humanFor", "ADMIN_PATH", "BETA_API", "betaClosed", "PUBLIC_SITE", "guestEnv", "routeLoggedIn", "SITE_HOST", source.slice(marker, end) + "; return entry;")(
+  const entry = new Function("unforward", "LEGACY_HOSTS", "AGENT_PATH", "langSwitch", "resourceFor", "bearer", "ACCOUNT_API", "MEMBER_SHARE", "SHARE_PATH", "scoped", "core", "OWNER_WS", "humanFor", "ADMIN_PATH", "BETA_API", "betaClosed", "PUBLIC_SITE", "guestEnv", "routeLoggedIn", "SITE_HOST", "BILLING_ROUTES", source.slice(marker, end) + "; return entry;")(
     (request: Request) => request, new Set(), /never/, () => null, () => null, () => null,
     /never/, /never/, /never/, (value: any) => value, core, "owner",
     async (_request: Request, value: any) => { value.ACARD_IDENTITY("owner-user:owner"); return human; },
-    /never/, /never/, () => false, {}, () => null, async () => Response.json({ ok: true }), "notes.example.com",
+    /never/, /never/, () => false, {}, () => null, async () => Response.json({ ok: true }), "notes.example.com", /never/,
   );
   expect((await entry.fetch(new Request("https://notes.example.com/api/tree"), env, {})).status).toBe(200);
   expect(identify).toEqual(["owner-user:owner"]);

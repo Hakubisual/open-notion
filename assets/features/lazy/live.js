@@ -105,6 +105,16 @@
       if (!data || !data.page) return;
       var now = editorState();
       if (snapshot({ title: data.page.title, blocks: data.blocks || [] }) === snapshot(now)) { hideBar(); return; }
+      // issue 109: this tab's own save also comes back as a notice (the first save can go out before this file set the client
+      // id). A version no newer than the one this tab last saved is not someone else's change; one still being saved
+      // is checked again once that save settles.
+      if (Number.isSafeInteger(now.baseUpdated) && data.page.updated <= now.baseUpdated) { hideBar(); return; }
+      if (now.saving && window.AcardEditor && window.AcardEditor.on) {
+        var off = [];
+        var again = function () { off.forEach(function (f) { f(); }); refreshEditor(); };
+        off.push(window.AcardEditor.on("saved", again), window.AcardEditor.on("saveFailed", again));
+        return;
+      }
       var idle = Date.now() - lastInput > 3000;
       if (!now.dirty && !now.saving && idle) applyEditor(data);
       else showBar(data);

@@ -10,6 +10,36 @@ import core, { acardHost } from "../.build/acard-core.js";
 import { workspaceEnv } from "../gate/tenancy";
 import { isLang, type Lang } from "../gate/i18n";
 import { licenseRoute } from "./edition";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { createAcardMcpServer, OperationFailure, type AgentOperation } from "../agents/mcp-tools";
+import { archiveRoute } from "./archive";
+import { CloudClient, cloudRoute } from "./cloud";
+import { cloudPage } from "./cloud-page";
+import { CLOUD_URL } from "./cloud-host";
+import { startAutoBackup } from "./auto-backup";
+import { startSync } from "./sync";
+
+// The local half of the live feed the app already listens to (assets/features/lazy/live.js, /api/live on notes.example.com):
+// hello with the last id and anything missed, then change notices. Sync uses it so pages that arrive from another PC
+// show up in the sidebar and an open page without a reload.
+function liveFeed() {
+  let id = 0;
+  const backlog: { id: number; t: number; kinds: string[]; slugs: string[]; src: string }[] = [];
+  return {
+    backlog,
+    next(kinds: string[], slugs: string[]) {
+      const event = { id: ++id, t: Date.now(), kinds, slugs, src: "sync" };
+      backlog.push(event);
+      if (backlog.length > 100) backlog.shift();
+      return event;
+    },
+    hello(since: number) {
+      const missed = backlog.filter((e) => e.id > since);
+      const reset = since > 0 && since < id && (!backlog.length || backlog[0].id > since + 1);
+      return JSON.stringify({ type: "hello", id, missed: reset ? [] : missed, reset });
+    },
+  };
+}
 
 const LOCAL_WS = "00000000000000000000000000000001";
 const CLOUD_ONLY = "This feature needs the hosted service and is not available on a self-hosted server.";
@@ -17,7 +47,7 @@ const CLOUD_ONLY = "This feature needs the hosted service and is not available o
 // host: listen address (default 127.0.0.1). allowedHosts: extra Host names (LAN IP, DNS name) or "*".
 // password: when set, every page needs a login (/__local/login). Required whenever host is not loopback.
 // lang: UI language for app pages (en / ko / zh). Unset keeps the Korean source copy.
-export type LocalOptions = { dataDir: string; appDir: string; port: number; host?: string; allowedHosts?: string[]; password?: string; lang?: string };
+export type LocalOptions = { dataDir: string; appDir: string; port: number; host?: string; allowedHosts?: string[]; password?: string; lang?: string; cloudUrl?: string };
 
 function clean(params: unknown[] = []) {
   return params.map((v) => (v === undefined ? null : v === true ? 1 : v === false ? 0 : v)) as any[];
@@ -172,8 +202,28 @@ export function guard(request: Request, port: number, extraHosts: string[] = [])
 const CLOUD_PATHS = /^\/(?:login|signup|forgot|reset|onboarding|oauth\/|mcp|sse|api\/account|api\/agents|settings\/agents|\.well-known\/)/;
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1"]);
+
+// Local MCP for the user's own agents (Claude Code, Codex ...): http://127.0.0.1:<port>/mcp. The local server has no
+// accounts, so this has the same reach as the editor on this PC; in LAN mode the password gate runs before it.
+const LOCAL_AGENT = { name: "로컬 에이전트", via: "token" as const, scopes: ["read", "write"] };
+async function localMcp(request: Request, env: unknown): Promise<Response> {
+  if (request.method === "GET") return new Response(null, { status: 405, headers: { allow: "POST, DELETE" } });
+  const run = async (operation: AgentOperation, input: Record<string, unknown>) => {
+    try {
+      return await acardHost.run(env as never, LOCAL_AGENT, operation, input);
+    } catch (error) {
+      if (acardHost.isAgentError(error)) throw new OperationFailure(error.message, error.status);
+      throw error;
+    }
+  };
+  const server = createAcardMcpServer(run, "local", acardHost.mcpTools);
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+  await server.connect(transport);
+  return transport.handleRequest(request);
+}
 const SESSION_COOKIE = "acard_session";
 const SESSION_DAYS = 30;
+const BRAND_FILES = new Set(["/favicon.svg", "/favicon.ico", "/favicon-16.png", "/favicon-32.png", "/apple-touch-icon.png", "/wordmark.svg"]);
 
 // Password login for LAN mode. The cookie is "<expiry>.<hmac(secret, expiry)>"; the secret lives in the data folder,
 // so changing the password or deleting session-secret signs everyone out.
@@ -189,13 +239,16 @@ export function passwordGate(dataDir: string, password: string) {
     return !!expiry && !!mac && Number(expiry) > Date.now() && same(mac, sign(expiry));
   };
   const secure = (request: Request) => new URL(request.url).protocol === "https:" || request.headers.get("x-forwarded-proto") === "https";
-  const page = (error = "", next = "/") => new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in</title>'
-    + '<style>body{font-family:system-ui,sans-serif;background:#f6f6f4;display:grid;place-items:center;min-height:100vh;margin:0}form{background:#fff;padding:32px;border-radius:12px;box-shadow:0 2px 12px #0001;width:min(340px,86vw)}h1{font-size:20px;margin:0 0 16px}input{width:100%;box-sizing:border-box;padding:10px;font-size:15px;border:1px solid #ccc;border-radius:8px}button{margin-top:14px;width:100%;padding:10px;font-size:15px;border:0;border-radius:8px;background:#222;color:#fff;cursor:pointer}p{color:#b00020;font-size:14px}</style>'
-    + '<form method="post" action="/__local/login"><h1>Sign in to your notes</h1>' + (error ? "<p>" + error + "</p>" : "")
+  const page = (error = "", next = "/") => new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in - Acard</title>'
+    + '<link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="icon" href="/favicon-32.png" sizes="32x32"><link rel="apple-touch-icon" href="/apple-touch-icon.png">'
+    + '<style>body{font-family:system-ui,sans-serif;background:#f6f6f4;display:grid;place-items:center;min-height:100vh;margin:0}form{box-sizing:border-box;background:#fff;padding:32px;border-radius:12px;box-shadow:0 2px 12px #0001;width:min(404px,92vw)}.brand{display:block;height:34px;width:auto;margin:0 0 20px}h1{font-size:20px;margin:0 0 16px}input{width:100%;box-sizing:border-box;padding:10px;font-size:15px;border:1px solid #ccc;border-radius:8px}button{margin-top:14px;width:100%;padding:10px;font-size:15px;border:0;border-radius:8px;background:#222;color:#fff;cursor:pointer}p{color:#b00020;font-size:14px}</style>'
+    + '<form method="post" action="/__local/login"><img class="brand" src="/wordmark.svg" alt="Acard"><h1>Sign in to your notes</h1>' + (error ? "<p>" + error + "</p>" : "")
     + '<input type="hidden" name="next" value="' + next.replace(/["<>&]/g, "") + '"><input type="password" name="password" placeholder="Server password" autofocus required><button>Sign in</button></form>',
     { status: error ? 401 : 200, headers: { "content-type": "text/html; charset=utf-8" } });
   return async function gate(request: Request, url: URL): Promise<Response | null> {
     if (url.pathname === "/__local/health") return null;
+    // The sign-in page shows the logo and favicon before there is a session; these files carry no workspace data.
+    if (request.method === "GET" && BRAND_FILES.has(url.pathname)) return null;
     if (url.pathname === "/__local/login") {
       if (request.method !== "POST") return page("", url.searchParams.get("next") || "/");
       const form = await request.formData().catch(() => null);
@@ -220,6 +273,48 @@ export function passwordGate(dataDir: string, password: string) {
 
 const HTML_LANG: Record<Lang, string> = { en: "en", ko: "ko", zh: "zh-CN" };
 
+// The local app's home (acard-next-10 #8). notes.example.com keeps the profile in Supabase; here it is one file in the data folder
+// with the home layout and the two local checklist steps (MCP address copied, backup file downloaded). assets/ui/home.js
+// draws the local 시작하기 steps when the profile carries "local".
+export function localProfile(dataDir: string) {
+  const file = join(dataDir, "local-profile.json");
+  const read = (): Record<string, any> => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
+  const write = (patch: Record<string, unknown>) => writeFileSync(file, JSON.stringify({ ...read(), ...patch }));
+  return {
+    async route(request: Request, url: URL): Promise<Response> {
+      if (request.method === "POST") {
+        const body = await request.json().catch(() => null);
+        const layout = body && body.home_layout;
+        if (!body || typeof body !== "object" || ("home_layout" in body && layout !== null && !(layout && Array.isArray(layout.widgets) && layout.widgets.every((w: unknown) => typeof w === "string")))) {
+          return Response.json({ error: "요청 형식이 올바르지 않아요." }, { status: 400 });
+        }
+        write({ ...("home_layout" in body ? { home_layout: layout } : {}), ...(body.step === "mcp" ? { mcpCopied: Date.now() } : {}) });
+      } else if (request.method !== "GET") return Response.json({ error: "지원하지 않는 요청이에요." }, { status: 405 });
+      const saved = read();
+      return Response.json({
+        profile: { home_layout: saved.home_layout === undefined ? { widgets: [] } : saved.home_layout },
+        local: { mcp: url.origin + "/mcp", mcpCopied: Boolean(saved.mcpCopied), backupDone: Boolean(saved.backupDone) },
+      });
+    },
+    backedUp: () => write({ backupDone: Date.now() }),
+  };
+}
+
+// The sidebar footer was made for notes.example.com accounts. Locally there is no account: its agent-settings icon opens
+// "내 데이터" (backup, notes.example.com connect, local MCP address) and the sign-out button only stays when a LAN password is on.
+const SIDE_AGENTS = '<a class="icon" href="/settings/agents/" aria-label="에이전트 연결" title="에이전트 연결">';
+const SIDE_LOGOUT = /<form method="POST" action="\/__logout" class="side-logout">[\s\S]*?<\/form>/;
+export async function localShell(response: Response, passwordOn: boolean): Promise<Response> {
+  if (!(response.headers.get("content-type") ?? "").includes("text/html")) return response;
+  const html = await response.text();
+  if (!html.includes(SIDE_AGENTS)) return new Response(html, { status: response.status, statusText: response.statusText, headers: response.headers });
+  let out = html.replace(SIDE_AGENTS, '<a class="icon" href="/__local/cloud" aria-label="내 데이터" title="내 데이터">');
+  out = passwordOn ? out.replace(SIDE_LOGOUT, '<form method="POST" action="/__local/logout" class="side-logout"><button class="icon" type="submit" aria-label="로그아웃" title="로그아웃">' + (SIDE_LOGOUT.exec(out)?.[0].match(/<svg[\s\S]*<\/svg>/)?.[0] ?? "") + "</button></form>") : out.replace(SIDE_LOGOUT, "");
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  return new Response(out, { status: response.status, statusText: response.statusText, headers });
+}
+
 // Same result as gate/i18n.ts injectAppLang (html lang + the app dictionary loader), done on the buffered page:
 // a streamed HTMLRewriter body is cut off when Bun.serve sends it.
 export async function withLang(response: Response, lang: Lang): Promise<Response> {
@@ -236,19 +331,52 @@ export async function withLang(response: Response, lang: Lang): Promise<Response
 export function startServer(options: LocalOptions) {
   const host = options.host || "127.0.0.1";
   if (!LOOPBACK.has(host) && !options.password) throw new Error("Listening on " + host + " needs a password (ACARD_PASSWORD).");
+  // A new data folder starts with the example pages instead of one empty page (the same pair notes.example.com offers).
+  const fresh = !existsSync(join(options.dataDir, "acard.sqlite"));
   const { env, assets, close } = localEnv(options);
+  const profile = localProfile(options.dataDir);
+  const origin = "http://127.0.0.1:" + options.port;
+  const seeding = fresh
+    ? Promise.resolve(core.fetch(new Request(origin + "/api/templates/welcome", { method: "POST", headers: { origin } }), env))
+      .then((res: Response) => { if (res.status !== 303) console.error("acard local example pages were not created", res.status); })
+      .catch((error: unknown) => console.error("acard local example pages were not created", error))
+    : Promise.resolve();
+  // Archive restore writes tables the core creates on its first API call, so make sure that call has happened.
+  const ready = async () => { await acardHost.prepare(env); };
+  const archiveEnv = { DB: (env as any).DB, MEDIA: (env as any).MEDIA };
+  const cloud = new CloudClient(options.cloudUrl ?? CLOUD_URL, options.dataDir, options.port);
+  const auto = startAutoBackup({ env: archiveEnv, dataDir: options.dataDir, ready, cloud });
+  const live = liveFeed();
+  let server: ReturnType<typeof Bun.serve<{ since: number }>> | null = null;
+  const sync = startSync({ env: archiveEnv, dataDir: options.dataDir, ready, cloud, notify: (slugs) => {
+    const event = live.next(["tree", "page"], slugs);
+    server?.publish("live", JSON.stringify({ type: "change", ...event }));
+  } });
   const gate = options.password ? passwordGate(options.dataDir, options.password) : null;
   const lang: Lang | null = isLang(options.lang) ? options.lang : null;
-  const server = Bun.serve({
+  server = Bun.serve<{ since: number }>({
     hostname: host,
     port: options.port,
     idleTimeout: 120,
-    async fetch(request) {
+    websocket: {
+      open(ws) { ws.subscribe("live"); ws.send(live.hello(ws.data.since)); },
+      message(ws, message) { if (message === "ping") ws.send("pong"); },
+      close(ws) { ws.unsubscribe("live"); },
+    },
+    async fetch(request, srv) {
       const blocked = guard(request, options.port, options.allowedHosts);
       if (blocked) return blocked;
+      await seeding;
       const url = new URL(request.url);
       const locked = gate ? await gate(request, url) : null;
       if (locked) return locked;
+      if (url.pathname === "/api/live" && request.method === "GET") {
+        if (srv.upgrade(request, { data: { since: Math.max(0, Number(url.searchParams.get("since")) || 0) } })) return undefined;
+        return new Response(JSON.stringify({ error: "websocket only" }), { status: 426, headers: { "content-type": "application/json; charset=utf-8" } });
+      }
+      if (url.pathname === "/mcp") { const res = await localMcp(request, env); if (request.method === "POST") sync.edited(); return res; }
+      // Settings live on notes.example.com; the local app's own settings are the "내 데이터" screen.
+      if (/^\/settings(?:\/agents)?\/?$/.test(url.pathname) && request.method === "GET") return new Response(null, { status: 303, headers: { location: "/__local/cloud" } });
       if (CLOUD_PATHS.test(url.pathname)) {
         const wantsHtml = (request.headers.get("accept") ?? "").includes("text/html");
         return wantsHtml
@@ -257,10 +385,30 @@ export function startServer(options: LocalOptions) {
       }
       if (url.pathname === "/__local/health") return new Response("acard-local ok");
       if (url.pathname.startsWith("/__local/license")) return licenseRoute(request, options.dataDir);
+      if (url.pathname === "/__local/archive/auto") {
+        const body = request.method === "POST" ? await auto.tick(true).then(() => auto.status()) : auto.status();
+        return new Response(JSON.stringify(body), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+      }
+      if (url.pathname.startsWith("/__local/archive/")) {
+        const res = await archiveRoute(request, url, archiveEnv, options.dataDir, ready);
+        if (url.pathname === "/__local/archive/export" && res.ok) profile.backedUp();
+        return res;
+      }
+      if (url.pathname === "/api/profile") return profile.route(request, url);
+      if (url.pathname === "/__local/cloud" || url.pathname === "/__local/cloud/") return cloudPage();
+      if (url.pathname === "/__local/cloud/sync") {
+        const body = request.method === "POST" ? ((await request.json().catch(() => ({}))) as { enabled?: boolean; now?: boolean }) : {};
+        if (typeof body.enabled === "boolean") await sync.setEnabled(body.enabled);
+        else if (body.now) await sync.sync();
+        return new Response(JSON.stringify(sync.status()), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+      }
+      if (url.pathname.startsWith("/__local/cloud/")) return cloudRoute(request, url, cloud, archiveEnv, options.dataDir, ready);
       // The hosted entry serves the app dictionaries; local mode skips that entry, so answer them here.
       if (/^\/i18n\/app-(?:en|zh)\.json$/.test(url.pathname)) return assets.fetch(request);
       try {
-        const response = await core.fetch(request, env);
+        const raw = await core.fetch(request, env);
+        if (request.method !== "GET" && request.method !== "HEAD" && raw.ok && url.pathname.startsWith("/api/")) sync.edited();
+        const response = await localShell(raw, Boolean(gate));
         return lang ? await withLang(response, lang) : response;
       } catch (error) {
         console.error("acard local request failed", error);
@@ -268,5 +416,5 @@ export function startServer(options: LocalOptions) {
       }
     },
   });
-  return { server, close: () => { server.stop(true); close(); } };
+  return { server, sync, close: () => { auto.stop(); sync.stop(); server!.stop(true); close(); } };
 }

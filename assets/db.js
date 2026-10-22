@@ -298,8 +298,8 @@
       return api(base + "/properties/" + encodeURIComponent(propId), {
         method: "PATCH",
         body: JSON.stringify(patch),
-      }).then(function () {
-        return reloadWithStatus("속성 저장됨").then(function () { return true; });
+      }).then(function (body) {
+        return reloadWithStatus("속성 저장됨" + (body.unlinked ? " · 예전 값 보관 " + body.unlinked : "")).then(function () { return true; });
       }, function (error) { setStatus("속성 저장 실패: " + error.message, true); return false; });
     }
 
@@ -1219,6 +1219,7 @@
             saveView({ default_template: isDefault ? null : template.id }).then(function () { return reloadWithStatus(isDefault ? "기본 템플릿 해제됨" : "기본 템플릿 설정됨"); });
           },
         });
+        if (template.notice) items.push({ label: template.notice, run: function () { recurrenceEditor(anchor, template); } });
         items.push({
           label: template.name + " 반복…", ico: template.recurrence ? "↻" : "◷", aria: template.name + " 템플릿 반복 설정",
           run: function () { recurrenceEditor(anchor, template); },

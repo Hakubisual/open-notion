@@ -4,11 +4,22 @@ import { join } from "node:path";
 import { markdownToBlocks } from "../markdown-blocks.ts";
 import "../assets/editor-model.js";
 import "../assets/columns-model.js";
-import { renderBlocks, navTree, introSplit } from "../block-html.js";
+import { renderBlocks, navTree, introSplit, inline } from "../block-html.js";
 
 const ROOT = join(import.meta.dir, "..");
 
 describe("renderBlocks", () => {
+  test("inline links escape query strings and labels exactly once (#93)", () => {
+    expect(inline('[검색 & 결과](https://ex.com/?a=1&b=2)')).toBe('<a href="https://ex.com/?a=1&amp;b=2" target="_blank" rel="noopener">검색 &amp; 결과</a>');
+    expect(inline('[[a&b]] [a & b](/path?a=1&b=2) [anchor](#a&b) **bold & text** `code & text`'))
+      .toBe('<a href="/a&amp;b/">a&amp;b</a> <a href="/path?a=1&amp;b=2">a &amp; b</a> <a href="#a&amp;b">anchor</a> <strong>bold &amp; text</strong> <code>code &amp; text</code>');
+    expect(inline('[&amp; <tag>](https://ex.com/?q="quoted"&literal=&amp;)')).toBe('<a href="https://ex.com/?q=&quot;quoted&quot;&amp;literal=&amp;amp;" target="_blank" rel="noopener">&amp;amp; &lt;tag&gt;</a>');
+    expect(inline('*italics* _also italic_ (*word*) 한글 *기울임* 끝')).toBe('<em>italics</em> <em>also italic</em> (<em>word</em>) 한글 <em>기울임</em> 끝');
+    expect(inline('snake_case_name a*b a*b*c 2 * 3 * 4 x_text_ _text_x')).toBe('snake_case_name a*b a*b*c 2 * 3 * 4 x_text_ _text_x');
+    expect(inline('`*code* _code_ **code**` https://ex.com/*path*/_file_ [*label*](https://ex.com/*path*/_file_?a=1&b=2)'))
+      .toBe('<code>*code* _code_ **code**</code> https://ex.com/*path*/_file_ <a href="https://ex.com/*path*/_file_?a=1&amp;b=2" target="_blank" rel="noopener"><em>label</em></a>');
+  });
+
   test("a link button renders exactly as before; an action button is a <button data-button> that loads the buttons chunk once and is disabled on a read-only page (notion-parity C3)", () => {
     const links = renderBlocks([
       { id: "b1", type: "button", text: "이동", meta: { url: "https://example.com/?a=1&b=2" } },

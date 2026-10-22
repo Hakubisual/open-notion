@@ -35,7 +35,13 @@ function d1(sqlite: Database) {
 
 let sqlite: Database;
 let db: ReturnType<typeof d1>;
-let worker: { fetch(request: Request, env: any): Promise<Response> };
+let worker: {
+  fetch(request: Request, env: any): Promise<Response>;
+  acardHost: {
+    principalFromToken(env: any, token: string): Promise<any>;
+    run(env: any, principal: any, operation: string, input: Record<string, unknown>): Promise<any>;
+  };
+};
 let env: any;
 
 async function call(method: string, path: string, options: { token?: string; body?: unknown; markdown?: string; accept?: string } = {}) {
@@ -325,6 +331,64 @@ describe("human page view shows who wrote last", () => {
     expect(up.status).toBe(200);
     expect(await up.text()).toContain("모델링 구분표");
   });
+});
+
+describe("agent target parent permissions (#89)", () => {
+  async function owner(method: string, path: string, body: unknown) {
+    const response = await worker.fetch(new Request("https://notes.test" + path, {
+      method, headers: { cookie: await gateCookie(), "content-type": "application/json" }, body: JSON.stringify(body),
+    }), env);
+    expect(response.ok).toBe(true);
+    return response.json();
+  }
+
+  for (const transport of ["REST", "MCP host"] as const) {
+    for (const role of ["none", "read"] as const) for (const operation of ["create", "move"] as const) {
+      test(transport + " " + operation + " refuses a " + role + " target parent before writing", async () => {
+        const made = await createAgentToken(db, { name: "Scoped writer", scopes: ["read", "write"] });
+        const writer = made.token;
+        await owner("POST", "/api/db", { title: "Restricted", slug: "restricted", page: true });
+        expect((await call("POST", "/api/v1/pages", { token: writer, body: { slug: "nested", parent: "restricted", markdown: "Original child" } })).status).toBe(201);
+        expect((await call("POST", "/api/v1/pages", { token: writer, body: { slug: "movable", markdown: "Original content" } })).status).toBe(201);
+        await owner("PUT", "/api/page/restricted/access/agents", { token: made.record.id, level: role });
+        const principal = await worker.acardHost.principalFromToken(env, writer);
+        const snapshot = () => ({
+          pages: sqlite.query("SELECT * FROM pages ORDER BY slug").all(),
+          blocks: sqlite.query("SELECT * FROM blocks ORDER BY page, ord").all(),
+          activity: sqlite.query("SELECT * FROM agent_activity ORDER BY id").all(),
+        });
+        const before = snapshot();
+        for (const parent of ["restricted", "nested"]) for (const frontmatter of [false, true]) {
+          const input = { slug: operation === "create" ? "new-child" : "movable", markdown: frontmatter ? "---\nparent: " + parent + "\n---\nChanged" : "Changed", ...(frontmatter ? {} : { parent }) };
+          if (transport === "REST") {
+            const result = await call(operation === "create" ? "POST" : "PATCH", operation === "create" ? "/api/v1/pages" : "/api/v1/pages/movable", { token: writer, body: input });
+            expect(result.status).toBe(403);
+          } else {
+            await expect(worker.acardHost.run(env, principal, operation === "create" ? "createPage" : "updatePage", input)).rejects.toMatchObject({ status: 403 });
+          }
+          expect(snapshot()).toEqual(before);
+        }
+        await owner("PUT", "/api/page/restricted/access/agents", { token: made.record.id, level: "write" });
+        const allowed = await call(operation === "create" ? "POST" : "PATCH", operation === "create" ? "/api/v1/pages" : "/api/v1/pages/movable", { token: writer, body: { slug: "new-child", parent: "nested", markdown: "Allowed" } });
+        expect(allowed.status).toBe(operation === "create" ? 201 : 200);
+        expect(allowed.data.parent).toBe("nested");
+      });
+    }
+
+    test(transport + " database lists hide denied databases and retain readable databases", async () => {
+      const made = await createAgentToken(db, { name: "Scoped reader", scopes: ["read", "write"] });
+      for (const slug of ["visible", "readonly", "hidden"]) await owner("POST", "/api/db", { title: slug, slug, page: true });
+      await owner("POST", "/api/db", { title: "nested-hidden", slug: "nested-hidden", parent: "hidden", page: true });
+      await owner("PUT", "/api/page/hidden/access/agents", { token: made.record.id, level: "none" });
+      await owner("PUT", "/api/page/readonly/access/agents", { token: made.record.id, level: "read" });
+      const result = transport === "REST"
+        ? (await call("GET", "/api/v1/databases", { token: made.token })).data
+        : await worker.acardHost.run(env, await worker.acardHost.principalFromToken(env, made.token), "listDatabases", {});
+      expect(result.databases.map((d: any) => d.slug)).toEqual(["readonly", "visible"]);
+      const unrestricted = await token(["read", "write"], "Unrestricted");
+      expect((await call("GET", "/api/v1/databases", { token: unrestricted })).data.databases.map((d: any) => d.slug)).toEqual(["hidden", "nested-hidden", "readonly", "visible"]);
+    });
+  }
 });
 
 describe("database rows through /api/v1", () => {

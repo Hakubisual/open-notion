@@ -3,6 +3,10 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { loadTemplates } from "../features/templates.build";
 import { assembleWorkerSource } from "./assemble-worker";
 import { runInNewContext } from "node:vm";
+import "../assets/editor-model.js";
+import "../assets/columns-model.js";
+import { renderBlocks } from "../block-html.js";
+import { getComponent } from "../component-registry.js";
 
 const templates = await loadTemplates(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"));
 const source = assembleWorkerSource();
@@ -64,7 +68,7 @@ test("template client keeps the creation version when a conflict is retried", as
 
 test("curated catalog is bounded and every markdown template produces editable blocks", async () => {
   expect(templates.length).toBeGreaterThan(0);
-  expect(templates.length).toBeLessThanOrEqual(10);
+  expect(templates.length).toBeLessThanOrEqual(11);
   expect(new Set(templates.map(t => t.id)).size).toBe(templates.length);
   for (const template of templates) {
     expect(template.blocks.length).toBeGreaterThan(3);
@@ -74,6 +78,48 @@ test("curated catalog is bounded and every markdown template produces editable b
   const response = await call("/templates");
   expect(response.status).toBe(200);
   expect((await response.json()).templates).toEqual(templates);
+});
+
+test("meeting, plan and report start the catalog and are built from the design-system components", () => {
+  expect(templates.slice(0, 3).map(t => t.id)).toEqual(["meeting", "plan", "report"]);
+  const uses = (id: string) => templates.find(t => t.id === id)!.blocks.filter(b => b.type === "component").map(b => (b.meta as any).ui);
+  expect(uses("meeting")).toEqual(expect.arrayContaining(["callout-box", "badges", "accordion"]));
+  expect(uses("plan")).toEqual(expect.arrayContaining(["stat-row", "steps", "compare", "timeline"]));
+  expect(uses("report")).toEqual(expect.arrayContaining(["callout-box", "stat-row", "compare"]));
+  for (const id of ["meeting", "report"]) expect(templates.find(t => t.id === id)!.blocks.some(b => b.type === "to_do")).toBe(true);
+});
+
+test("every acard-ui block in a template is valid JSON for a registered component and renders without a fallback card", () => {
+  const unknown: string[] = [];
+  for (const template of templates) for (const block of template.blocks.filter(b => b.type === "component")) {
+    const ui = String((block.meta as any)?.ui || "");
+    if (!getComponent(ui)) unknown.push(template.id + ": " + ui);
+    const data = JSON.parse(block.text);
+    expect(data && typeof data === "object" && !Array.isArray(data)).toBe(true);
+  }
+  expect(unknown).toEqual([]);
+  for (const template of templates) {
+    const html = renderBlocks(template.blocks, { page: { slug: "template-" + template.id } });
+    expect(html).not.toContain('class="ui-fallback"');
+    expect(html).not.toContain("data-ui-invalid");
+  }
+});
+
+test("picker cards show a section outline and the preview draws components with the page renderer", () => {
+  const source = require("node:fs").readFileSync(new URL("../assets/features/lazy/templates.js", import.meta.url), "utf8");
+  const helpers = source.slice(source.indexOf("  function node("), source.indexOf("  function button(")) + source.slice(source.indexOf("  function outline("), source.indexOf("  function fail("));
+  const el = () => ({ className: "", textContent: "", innerHTML: "" });
+  const context: any = { window: {}, document: { createElement: el } };
+  runInNewContext(helpers + "\nthis.outline = outline; this.previewBlock = previewBlock;", context);
+  const plan = templates.find(t => t.id === "plan")!;
+  expect(context.outline(plan)).toBe(plan.blocks.filter(b => b.type === "heading2").slice(0, 4).map(b => b.text).join(" · "));
+  const block = plan.blocks.find(b => b.type === "component")!;
+  expect(context.previewBlock(block).className).toBe("template-preview-chip");
+  context.window.AcardComponents = { renderComponentBlock: (b: any) => "<div data-ui=\"" + b.meta.ui + "\"></div>" };
+  const drawn = context.previewBlock(block);
+  expect(drawn.className).toBe("template-preview-ui");
+  expect(drawn.innerHTML).toBe('<div data-ui="' + (block.meta as any).ui + '"></div>');
+  expect(context.previewBlock({ type: "to_do", text: "할 일", checked: true }).className).toBe("template-preview-todo done");
 });
 
 test("create from every curated template uses POST pages then PUT without losing blocks", async () => {

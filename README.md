@@ -1,95 +1,140 @@
+<p align="center"><b>English</b> · <a href="README.ko.md">한국어</a> · <a href="README.zh-CN.md">简体中文</a></p>
+
 <p align="center">
-  <img src="docs/images/hero.png" alt="OpenNotion - your team's notes on your own server" width="100%">
+  <img src="docs/images/hero.png" alt="Acard - the open Notion you can run locally" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://acard.dev"><img src="https://img.shields.io/badge/Try%20Acard-acard.dev%20%E2%86%92-7C3AED?style=for-the-badge&labelColor=111827" alt="Try Acard at acard.dev" width="560"></a><br>
-  <b>Acard is built on OpenNotion.</b> Try the hosted version at <a href="https://acard.dev"><b>acard.dev</b></a> - no server needed.
+  <b>Acard is the open Notion you can run locally.</b><br>
+  Pages, blocks and databases in a fast editor, served by one small server on your own machine or network.
 </p>
 
 <p align="center">
-  <b>A fast, self-hosted Notion-style workspace for teams that run their own server on an internal network.</b><br>
-  Pages, blocks and databases in the browser or a desktop app. Your data stays in one folder on your machine.
+  <a href="docs/install-server.md">Install the server</a> ·
+  <a href="docs/install-client.md">Connect a device</a> ·
+  <a href="https://github.com/Hakubisual/open-notion-acard/releases/latest">Download the desktop app</a> ·
+  <a href="docs/why-acard.md">Why Acard</a> ·
+  <a href="docs/architecture.md">Architecture</a>
 </p>
 
 <p align="center">
-  <a href="docs/install-server.md">Server install</a> ·
-  <a href="docs/install-client.md">Client install</a> ·
-  <a href="https://github.com/Hakubisual/open-notion/releases/latest">Download</a> ·
-  <a href="LICENSE">MIT License</a>
+  <a href="https://github.com/Hakubisual/open-notion-acard/actions/workflows/ci.yml"><img src="https://github.com/Hakubisual/open-notion-acard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1C1C1E" alt="MIT license"></a>
+  <a href="https://github.com/Hakubisual/open-notion-acard/releases/latest"><img src="https://img.shields.io/github/v/release/Hakubisual/open-notion-acard?color=6450DC" alt="Latest release"></a>
 </p>
 
 ---
 
-## Who it is for
+## What it is
 
-OpenNotion is for teams that keep a server inside their own network (an office LAN, a home lab, a VPN) and want a
-Notion-like editor on it without sending documents to a cloud service. One machine runs the server; everyone else
-opens it in a browser or in the desktop app.
+Acard is a Notion-style workspace that you host yourself. One Bun process serves the editor, stores everything in
+SQLite files inside one data folder, and answers browsers, the Acard Local desktop app and your own AI agents.
+Nothing leaves your machine unless you turn on a cloud feature.
 
-If you would rather not run a server at all, the hosted version at [acard.dev](https://acard.dev) is the same editor
-with accounts, sync, sharing and AI features managed for you. OpenNotion is the open, self-hosted core of it.
+It works for one person on a laptop, and for a team that keeps a server on an office LAN, a home lab or a VPN.
+
+## Why Acard
+
+| | Acard | Notion | Obsidian |
+| --- | --- | --- | --- |
+| Where your data lives | SQLite files in a folder you choose | Notion's cloud | Markdown files in a local vault |
+| Run your own server for a team | Yes: one process, MIT licensed | No | Not built in (shared vaults use Obsidian Sync) |
+| Block editor with databases | Yes: 7 database views, relations, rollups, formulas | Yes | Markdown notes; Bases adds database views |
+| AI agents read and write pages | MCP and REST built into your own server | Notion's API and hosted MCP, in Notion's cloud | Community plugins |
+| Source code | Open (MIT) | Closed | Closed app, open plugin API |
+
+Notion and Obsidian are both excellent tools. Acard is for people who want Notion's block-and-database editing
+without handing their documents to a hosted service. The full comparison, with the code each claim rests on, is in
+[docs/why-acard.md](docs/why-acard.md).
 
 ## Screenshots
 
 | Desktop | Mobile |
 | --- | --- |
-| <img src="docs/images/screenshot-desktop.png" alt="Editor on a desktop browser" width="640"> | <img src="docs/images/screenshot-mobile.png" alt="Editor on a phone" width="220"> |
+| <img src="docs/images/screenshot-desktop.png" alt="The editor in a desktop browser" width="640"> | <img src="docs/images/screenshot-mobile.png" alt="The editor on a phone" width="220"> |
 
-<p align="center"><img src="docs/images/screenshot-connect.png" alt="Desktop app: connect to your server" width="560"></p>
+<p align="center"><img src="docs/images/screenshot-connect.png" alt="Acard Local desktop app: connect to your server" width="560"></p>
+
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph Clients
+    B[Browser<br/>editor + reader]
+    D[Acard Local<br/>desktop app]
+    A[Your agents<br/>MCP / REST]
+  end
+  subgraph Server["One Bun process (local/main.ts)"]
+    C["Core worker<br/>gate/_worker.js"]
+    M["MCP endpoint /mcp<br/>agents/mcp-tools.ts"]
+    L["Live feed /api/live"]
+  end
+  subgraph Data["Data folder (ACARD_DATA_DIR)"]
+    S[(acard.sqlite<br/>pages, blocks, databases)]
+    K[(media.sqlite<br/>images, files)]
+    Z[backups/*.zip<br/>tables + media + Markdown]
+  end
+  B --> C
+  D --> C
+  A --> M --> C
+  C --> S
+  C --> K
+  C -. change notices .-> L -. refresh .-> B
+  S --> Z
+```
+
+More detail, including the block and database model and how sync and backups work: [docs/architecture.md](docs/architecture.md).
 
 ## Features
 
-- **Block editor** with headings 1-4 (any of them can fold like a toggle), lists, to-dos, toggles, quotes, callouts, code, tables, equations, images and embeds; `/` commands and Markdown shortcuts.
-- **Columns**: put blocks side by side in 2-4 columns, drag blocks between them and resize them.
-- **Block colors** for text and background, callout icons, and **buttons** that add a database row and open it.
-- **Checklists** in lists and tables that can be ticked in the editor, the reader and on shared pages.
-- **Page look**: an emoji or uploaded icon, a gradient or uploaded cover, and a per-page width (narrow, normal, wide).
-- **Databases** with table, board, gallery, list, calendar, timeline and chart views, filters (including relative dates such as this week), sorting, sub-items, two-way relations, person and auto-numbered ID properties, button properties, row templates (also repeating on a schedule) and formulas (date functions, list methods, `let`, `ifs`, styled results).
-- **Parts**: charts, tables, heatmaps, badges and flow diagrams drawn from JSON data that follow the page theme.
-- **Page tree** with nested pages, folders, drag and drop in the sidebar, favorites, templates and quick notes.
-- **Sharing**: publish a page or share it by link; readers get a clean read-only view with images sized for their screen.
-- **Markdown round trip**: every page is Markdown underneath. Import and export Markdown and Notion exports.
-- **Full-text search** across all pages.
-- **Agent-friendly**: a REST API and MCP read/write tools let your own scripts and AI agents write Markdown that people then read as clean pages.
-- **Fast**: a few hundred KB of JavaScript, no framework; performance budgets are enforced in the build.
-- **Simple to run**: one Bun process, SQLite storage, no external database. Back up one folder.
-- **Desktop app** for Windows (macOS and Linux build from source) that opens your server in its own window.
-- **Password sign-in** for LAN mode, with host allow-listing against DNS rebinding.
+- **Block editor**: headings 1-4 (each can fold), lists, to-dos, toggles, quotes, callouts, code, tables, equations, images and embeds. `/` commands and Markdown shortcuts.
+- **Columns**: place blocks side by side in 2-4 columns, drag between them and resize.
+- **Block colors**, callout icons, and **buttons** that add a database row.
+- **Page look**: emoji or uploaded icon, cover, and page width.
+- **Databases**: table, board, gallery, list, calendar, timeline and chart views; filters, sorting, sub-items, two-way relations, person and ID properties, row templates (also on a schedule) and formulas.
+- **Parts**: charts, tables, heatmaps, badges and flow diagrams drawn from JSON.
+- **Page tree**: nested pages, folders, drag and drop, favorites, templates, quick notes.
+- **Sharing**: publish a page or share it by link as a clean read-only view.
+- **Markdown in and out**: import and export Markdown and Notion exports.
+- **Full-text search** across every page.
+- **Agents**: a local MCP endpoint and a REST API let your own scripts and AI agents read and write pages.
+- **Backups**: one zip with every table, every file and a readable Markdown copy of each page; daily automatic backups.
+- **Fast**: no front-end framework; the build fails if the editor or reader grows past its size budget.
+- **Three languages**: English, Korean and Simplified Chinese interface.
 
 ## Quick start
 
 ```sh
-git clone https://github.com/Hakubisual/open-notion.git
-cd open-notion
+git clone https://github.com/Hakubisual/open-notion-acard.git
+cd open-notion-acard
 bun install
 bun run build
 
 # this machine only
-ACARD_DATA_DIR=./data ACARD_APP_DIR=./dist bun local/main.ts
+ACARD_DATA_DIR=./data ACARD_APP_DIR=./dist ACARD_LANG=en bun local/main.ts
 # open http://127.0.0.1:47811/
 ```
 
 To share it on your network, add `ACARD_HOST=0.0.0.0`, `ACARD_PASSWORD=...` and `ACARD_ALLOWED_HOSTS=<server-ip>`.
-The [server install guide](docs/install-server.md) covers Windows and Linux step by step, including running it as a
-service, firewall rules, backups, updates and optional HTTPS. Windows PowerShell syntax is in the guide.
+The [server guide](docs/install-server.md) covers Windows and Linux step by step: services, firewall, backups,
+updates and HTTPS. Other devices connect with a browser or the desktop app ([client guide](docs/install-client.md)).
 
-Then connect from other machines with a browser or the desktop app: [client install guide](docs/install-client.md).
+## Desktop app: Acard Local
 
-## Desktop app
+Download `Acard-Local-Setup-<version>.exe` from the [latest release](https://github.com/Hakubisual/open-notion-acard/releases/latest). On first start it asks
+for your server address, checks that an Acard server answers there, and opens it in its own window. It installs
+next to the hosted Acard app without touching it.
 
-Download `OpenNotion-Setup-<version>.exe` from the [latest release](https://github.com/Hakubisual/open-notion/releases/latest).
-On first start it asks for your server address, checks that an OpenNotion server answers there, and opens it.
+> **Windows SmartScreen:** the installer is not code-signed yet, so Windows may say *"Windows protected your PC"*.
+> Click **More info → Run anyway**, or build the app yourself from `desktop/` (see the client guide).
 
-> **Windows SmartScreen:** the installer is not code-signed yet, so Windows may show *"Windows protected your PC"*.
-> Click **More info → Run anyway**. You can also build the app yourself from `desktop/` (see the client guide).
+## Not included
 
-## What is not included
-
-OpenNotion is the self-hosted core. Features that depend on the hosted service are not part of this repository:
-AI writing and polishing, the chat agent and its work journal, accounts with email/Google sign-in, the admin console,
-the beta waitlist and feedback forms, and billing. The code paths for them are replaced by small neutral stubs
-(`gate/hosted-*.ts`, `features/ai-service.js`, `local/edition.ts`) so the core builds and runs on its own.
+This repository is the self-hosted core. Features that depend on the hosted service are not part of it: AI writing
+and polishing, the chat agent and its work journal, email and Google accounts, the admin console and billing. Small
+neutral stubs (`gate/hosted-*.ts`, `features/ai-service.js`, `local/edition.ts`) take their place so the core
+builds and runs on its own. If you would rather not run a server, use the
+[hosted version](https://acard.dev).
 
 ## Project layout
 
@@ -97,22 +142,27 @@ the beta waitlist and feedback forms, and billing. The code paths for them are r
 | --- | --- |
 | `assets/`, `editor-next/` | Web app: editor, reader, databases, UI kit |
 | `gate/`, `features/`, `agents/` | Server core (shared with the hosted version) and the MCP tools |
-| `local/` | The self-hosted server: Bun + SQLite, LAN mode, password sign-in |
-| `desktop/` | Electron desktop client |
-| `migrations/`, `workers/`, `wrangler.toml` | Optional Cloudflare / Postgres deployment (`acard-workspace`, `acard-sse-relay`, `acard-live`, image resizing `acard-image` / `acard-images` workers) |
+| `local/` | Self-hosted server: Bun + SQLite, LAN mode, password sign-in, backups, sync client |
+| `desktop/` | Acard Local, the Electron desktop client |
+| `packages/acard-cli/` | CLI: sync pages to local Markdown files, bridge MCP over stdio |
+| `migrations/`, `workers/`, `wrangler.toml` | Optional Cloudflare / Postgres deployment |
 | `tests/` | `bun test` |
 
-## Development
+## Contributing
 
-```sh
-bun install
-bun test
-bun run build
-```
+Bug reports, ideas and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md); report security
+issues privately as described in [SECURITY.md](SECURITY.md). Changes per release: [CHANGELOG.md](CHANGELOG.md).
+
+## Renamed from OpenNotion
+
+This project was called OpenNotion up to v0.1.0. Your data and settings carry over: the server keeps the same
+`ACARD_*` settings and data folder, `git pull` follows GitHub's redirect to the new address, and Acard Local picks
+up the server saved in the old desktop app on its first start.
 
 ## License
 
 [MIT](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-OpenNotion is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Notion Labs, Inc.
-"Notion" is a trademark of Notion Labs, Inc.; the name is used here only to describe the kind of tool this is.
+Acard is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Notion Labs, Inc.
+or the makers of Obsidian. "Notion" and "Obsidian" are trademarks of their owners and are used here only to describe
+and compare.

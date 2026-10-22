@@ -53,6 +53,19 @@ html[data-theme="dark"] .reader .page-head .pageicon img:not(.mark) { filter: in
   .reader .overlay .sheet { max-height: calc(100dvh - 96px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .reader .overlay .close { min-height: 44px; }
   .reader .thumbbar { padding-bottom: 6px; }
+  /* Issue 103: 44px targets; twisties and the tag chip keep their look and get the hit area from a pseudo-element. */
+  .reader :is(#side-more, .side-add, .fd-ib, .fd-more) { width: 44px; height: 44px; min-width: 44px; }
+  .reader :is(.side-root > .row > a, .fd-link, .fd-sh, .seg button, .shd-tab, .shd-help, .ui-btn, .pj-side-set) { min-height: 44px; }
+  .reader .pj-side-set { display: inline-flex; align-items: center; padding: 0 8px; }
+  .reader .shd-tab { min-width: 44px; }
+  .reader :is(button.tw, .fd-tw) { position: relative; height: 44px; }
+  .reader :is(button.tw, .fd-tw)::before, .reader .fd-addtag::after { content: ""; position: absolute; inset: 0 -4px 0 -18px; }
+  .reader .fd-addtag { position: relative; }
+  .reader .fd-addtag::after { inset: -9px -3px; }
+  .reader .mbar .brand { min-width: 0; overflow: hidden; white-space: nowrap; }
+  .reader .menu { max-height: calc(100dvh - 160px); overflow-y: auto; }
+  /* iOS zooms into fields under 16px. */
+  .reader :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { font-size: var(--fs-16); }
 }
 
 @media (prefers-reduced-motion: reduce) {

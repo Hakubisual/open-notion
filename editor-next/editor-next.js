@@ -229,6 +229,9 @@
     if (!at) return;
     var html = data.getData("text/html"), plain = data.getData("text/plain");
     ev.preventDefault(); ev.stopImmediatePropagation();
+    pasteInto(at, host, html, plain);
+  }
+  function pasteInto(at, host, html, plain) {
     if (at.block.type === "code") return document.execCommand("insertText", false, plain);
     var info = caret();
     if (info && !info.collapsed && /^https?:\/\/\S+$/.test(plain.trim()) && model.safeHref(plain.trim())) {
@@ -248,11 +251,13 @@
   }
 
   function mountAttachments() {
-    var bar = document.getElementById("page-tools");
+    var bar = document.getElementById("more-menu");
     if (!bar || bar.querySelector(".att-btn")) return;
-    var b = document.createElement("button"); b.type = "button"; b.className = "mini att-btn"; b.textContent = "첨부";
+    var b = document.createElement("button"); b.type = "button"; b.className = "menuitem att-btn"; b.textContent = "첨부";
     var box = document.createElement("dialog"); box.className = "editor-panel att-panel"; document.body.appendChild(box);
     b.addEventListener("click", function () {
+      bar.hidden = true;
+      document.getElementById("more").setAttribute("aria-expanded", "false");
       editor.api("/page/" + encodeURIComponent(editor.slug) + "/attachments").then(function (data) {
         box.replaceChildren();
         var h = document.createElement("h2"); h.textContent = "첨부 (" + data.attachments.length + ")"; box.appendChild(h);
@@ -709,9 +714,22 @@
     }).catch(function () {});
   }
 
+  // issue 108: a paste the classic editor held because it landed before this chunk started (editor.js holdPaste).
+  function heldPaste(id, html, plain) {
+    var row = blocksEl.querySelector('.blk[data-id="' + CSS.escape(id) + '"]');
+    var host = row && row.querySelector(".text");
+    var at = host && blockOf(host);
+    if (!at) return false;
+    var info = caret();
+    if (!info || info.host !== host) focusText(id);
+    pasteInto(at, host, html, plain);
+    return true;
+  }
+
   editor.provide("editor-next", { start: function () {
     if (started) return;
     started = true;
+    if (window.AcardEditorNext) window.AcardEditorNext.started = true;
     blocksEl.addEventListener("paste", onPaste, true);
     mountAttachments();
     blocksEl.addEventListener("drop", onDrop, true);
@@ -753,5 +771,5 @@
     check();
     setInterval(check, 20000);
     document.addEventListener("visibilitychange", function () { if (!document.hidden) check(); });
-  }, openFind: function () { openFind(false); }, htmlBlocks: function (html) { return htmlBlocks(new DOMParser().parseFromString(html, "text/html").body); }, textBlocks: textBlocks });
+  }, paste: heldPaste, openFind: function () { openFind(false); }, htmlBlocks: function (html) { return htmlBlocks(new DOMParser().parseFromString(html, "text/html").body); }, textBlocks: textBlocks });
 })();

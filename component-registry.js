@@ -24,7 +24,8 @@ function uiEsc(value) {
 
 // Plain text with **bold** and `code` only; components never take raw HTML from data.
 function uiRich(value) {
-  return uiEsc(value).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  return uiEsc(value).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[(MEASURED|CLAIMED|ESTIMATED)\]/g, (_, kind) => '<span class="ev ev-' + kind.toLowerCase() + '">' + kind + "</span>");
 }
 
 function uiStr(value, fallback, max = 400) {

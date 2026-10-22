@@ -15,7 +15,12 @@ body.home-custom #article { display: none; }
 .home-hint-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--surface); color: var(--accent); margin-bottom: 4px; }
 .home-hint-icon svg { width: 22px; height: 22px; }
 .home-agent-hint .ui-btn { margin-top: 6px; }
-.home-empty { color: var(--fg-dim); font-size: var(--fs-14); margin: 6px 0; }
+/* Empty card body (ref-2 "empty", compact): small icon disc over a centred line on the soft surface. */
+.home-empty { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); margin: var(--space-1) 0 0; padding: var(--space-5) var(--space-4); border-radius: var(--ui-radius-item); background: var(--color-surface-soft); color: var(--color-text-dim); font-size: var(--fs-13); line-height: var(--lh-ui); text-align: center; }
+.home-empty::before {
+  content: ""; width: 36px; height: 36px; border-radius: 50%; background: var(--color-surface) var(--home-empty-ico) center / 18px no-repeat;
+  --home-empty-ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='gray' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z'/%3E%3Cpath d='M14 2v5a1 1 0 0 0 1 1h5'/%3E%3C/svg%3E");
+}
 .home-sub { font-size: var(--fs-13); color: var(--fg-dim); margin: 0 0 6px; font-weight: 600; }
 .home-capture { display: flex; align-items: stretch; gap: 8px; }
 .home-capture .ui-btn { height: auto; min-height: 40px; }
@@ -37,3 +42,25 @@ body.home-custom #article { display: none; }
 .home-next .ui-list li { gap: 10px; }
 .home-box { flex: none; width: 16px; height: 16px; border: 1.5px solid var(--line-2); border-radius: 4px; }
 .home-connect .ui-btn-primary { margin-top: 10px; }
+
+.home-checklist { padding: 20px 24px 24px; }
+.home-checklist .ui-card-head { margin-bottom: 0; }
+.home-check-summary { color: var(--fg-dim); font-size: var(--fs-14); }
+.home-check-progress { display: flex; align-items: center; gap: 18px; margin: 18px 0 22px; color: var(--fg-dim); font-size: var(--fs-14); }
+.home-check-progress .ui-progress { max-width: 310px; height: 8px; }
+.home-check-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.home-check-step { display: flex; align-items: center; gap: 24px; min-height: 98px; padding: 18px 22px; border: var(--ui-border); border-radius: var(--ui-radius-item); color: var(--fg); text-decoration: none; }
+.home-check-step:hover { background: var(--bg-soft); }
+.home-check-step:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.home-check-circle { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 1.5px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 50%; color: var(--on-accent); font-size: var(--fs-21); }
+.home-check-step[data-complete="true"] .home-check-circle { background: var(--accent); border-color: var(--accent); }
+.home-check-copy { min-width: 0; flex: 1; }
+.home-check-copy b { display: block; font-size: var(--fs-17); }
+.home-check-copy > span { display: block; color: var(--fg-dim); font-size: var(--fs-14); margin-top: 3px; }
+.home-check-arrow { color: var(--fg-dim); font-size: var(--fs-21); }
+@media (max-width: 760px) {
+  .home-checklist { padding: 16px; }
+  .home-check-grid { grid-template-columns: minmax(0, 1fr); }
+  .home-check-step { gap: 12px; padding: 14px 12px; min-height: 88px; }
+  .home-check-summary { font-size: var(--fs-12); }
+}

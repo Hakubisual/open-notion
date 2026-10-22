@@ -285,7 +285,7 @@ for (const name of ["editor-model.js", "columns-model.js"]) {
   await writeFile(join(DIST, name), await built.outputs[0].text());
 }
 // db.js and db-views.js are single IIFEs that talk to the page only through window.*, so they get full minify like editor.js.
-for (const name of ["db.js", "db-views.js", "editor-pages-ui.js"]) {
+for (const name of ["db.js", "db-views.js", "editor-pages-ui.js", "editor-format.js"]) {
   const built = await Bun.build({ entrypoints: [join(ASSETS, name)], minify: true, format: "iife" });
   if (!built.success) throw new AggregateError(built.logs, name + " minify failed");
   await writeFile(join(DIST, name), await built.outputs[0].text());
@@ -305,7 +305,9 @@ const uiVersions: Record<string, string> = {};
 await rm(join(DIST, "ui"), { recursive: true, force: true });
 for (const name of ["kit.css", "home.css", "home.js"]) {
   const source = await readFile(join(ASSETS, "ui", name), "utf8");
-  const bytes = name.endsWith(".js") ? new Bun.Transpiler({ minifyWhitespace: true }).transformSync(source) : minifyCss(source) + "\n";
+  const built = name.endsWith(".js") ? await Bun.build({ entrypoints: [join(ASSETS, "ui", name)], minify: true, format: "iife" }) : null;
+  if (built && !built.success) throw new AggregateError(built.logs, "home minify failed");
+  const bytes = built ? await built.outputs[0].text() : minifyCss(source) + "\n";
   await mkdir(join(DIST, "lazy"), { recursive: true });
   await writeFile(join(DIST, "lazy", "ui-" + name.replace(".", "-") + "." + name.split(".").pop()), bytes, "utf8");
   uiVersions[name] = Bun.hash(bytes).toString(36).slice(0, 8);
@@ -323,7 +325,7 @@ for (const file of (await readdir(lazyDir).catch(() => [] as string[])).sort()) 
   const source = (await readFile(join(lazyDir, file), "utf8")).replace("//__COMPONENT_SOURCE__", () => componentSource);
   // Lazy chunks ship whitespace-minified (behaviour unchanged); the chat panel chunk also gets syntax minify (its loader rides on every page).
   let bytes: Buffer;
-  if (["reader-navigation", "reader-enhancements"].includes(match[1]) && match[2] === "js") {
+  if (["reader-navigation", "reader-enhancements", "import", "toc"].includes(match[1]) && match[2] === "js") {
     const built = await Bun.build({ entrypoints: [join(lazyDir, file)], minify: true, format: "iife" });
     if (!built.success) throw new AggregateError(built.logs, "reader navigation minify failed");
     bytes = Buffer.from(await built.outputs[0].text());
@@ -334,6 +336,13 @@ for (const file of (await readdir(lazyDir).catch(() => [] as string[])).sort()) 
 }
 for (const [name, versions] of Object.entries(lazyVersions)) {
   if (!versions.js) throw new Error("Lazy feature needs JavaScript: " + name);
+}
+// Reader-only TOC assets are conditional, not on the first-screen path or editor manifest.
+const enhancementsPath = join(DIST, "lazy", "reader-enhancements.js");
+if (lazyVersions.toc && lazyVersions["reader-enhancements"]) {
+  const bytes = (await readFile(enhancementsPath, "utf8")).replace("__TOC_JS__", lazyVersions.toc.js).replace("__TOC_CSS__", lazyVersions.toc.css);
+  await writeFile(enhancementsPath, bytes);
+  lazyVersions["reader-enhancements"].js = Bun.hash(bytes).toString(36).slice(0, 8);
 }
 // db.js is built before the lazy chunks; its button cells load /lazy/buttons and /lazy/button-editor by these hashes.
 await writeFile(join(DIST, "db.js"), (await readFile(join(DIST, "db.js"), "utf8")).replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0").replaceAll("__BUTTON_EDITOR_JS__", lazyVersions["button-editor"]?.js ?? "0").replaceAll("__BUTTON_EDITOR_CSS__", lazyVersions["button-editor"]?.css ?? "0"));
@@ -351,7 +360,7 @@ for (const ext of ["js", "css"] as const) {
       : !name.endsWith(".reader." + ext));
     const parts = await Promise.all(selected.map((name) => readFile(join(ASSETS, "features", name), "utf8")));
     const manifest = !reader && ext === "js" && Object.keys(lazyVersions).length
-      ? "window.AcardLazy = " + JSON.stringify(lazyVersions) + ";\n" : "";
+      ? "window.AcardLazy = " + JSON.stringify(Object.fromEntries(Object.entries(lazyVersions).filter(([name]) => name !== "import" && name !== "toc"))) + ";\n" : "";
     const content = (manifest + parts.filter((part) => part.trim()).join(ext === "js" ? "\n;\n" : "\n")).replace("__AGENT_CHAT_JS__", lazyVersions["agent-chat"]?.js ?? "0").replace("__AGENT_CHAT_CSS__", lazyVersions["agent-chat"]?.css ?? "0").replace('"/lazy/quick-note.js"', '"/lazy/quick-note.js?v=' + (lazyVersions["quick-note"]?.js ?? "0") + '"');
     if (reader) readerFeatures[ext] = content.length > 0;
     let output = content;

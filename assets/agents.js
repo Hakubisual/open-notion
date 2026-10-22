@@ -554,8 +554,187 @@
     });
   }
 
+  // ===== 7. 웹훅: 비밀값은 만들 때·다시 만들 때 받은 그 자리에서만 보여 주고 따로 저장하지 않는다 =====
+  var HOOK_EVENTS = [
+    ["page.created", "새 페이지"], ["page.updated", "내용 수정"], ["page.renamed", "제목 변경"], ["page.moved", "이동"],
+    ["page.trashed", "휴지통으로"], ["page.restored", "휴지통에서 복원"], ["page.deleted", "완전 삭제"]
+  ];
+  var hooks = { list: null, limit: 5, open: {} };
+  function eventLabel(type) {
+    for (var i = 0; i < HOOK_EVENTS.length; i++) if (HOOK_EVENTS[i][0] === type) return HOOK_EVENTS[i][1];
+    return type === "ping" ? "테스트" : type;
+  }
+  function hookStatus(h) {
+    if (h.enabled) return { text: "켜짐", off: false };
+    if (h.disabled_reason === "failures") return { text: "자동으로 꺼짐", off: true };
+    return { text: "꺼짐", off: true };
+  }
+  function stamp(iso) { return iso ? fmtAgo(Date.parse(iso)) : null; }
+  function showHookSecret(secret, url) {
+    $("hook-secret-title").textContent = url + " 서명 비밀값";
+    $("hook-secret").value = secret;
+    $("hook-secret-box").hidden = false;
+    $("hook-secret-copy").focus();
+  }
+  function loadHooks() {
+    var list = $("hook-list");
+    clear(list);
+    list.appendChild(el("li", { className: "ag-loading", text: "불러오는 중…" }));
+    return api("GET", "/api/webhooks").then(function (data) {
+      hooks.list = Array.isArray(data.webhooks) ? data.webhooks : [];
+      if (typeof data.limit === "number") hooks.limit = data.limit;
+      renderHooks();
+    }, function (err) {
+      loadError(list, "웹훅 목록을 불러오지 못했어요:", err, loadHooks);
+    });
+  }
+  function hookAction(actions, label, aria, fn) {
+    var b = el("button", { type: "button", className: "ag-btn ag-small", text: label, "aria-label": aria });
+    b.addEventListener("click", function () { fn(b); });
+    actions.appendChild(b);
+  }
+  function renderHooks() {
+    var list = $("hook-list");
+    clear(list);
+    $("hook-create").disabled = hooks.list.length >= hooks.limit;
+    if (!hooks.list.length) {
+      list.appendChild(el("li", { className: "ag-empty", text: "아직 만든 웹훅이 없어요. 아래에 받을 주소를 적어 보세요." }));
+      return;
+    }
+    hooks.list.forEach(function (h) {
+      var st = hookStatus(h);
+      var li = el("li", { className: "ag-row ag-hook" + (st.off ? " off" : ""), "data-id": h.id });
+      var main = el("div", { className: "ag-main" });
+      var name = el("div", { className: "ag-name" });
+      name.appendChild(el("span", { className: "ag-hook-url", text: h.url }));
+      name.appendChild(el("span", { className: "ag-badge", text: h.events.length === HOOK_EVENTS.length ? "모든 변경" : h.events.map(eventLabel).join(", ") }));
+      main.appendChild(name);
+      var meta = [];
+      var ok = stamp(h.last_success_at), bad = stamp(h.last_failure_at);
+      if (ok) meta.push("마지막 전송 " + ok);
+      if (h.consecutive_failures > 0 && bad) meta.push("연속 실패 " + h.consecutive_failures + "번 (" + (h.last_status ? "응답 " + h.last_status : "응답 없음") + ", " + bad + ")");
+      if (!ok && !bad) meta.push("아직 보낸 적 없음");
+      meta.push("비밀값 " + h.secret_hint);
+      main.appendChild(el("div", { className: "ag-meta", text: meta.join(" · ") }));
+      if (h.disabled_reason === "failures") main.appendChild(el("p", { className: "ag-error ag-hook-off", text: "계속 실패해서 자동으로 껐어요. 받는 쪽을 고친 뒤 다시 켜 주세요." }));
+      li.appendChild(main);
+      li.appendChild(el("span", { className: "ag-status" + (st.off ? " off" : ""), text: st.text }));
+      var actions = el("div", { className: "ag-hook-actions" });
+      hookAction(actions, h.enabled ? "끄기" : "켜기", h.url + (h.enabled ? " 끄기" : " 켜기"), function (b) { toggleHook(h, b, li); });
+      hookAction(actions, "테스트 보내기", h.url + " 테스트 보내기", function (b) { testHook(h, b, li); });
+      hookAction(actions, hooks.open[h.id] ? "기록 닫기" : "최근 기록", h.url + " 최근 전송 기록", function () { hooks.open[h.id] = !hooks.open[h.id]; renderHooks(); });
+      hookAction(actions, "비밀값 다시 만들기", h.url + " 비밀값 다시 만들기", function (b) { rotateHook(h, b, li); });
+      hookAction(actions, "지우기", h.url + " 지우기", function (b) { deleteHook(h, b, li); });
+      li.appendChild(actions);
+      if (hooks.open[h.id]) {
+        var box = el("div", { className: "ag-hook-log" });
+        box.appendChild(el("p", { className: "ag-help", text: "불러오는 중…" }));
+        li.appendChild(box);
+        api("GET", "/api/webhooks/" + encodeURIComponent(h.id) + "/deliveries").then(function (d) { renderLog(box, d.deliveries || []); }, function (err) {
+          clear(box);
+          box.appendChild(el("p", { className: "ag-error", text: "기록을 불러오지 못했어요: " + err.message }));
+        });
+      }
+      list.appendChild(li);
+    });
+  }
+  function deliveryState(d) {
+    if (d.status === "delivered") return "보냄";
+    if (d.status === "pending") return "모으는 중";
+    if (d.status === "sending") return "보내는 중";
+    if (d.status === "retry") return "다시 보낼 예정";
+    if (d.status === "skipped") return "안 보냄(꺼짐)";
+    return "실패";
+  }
+  function renderLog(box, rows) {
+    clear(box);
+    if (!rows.length) { box.appendChild(el("p", { className: "ag-help", text: "아직 기록이 없어요." })); return; }
+    var table = el("table", { className: "ag-lat ag-hook-table" });
+    table.appendChild(el("tr", {}, ["시간", "일", "페이지", "결과", "응답"].map(function (t) { return el("th", { text: t }); })));
+    rows.forEach(function (d) {
+      var answer = d.http_status ? String(d.http_status) + (d.ms != null ? " · " + d.ms + "ms" : "") : (d.error || "-");
+      table.appendChild(el("tr", {}, [
+        stamp(d.delivered_at || d.updated_at || d.created_at) || "-",
+        eventLabel(d.event),
+        d.title || d.page || "-",
+        deliveryState(d) + (d.attempts > 1 ? " (" + d.attempts + "번째)" : ""),
+        answer
+      ].map(function (v) { return el("td", { text: v }); })));
+    });
+    box.appendChild(table);
+  }
+  function toggleHook(h, btn, li) {
+    btn.disabled = true;
+    api("PATCH", "/api/webhooks/" + encodeURIComponent(h.id), { enabled: !h.enabled }).then(function () {
+      toast(h.enabled ? "웹훅을 껐어요." : "웹훅을 켰어요.");
+      return loadHooks();
+    }, function (err) { btn.disabled = false; rowError(li, "바꾸지 못했어요: " + err.message); });
+  }
+  function testHook(h, btn, li) {
+    btn.disabled = true;
+    btn.textContent = "보내는 중…";
+    api("POST", "/api/webhooks/" + encodeURIComponent(h.id) + "/test").then(function (r) {
+      toast(r.ok ? "테스트를 보냈어요 (응답 " + r.status + ")." : "테스트가 실패했어요: " + (r.status ? "응답 " + r.status : r.error));
+      hooks.open[h.id] = true;
+      return loadHooks();
+    }, function (err) { btn.disabled = false; btn.textContent = "테스트 보내기"; rowError(li, "보내지 못했어요: " + err.message); });
+  }
+  function rotateHook(h, btn, li) {
+    if (!window.confirm("지금 비밀값은 바로 못 쓰게 돼요. 받는 쪽에 새 값을 넣어야 해요. 다시 만들까요?")) return;
+    btn.disabled = true;
+    api("POST", "/api/webhooks/" + encodeURIComponent(h.id) + "/rotate").then(function (r) {
+      showHookSecret(r.secret, h.url);
+      return loadHooks();
+    }, function (err) { btn.disabled = false; rowError(li, "다시 만들지 못했어요: " + err.message); });
+  }
+  function deleteHook(h, btn, li) {
+    if (!window.confirm("이 주소로는 더 이상 보내지 않아요. 지울까요?")) return;
+    btn.disabled = true;
+    api("DELETE", "/api/webhooks/" + encodeURIComponent(h.id)).then(function () {
+      toast("웹훅을 지웠어요.");
+      return loadHooks();
+    }, function (err) { btn.disabled = false; rowError(li, "지우지 못했어요: " + err.message); });
+  }
+  var hookForm = $("hook-form");
+  if (hookForm) {
+    var checks = $("hook-event-list");
+    HOOK_EVENTS.forEach(function (e) {
+      var label = el("label", { className: "ag-radio" });
+      label.appendChild(el("input", { type: "checkbox", name: "event", value: e[0], checked: true }));
+      label.appendChild(el("span", { text: e[1] }));
+      checks.appendChild(label);
+    });
+    hookForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var errBox = $("hook-form-error");
+      errBox.hidden = true;
+      var input = $("hook-url");
+      var url = input.value.trim();
+      var picked = Array.prototype.map.call(hookForm.querySelectorAll('input[name="event"]:checked'), function (c) { return c.value; });
+      if (!url) { errBox.textContent = "받을 주소를 적어 주세요."; errBox.hidden = false; input.focus(); return; }
+      if (!picked.length) { errBox.textContent = "보낼 일을 하나 이상 골라 주세요."; errBox.hidden = false; return; }
+      var btn = $("hook-create");
+      btn.disabled = true;
+      btn.textContent = "만드는 중…";
+      api("POST", "/api/webhooks", { url: url, events: picked }).then(function (r) {
+        input.value = "";
+        showHookSecret(r.secret, r.webhook && r.webhook.url ? r.webhook.url : url);
+        return loadHooks();
+      }).catch(function (err) {
+        errBox.textContent = "만들지 못했어요: " + err.message;
+        errBox.hidden = false;
+      }).then(function () {
+        btn.textContent = "만들기";
+        btn.disabled = !!(hooks.list && hooks.list.length >= hooks.limit);
+      });
+    });
+    $("hook-secret-copy").addEventListener("click", function () { copyText($("hook-secret").value, this); });
+    $("hook-secret").addEventListener("focus", function () { this.select(); });
+  }
+
   // ----- 시작 -----
   loadTokens();
   loadGrants();
   loadConnect();
+  if (hookForm) loadHooks();
 })();

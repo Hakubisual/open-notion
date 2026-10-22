@@ -823,7 +823,7 @@ export function normaliseProperty(raw, index) {
     type,
     config: normaliseConfig(type, source.config),
     ord: Number.isFinite(source.ord) ? Math.trunc(source.ord) : index * 10,
-    width: Number.isFinite(source.width) ? Math.max(60, Math.min(800, Math.trunc(source.width))) : null,
+    width: normaliseColumnWidth(source.width),
     hidden: source.hidden === true,
   };
 }
@@ -859,7 +859,11 @@ export function normaliseView(raw, index) {
       .slice(0, 8)
     : [];
   const visible = Array.isArray(config.visible) ? config.visible.map((entry) => String(entry).slice(0, 40)) : null;
-  const widths = config.widths && typeof config.widths === "object" ? config.widths : {};
+  const widths = {};
+  for (const id in config.widths) {
+    const width = normaliseColumnWidth(config.widths[id]);
+    if (width) widths[id] = width;
+  }
   const calculations = config.calculations && typeof config.calculations === "object" ? config.calculations : {};
   return {
     id: typeof source.id === "string" && source.id ? source.id.slice(0, 40) : "v" + (index + 1),
@@ -1096,19 +1100,13 @@ export function visibleProperties(properties, view) {
   });
 }
 
+function normaliseColumnWidth(value) {
+  return Number.isFinite(value) ? Math.max(60, Math.min(800, value)) | 0 : null;
+}
+
 export function columnWidth(prop, view) {
-  const config = (view && view.config) || {};
-  const widths = config.widths || {};
-  if (widths[prop.id]) return widths[prop.id];
-  if (prop.width) return prop.width;
-  const type = prop.type;
-  if (type === "title") return 260;
-  if (type === "files") return 200;
-  if (type === "date" || type === "created_time" || type === "updated_time") return 150;
-  if (type === "number") return 120;
-  if (type === "checkbox") return 90;
-  if (type === "url" || type === "email") return 200;
-  return 180;
+  return normaliseColumnWidth(view?.config?.widths?.[prop.id]) || normaliseColumnWidth(prop.width) ||
+    ({ title: 260, files: 200, date: 150, created_time: 150, updated_time: 150, number: 120, checkbox: 90, url: 200, email: 200 }[prop.type] || 180);
 }
 
 export function sortOptions(prop, value) {

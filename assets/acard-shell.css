@@ -18,30 +18,35 @@
 .side-brand #collapse { width: 32px; height: 32px; min-width: 32px; opacity: 0; }
 .side-brand:hover #collapse, .side-brand #collapse:focus-visible { opacity: 1; }
 .side-tools { display: flex; align-items: center; gap: 2px; position: relative; }
-.side-tools #side-more { width: 32px; height: 32px; min-width: 32px; border-radius: 8px; color: var(--fg-dim); }
-.side-menu { position: absolute; top: 36px; right: 0; z-index: 30; min-width: 180px; padding: 6px; margin: 0; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-menu); }
-.side-menu button { display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-14); text-align: left; cursor: pointer; }
-.side-menu button:hover, .side-menu button:focus-visible { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.side-tools #side-more { width: 32px; height: 32px; min-width: 32px; border-radius: var(--radius-sm); color: var(--fg-dim); }
+.side-menu { position: absolute; top: 36px; right: 0; z-index: 30; min-width: 180px; padding: 6px; margin: 0; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-menu); }
+.side-menu button, .side-menu a { display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-14); text-align: left; cursor: pointer; text-decoration: none; }
+.side-menu button:hover, .side-menu button:focus-visible, .side-menu a:hover, .side-menu a:focus-visible { background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .side-search {
-  display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 10px 0 12px; margin: 0 0 12px;
-  border: 0; border-radius: 10px; background: color-mix(in srgb, var(--fg) 6%, var(--sidebar)); color: var(--fg-dim);
-  font: inherit; font-size: var(--fs-15); cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: var(--space-3); width: 100%; height: var(--control-h-md); padding: 0 var(--space-2) 0 var(--space-3); margin: 0 0 var(--space-3);
+  border: 0; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--fg) 6%, var(--sidebar)); color: var(--color-text-dim);
+  font: inherit; font-size: var(--fs-14); cursor: pointer; text-align: left;
 }
 .side-search span { flex: 1; }
 .side-search:hover { background: color-mix(in srgb, var(--fg) 9%, var(--sidebar)); }
-.kbd { font: 500 var(--fs-12)/1 var(--font-body); color: var(--fg-dim); background: var(--surface); border-radius: 5px; padding: 4px 6px; letter-spacing: .02em; }
-.side-root > .row > a, .side-new {
-  display: flex; align-items: center; gap: 12px; width: 100%; height: 37px; padding: 0 10px; border: 0; border-radius: 8px;
+.kbd { font: 500 var(--fs-11)/1 var(--font-body); color: var(--color-text-dim); background: var(--color-surface); border-radius: var(--radius-xs); padding: var(--space-1) 6px; letter-spacing: .02em; }
+/* Quick nav (ref-1): 36px rows; icon stroke lives here so each svg stays one path. */
+.side-nav { margin-bottom: var(--space-4); }
+.side-nav svg { flex: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; color: var(--color-text-dim); }
+.side-nav a.on, .reader .tree a.on { background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: 500; }
+.side-nav a.on svg, .reader .tree a.on .pi { color: var(--color-accent-strong); }
+.side-nav :is(a, button), .side-root > .row > a, .side-new {
+  display: flex; align-items: center; gap: var(--space-3); width: 100%; height: var(--control-h-md); padding: 0 10px; border: 0; border-radius: var(--radius-sm);
   background: transparent; color: var(--fg); font: inherit; font-size: var(--fs-15); text-align: left; cursor: pointer; text-decoration: none;
 }
-.side-new:hover, .reader .tree a:hover, .side-root > .row > a:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); text-decoration: none; }
-.side-ws { flex: 1 1 0; min-height: 0; overflow: auto; }
-.side-ws-head { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 0 10px; height: 32px; color: var(--fg-dim); font-size: var(--fs-13); }
-.side-ws-head .side-add { width: 28px; height: 28px; min-width: 28px; border-radius: 6px; }
-.side-root > .row { display: flex; align-items: center; gap: 2px; margin: 4px 0 4px; border-radius: 8px; background: var(--accent-soft); }
+.side-nav :is(a, button):hover, .side-new:hover, .reader .tree a:hover, .side-root > .row > a:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); text-decoration: none; }
+.side-ws { flex: 1 1 0; min-height: 0; overflow: auto; border-top: 1px solid var(--color-border); padding-top: var(--space-3); }
+.side-ws-head { display: flex; align-items: center; justify-content: space-between; padding: 0 0 0 var(--space-3); height: 32px; color: var(--color-text-dim); font-size: var(--fs-13); }
+.side-ws-head .side-add { width: 32px; height: 32px; min-width: 32px; border-radius: var(--radius-xs); }
+.side-root > .row { display: flex; align-items: center; gap: 2px; margin: var(--space-1) 0; border-radius: var(--radius-sm); background: var(--color-accent-soft); }
 .side-root > .row > a { flex: 1; gap: 9px; padding-left: 4px; font-weight: 500; }
 .side-root > .row > a img { width: 18px; height: 18px; }
-.reader .tw { flex: 0 0 22px; width: 22px; height: 26px; display: inline-grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--fg-dim); cursor: pointer; border-radius: 5px; }
+.reader .tw { flex: 0 0 24px; width: 24px; height: 28px; display: inline-grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--color-text-dim); cursor: pointer; border-radius: var(--radius-xs); }
 .reader .tw .ico { width: 14px; height: 14px; flex-basis: 14px; transition: transform var(--dur-2) var(--ease-out); }
 .reader .has-kids.open > .row > .tw .ico { transform: rotate(90deg); }
 .side-root:not(.open) > .navgroup { display: none; }
@@ -52,24 +57,21 @@
 .reader .tree li { margin: 0; }
 .reader .tree .has-kids:not(.open) > .tree { display: none; }
 .reader .tree .row { display: flex; align-items: center; gap: 2px; }
-.reader .tree a { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; height: 37px; padding: 0 8px; border-radius: 8px; color: var(--fg); font-size: var(--fs-15); }
+.reader .tree a { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 var(--space-2); border-radius: var(--radius-sm); color: var(--color-text); font-size: var(--fs-15); }
 .reader .tree a .pt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reader .tree a .pi { flex: 0 0 18px; width: 18px; height: 18px; display: inline-grid; place-items: center; color: var(--fg-dim); }
-.reader .tree a .pi img { width: 18px; height: 18px; border-radius: 4px; }
+.reader .tree a .pi img { width: 18px; height: 18px; border-radius: var(--radius-2xs); }
 .reader .tree a .pi .emoji { font-size: var(--fs-15); line-height: 1; }
-.reader .tree a.on { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); font-weight: 500; }
 .reader .tree .dbmark { display: none; }
 .side-new { color: var(--fg-dim); margin: 2px 0 0 10px; width: calc(100% - 10px); }
 .side-new .ico { color: var(--fg-dim); }
-.side-card {
-  position: relative; margin: 18px 0 10px; min-height: 166px; padding: 72px 18px 16px 14px; overflow: hidden;
-  border-radius: 12px; background: color-mix(in srgb, var(--accent) 7%, var(--sidebar));
-}
-.side-plant { position: absolute; right: 18px; top: 16px; width: 72px; height: 72px; }
-.side-card p { position: relative; z-index: 1; margin: 0 0 14px; font-size: var(--fs-14); line-height: 1.75; color: var(--fg); }
-.side-card small { position: relative; z-index: 1; color: var(--fg-dim); font-size: var(--fs-12); }
-.side-foot { display: flex; align-items: center; gap: 4px; padding: 6px 2px 0; }
-.side-foot .icon { width: 34px; height: 34px; min-width: 34px; border-radius: 8px; color: var(--fg-dim); }
+/* Bottom card: the theme / agents / logout tools sit on one soft card. */
+.side-foot { display: flex; align-items: center; gap: var(--space-1); margin-top: var(--space-3); padding: var(--space-1); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.side-foot .icon { width: var(--control-h-md); height: var(--control-h-md); min-width: var(--control-h-md); border-radius: var(--radius-sm); color: var(--color-text-dim); }
+/* Header actions (ref-1 top right): one 36px row; .reader outranks acard-page.css, which loads later. */
+.reader .page-actions :is(.icon, .pa-share) { height: var(--control-h-md); border-radius: var(--radius-sm); color: var(--color-text-dim); }
+.reader .page-actions .icon { width: var(--control-h-md); min-width: var(--control-h-md); font-size: var(--fs-19); }
+.reader .page-actions .pa-share { color: var(--color-text); font-size: var(--fs-14); font-weight: 500; }
 .side-logout { margin: 0 0 0 auto; }
 #theme .t-dark { display: none; }
 html[data-theme="dark"] #theme .t-light { display: none; }
@@ -87,9 +89,9 @@ html.side-collapsed .reader .sidebar { display: none; }
   .reader .shell > main { padding: 0 18px 110px; }
   .reader .sidebar, .reader .sidebar.open { position: fixed; inset: 0 auto 0 0; z-index: 50; width: min(320px, 86vw); height: 100dvh; transform: translateX(-102%); transition: transform var(--dur-3) var(--ease-out); box-shadow: none; display: flex; }
   .reader .sidebar.open { transform: none; box-shadow: var(--shadow-menu); }
-  .reader .sidebar.open::after { content: ""; position: fixed; inset: 0 0 0 min(320px, 86vw); background: rgba(28, 24, 44, .28); }
+  .reader .sidebar.open::after { content: ""; position: fixed; inset: 0 0 0 min(320px, 86vw); background: var(--color-scrim); }
   .side-brand #collapse { display: none; }
-  .reader .tree a { height: 42px; }
+  .reader .tree a, .side-nav :is(a, button) { height: 42px; }
 }
 @media print { .reader .sidebar, .reader .mbar { display: none; } .reader .shell { display: block; } }
 

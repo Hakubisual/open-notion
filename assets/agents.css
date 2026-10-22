@@ -179,7 +179,25 @@ html[data-theme="dark"] { color-scheme: dark; --ag-ok: #7fc48a; --ag-err: #e8857
 .ag-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* 모바일 */
+
+/* 웹훅: 토큰 카드와 같은 줄·버튼을 쓰고, 이벤트 체크박스와 버튼 줄만 더한다. */
+.ag-hook-form { grid-template-columns: minmax(0, 1fr) auto; }
+.ag-hook-form .ag-events { grid-column: 1 / -1; grid-row: 2; border: 0; margin: 0; padding: 0; }
+.ag-hook-form #hook-create { grid-column: 2; grid-row: 1; }
+.ag-checks { display: flex; flex-wrap: wrap; gap: 0 18px; }
+.ag-checks .ag-radio { min-height: 36px; font-size: var(--fs-14); }
+.ag-hook { flex-wrap: wrap; }
+.ag-hook-url { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: var(--fs-14); font-weight: 600; overflow-wrap: anywhere; }
+.ag-hook-actions { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+.ag-hook-off { margin-top: 6px; }
+.ag-hook-log { flex-basis: 100%; overflow-x: auto; }
+.ag-hook-table { width: 100%; }
+.ag-hook-table td, .ag-hook-table th { white-space: nowrap; }
+
 @media (max-width: 899px) {
+  .ag-hook-form { grid-template-columns: 1fr; }
+  .ag-hook-form .ag-events, .ag-hook-form #hook-create { grid-column: 1; grid-row: auto; }
+  .ag-row .ag-hook-actions .ag-btn { margin-left: 0; }
   :root { --ag-control: 44px; }
   .ag-crumb { display: none; }
   .ag-h2 { margin-top: 34px; }

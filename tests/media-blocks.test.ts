@@ -2,6 +2,35 @@ import { describe, expect, test } from "bun:test";
 import { markdownToBlocks } from "../markdown-blocks.ts";
 import { renderBlocks } from "../block-html.js";
 
+describe("unsafe media URLs (#87)", () => {
+  const unsafe = ["javascript:alert(1)", "  JaVaScRiPt:alert(1)", "java\tscript:alert(1)", "java\nscript:alert(1)", "\u0000javascript:alert(1)", "data:text/html,<img src=x onerror=alert(1)>", "vbscript:msgbox(1)", "//evil.example/x", "/\\evil.example/x"];
+  for (const type of ["bookmark", "file", "image", "embed", "button", "video", "audio"]) {
+    test(type + " renders unsafe URLs as text without href or src", () => {
+      for (const url of unsafe) {
+        const html = renderBlocks([{ id: "unsafe", type, text: "label", meta: { url, src: url } }]);
+        expect(html).not.toMatch(/<[a-z][^>]*\s(?:href|src)=/);
+        expect(html).not.toContain("<img");
+        expect(html).toContain(type === "button" ? "label" : url.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"));
+      }
+    });
+  }
+  test("Markdown normalizes unsafe media targets to plain paragraphs", () => {
+    for (const type of ["bookmark", "file", "embed", "button", "video", "audio"]) {
+      const [block] = markdownToBlocks("- [" + type + "] " + (type === "button" ? "label | " : "") + "javascript:alert(1)");
+      expect(block.type).toBe("paragraph");
+      expect(block.meta).toBeUndefined();
+      expect(renderBlocks([block])).not.toMatch(/<[a-z][^>]*\s(?:href|src)=/);
+      expect(block.text).toContain("javascript:alert(1)");
+    }
+    expect(renderBlocks(markdownToBlocks("![label](data:text/html,bad)"))).not.toContain("<img");
+  });
+  test("safe targets remain linked and escaped once", () => {
+    for (const url of ["https://example.com/?a=1&b=2", "http://example.com/", "mailto:owner@example.com", "/notes/", "#section", "/media/photo"]) {
+      expect(renderBlocks([{ type: "bookmark", text: "", meta: { url } }])).toContain('href="' + url.replaceAll("&", "&amp;") + '"');
+    }
+  });
+});
+
 describe("markdownToBlocks: 미디어·레이아웃 블록", () => {
   test("이미지 한 줄은 캡션과 폭을 기억한다", () => {
     const blocks = markdownToBlocks('![서울 야경](/media/abc "60")\n\n![없는 폭](https://x.test/i.png)');

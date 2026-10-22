@@ -397,6 +397,12 @@ describe("computeCalculation", () => {
 });
 
 describe("뷰 정규화와 보이는 속성", () => {
+  test("view and property widths are finite bounded numbers (#87)", () => {
+    const view = normaliseView({ config: { widths: { bad: '100"><img src=x>', infinite: Infinity, low: -1, high: 9000, numeric: "240", good: 240.9 } } }, 0);
+    expect(view.config.widths).toEqual({ low: 60, high: 800, good: 240 });
+    expect(columnWidth({ id: "t", type: "title", width: '100"><img src=x>' }, { config: {} })).toBe(260);
+  });
+
   test("모르는 뷰 종류는 표로 떨어뜨린다", () => {
     expect(normaliseView({ id: "v", name: "이상한 뷰", type: "hologram" }, 0).type).toBe("table");
   });

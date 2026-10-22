@@ -20,6 +20,9 @@ if (params.get("deleted") === "1") show("ok", T("js.auth.deleted"));
 const next = (() => { const n = params.get("next") || "/"; return n.startsWith("/") && !n.startsWith("//") ? n : "/"; })();
 const google = document.querySelector(".btn-google");
 if (google && next !== "/") google.href = "/api/auth/google?next=" + encodeURIComponent(next);
+document.querySelectorAll('.switch a[href="/login"], .switch a[href="/signup"]').forEach((a) => {
+  if (next !== "/") a.href += "?next=" + encodeURIComponent(next);
+});
 
 const done = {
   signup: () => show("ok", T("js.auth.signupDone")),
@@ -31,6 +34,7 @@ const done = {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(form));
+  if (action === "signup" && (next === "/beta" || next.startsWith("/oauth/authorize?"))) data.next = next;
   button.disabled = true;
   try {
     await Promise.race([cleared, new Promise(resolve => setTimeout(resolve, 2000))]);

@@ -1,0 +1,26 @@
+/* Research report page style (page setting font=report, owner reference 2026-10-22). A second token file that only report
+   pages load (reader <link>, shared link inline, editor on demand), so the first screen of every other page stays the same.
+   The page rules themselves are block-html.js REPORT_CSS. */
+:root {
+  --rp-bg: #f5f4ed; --rp-surface: #faf9f5; --rp-ink: #141413; --rp-ink2: #5e5d59; --rp-muted: #87867f; --rp-rule: #e8e6dc; --rp-rule2: #d1cfc5; --rp-accent: #c96442;
+  --rp-measured-bg: #edf3ec; --rp-measured-fg: #346538; --rp-claimed-bg: #fbf3db; --rp-claimed-fg: #956400; --rp-estimated-bg: #e1f3fe; --rp-estimated-fg: #1f6c9f;
+  --rp-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Acard Serif", "Noto Serif KR", "Nanum Myeongjo", Batang, serif;
+  --rp-sans: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --rp-radius: 8px;
+}
+html[data-theme="dark"] {
+  --rp-bg: #1f1e1b; --rp-surface: #262521; --rp-ink: #ecebe4; --rp-ink2: #b9b7ae; --rp-muted: #8f8d84; --rp-rule: #35332e; --rp-rule2: #45423b; --rp-accent: #e0896a;
+  --rp-measured-bg: #23331f; --rp-measured-fg: #9fd19a; --rp-claimed-bg: #3a3018; --rp-claimed-fg: #e9c46a; --rp-estimated-bg: #1b3347; --rp-estimated-fg: #8cc8f0;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+  --rp-bg: #1f1e1b; --rp-surface: #262521; --rp-ink: #ecebe4; --rp-ink2: #b9b7ae; --rp-muted: #8f8d84; --rp-rule: #35332e; --rp-rule2: #45423b; --rp-accent: #e0896a;
+  --rp-measured-bg: #23331f; --rp-measured-fg: #9fd19a; --rp-claimed-bg: #3a3018; --rp-claimed-fg: #e9c46a; --rp-estimated-bg: #1b3347; --rp-estimated-fg: #8cc8f0;
+  }
+}
+/* While editing (#doc carries data-font; the editor loads this file only for a report page). */
+.editing:has(#doc[data-font="report"]) main { background: var(--rp-bg); }
+#doc[data-font="report"] { --content-width: 980px; color: var(--rp-ink); font-family: var(--rp-sans); }
+#doc[data-font="report"] .title-input { font-family: var(--rp-serif); font-weight: 500; letter-spacing: -.02em; }
+#doc[data-font="report"] :is(.blk.h1, .blk.h2, .blk.h3) .text { font-family: var(--rp-serif); font-weight: 500; }
+#doc[data-font="report"] .blk.quote .text { font-family: var(--font-mono); font-size: var(--fs-13); background: var(--rp-surface); border: 1px solid var(--rp-rule); border-radius: var(--rp-radius); padding: var(--space-3) var(--space-4); color: var(--rp-ink2); }

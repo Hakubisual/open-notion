@@ -40,10 +40,7 @@
     return true;
   }
   function safeHref(value) {
-    if (typeof value !== "string") return "";
-    if (/[\u0000-\u0020\\]/.test(value)) return "";
-    if (/^(https?:\/\/|mailto:)/i.test(value) || /^\/(?!\/)/.test(value) || /^#[\w-]+$/.test(value)) return value;
-    return "";
+    return typeof value === "string" && /^(https?:|mailto:|\/(?!\/)|#)[^\s\0-\x1f\x7f\\]*(?![^])/i.test(value) ? value : "";
   }
   var colors = ["default", "gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
   function richText(input, fallback) {

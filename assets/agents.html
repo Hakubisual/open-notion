@@ -14,7 +14,7 @@
 <a class="skip" href="#doc">본문으로</a>
 <header class="topbar">
   <button class="icon" id="menu" aria-label="메뉴" aria-expanded="false" aria-controls="sidebar">☰</button>
-  <a class="brand" href="/"><svg class="wordmark" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="OpenNotion" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+  <a class="brand" href="/"><svg class="wordmark" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
   <span class="ag-crumb" aria-hidden="true">설정</span>
   <div class="ag-grow"></div>
   <a class="icon" id="viewlink" href="/" aria-label="읽기 화면으로" title="읽기 화면으로">↩</a>
@@ -24,7 +24,7 @@
   <nav class="sidebar" id="sidebar" aria-label="설정 메뉴">
     <div class="navgroup">
       <h2>설정</h2>
-      <ul><li><a href="/settings/agents/" class="on" aria-current="page">에이전트 연결</a></li><li><a href="#auto-notes">자동 메모</a></li><li><a href="/agent-journal/">작업 기록 보기</a></li></ul>
+      <ul><li><a href="/settings/agents/" class="on" aria-current="page">에이전트 연결</a></li><li><a href="#auto-notes">자동 메모</a></li><li><a href="#webhooks">웹훅</a></li><li><a href="/agent-journal/">작업 기록 보기</a></li></ul>
     </div>
     <div class="navgroup">
       <h2>노트</h2>
@@ -81,6 +81,34 @@
       <p class="ag-help">토큰 대신 로그인 창으로 연결한 앱이에요. 끊으면 그 앱은 다시 로그인해야 들어올 수 있어요.</p>
       <div class="ag-card">
         <ul class="ag-list" id="grant-list" aria-label="로그인으로 연결된 앱 목록"></ul>
+      </div>
+    </section>
+
+    <section class="ag-section" id="webhooks" aria-labelledby="h-hooks">
+      <h2 id="h-hooks" class="ag-h2">웹훅</h2>
+      <p class="ag-help">페이지가 생기거나 바뀌면 적어 둔 주소로 알려 줘요. 다른 도구(Vikunja, n8n, 내 서버)와 맞출 때 써요. 같은 페이지를 연달아 고치면 10초 동안 묶어 한 번만 보내요. <a href="/webhooks.md" target="_blank" rel="noopener">형식과 서명 확인 방법</a></p>
+      <div class="ag-card">
+        <ul class="ag-list" id="hook-list" aria-label="웹훅 목록"></ul>
+        <form class="ag-form ag-hook-form" id="hook-form" novalidate aria-label="새 웹훅 만들기">
+          <div class="ag-field">
+            <label for="hook-url">받을 주소 (https)</label>
+            <input id="hook-url" name="url" type="text" inputmode="url" maxlength="2000" autocomplete="off" spellcheck="false" placeholder="https://example.com/acard-hook">
+          </div>
+          <fieldset class="ag-field ag-events" id="hook-events">
+            <legend class="ag-legend">보낼 일</legend>
+            <div class="ag-checks" id="hook-event-list"></div>
+          </fieldset>
+          <button type="submit" class="ag-btn ag-primary" id="hook-create">만들기</button>
+          <p class="ag-error" id="hook-form-error" role="alert" hidden></p>
+        </form>
+      </div>
+      <div class="ag-token-box" id="hook-secret-box" hidden role="region" aria-labelledby="hook-secret-title">
+        <h3 id="hook-secret-title">서명 비밀값</h3>
+        <div class="ag-token-row">
+          <input id="hook-secret" class="ag-token" type="text" readonly aria-label="서명 비밀값" spellcheck="false">
+          <button type="button" class="ag-btn" id="hook-secret-copy">복사</button>
+        </div>
+        <p class="ag-warn">이 창을 닫으면 다시 볼 수 없어요. 받는 쪽에 넣어 두고 X-Acard-Signature 헤더를 이 값으로 확인하세요.</p>
       </div>
     </section>
 

@@ -123,6 +123,10 @@
   }
 
   registerFeature({
+    schema: async (db) => {
+      // Import provenance survives later edits, whose source remains 'editor'.
+      await db.prepare("CREATE TABLE IF NOT EXISTS page_imports (page TEXT PRIMARY KEY, kind TEXT NOT NULL, created INTEGER NOT NULL)").run();
+    },
     api: async ({ path, method, request, db, helpers }) => {
       if (path === "/api/home/starter") {
         if (method !== "POST") return helpers.json({ error: "POST로 보내 주세요." }, 405);
@@ -133,12 +137,32 @@
         return helpers.json({ ok: true, results });
       }
       if (path === "/api/home/summary" && method === "GET") {
-        const states = await db.prepare("SELECT key, value FROM feature_templates_state WHERE key LIKE 'starter:%'").all();
+        const states = await db.prepare("SELECT key, value FROM feature_templates_state WHERE key LIKE 'starter:%' OR key = 'examples'").all();
         const starters = {};
+        const starterPages = new Set(["index"]);
         for (const row of states.results || []) {
-          try { const v = JSON.parse(row.value); if (v.slug) starters[row.key.slice(8)] = v.slug; } catch {}
+          try {
+            const v = JSON.parse(row.value);
+            if (row.key === "examples") v.forEach((p) => starterPages.add(p.slug));
+            else if (v.slug) { starters[row.key.slice(8)] = v.slug; starterPages.add(v.slug); }
+          } catch {}
         }
         const tree = await readTree(db);
+        const imported = await db.prepare("SELECT page FROM page_imports").all();
+        const importedPages = new Set((imported.results || []).map((p) => p.page));
+        // A first page is a live authored note/database, not home, seeded markdown,
+        // a generated starter/example, an imported page, a folder, or a database row.
+        const authored = tree.filter((p) => p.source === "editor" && !starterPages.has(p.slug) && !importedPages.has(p.slug) && (p.kind === "note" || p.kind === "db"));
+        const firstRun = await ACARD_FEATURES.services.firstRunState(db);
+        const shared = await db.prepare("SELECT 1 FROM share_rules WHERE principal IN ('publish', 'link') LIMIT 1").first();
+        const newest = tree.filter((p) => p.kind !== "folder").sort((a, b) => Number(b.updated) - Number(a.updated))[0];
+        const checklist = {
+          page: authored.length > 0,
+          agent: firstRun.state === "connected" || firstRun.state === "project_set",
+          import: importedPages.size > 0,
+          share: Boolean(shared),
+          shareSlug: newest ? newest.slug : "index",
+        };
         const live = new Set(tree.map((p) => p.slug));
         const recent = tree.filter((p) => p.slug !== "index").sort((a, b) => Number(b.updated) - Number(a.updated)).slice(0, 6).map((p) => ({ slug: p.slug, title: p.title, updated: Number(p.updated), kind: p.kind }));
         const pinned = tree.filter((p) => Number(p.favorite) === 1).slice(0, 8).map((p) => ({ slug: p.slug, title: p.title, kind: p.kind }));
@@ -151,7 +175,7 @@
           board: live.has(starters.board) ? await databaseSummary(db, starters.board) : null,
           blog: live.has(starters.blog) ? await databaseSummary(db, starters.blog) : null,
           notes: live.has(starters.notes) ? { slug: starters.notes } : null,
-          recent, pinned, sessions,
+          recent, pinned, sessions, checklist,
         });
       }
       return null;

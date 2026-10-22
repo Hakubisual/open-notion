@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { markdownToBlocks } from "../markdown-blocks";
 
-const order = ["meeting", "tasks", "journal", "reading", "project", "decision", "travel", "weekly"];
+const order = ["meeting", "plan", "report", "research", "tasks", "journal", "reading", "project", "decision", "travel", "weekly"];
 
 export async function loadTemplates(root: string) {
   return Promise.all(order.map(async (id) => {
@@ -14,7 +14,8 @@ export async function loadTemplates(root: string) {
       return [line.slice(0, colon).trim(), line.slice(colon + 1).trim()];
     }));
     const blocks = markdownToBlocks(raw.slice(header[0].length)).map((block, index) => ({ ...block, id: "template-" + index }));
-    return { id, name: meta.name, icon: meta.icon, description: meta.description, blocks };
+    // style: report turns on the research-report page style (page setting font) for a page made from this template.
+    return { id, name: meta.name, icon: meta.icon, description: meta.description, ...(meta.style === "report" ? { settings: { font: "report" } } : {}), blocks };
   }));
 }
 

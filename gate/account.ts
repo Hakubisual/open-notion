@@ -12,12 +12,23 @@ export type AccountEnv = TenancyEnv & {
   readonly SEND_EMAIL_HOOK_SECRET?: string;
   readonly DEV_OUTBOX_TOKEN?: string;
   readonly SITE_URL?: string;
+  readonly GOOGLE_CLIENT_ID?: string;
+  readonly GOOGLE_CLIENT_SECRET?: string;
 };
 
 const VERIFIER = "acard_pkce";
 const NEXT = "acard_next";
+const GAUTH = "acard_gauth";
 const safeNext = (value: string | null | undefined) => (value && value.startsWith("/") && !value.startsWith("//") ? value : "/");
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Where a new account lands after the email link: the invite screen, or (acard-next-10 #4) back to the OAuth consent the
+// local app opened, so a local-edition user without an invite code finishes connecting. Anything else goes home.
+export const signupNext = (value: unknown): string | null => {
+  const next = typeof value === "string" ? value : "";
+  if (next === "/beta") return next;
+  if (next.length <= 2000 && /^\/oauth\/authorize\?[^#\s\\]*$/.test(next)) return next;
+  return null;
+};
 const PROFILE_COLS = "id,display_name,avatar_url,handle,use_case,onboarded_at,lang,home_layout";
 const USE_CASES = ["notes", "blog", "team", "ai_log"];
 const HOME_WIDGETS = ["board", "progress", "blog", "notes"];
@@ -104,18 +115,49 @@ const googleAvatar = (meta: Record<string, unknown> | undefined): string | null 
 
 const gotrueCode = (d: any): string => String(d?.error_code ?? d?.code ?? d?.error ?? "unknown");
 
-async function readCreds(request: Request): Promise<{ email: string; password: string } | Response> {
+async function readCreds(request: Request): Promise<{ email: string; password: string; next: string } | Response> {
   let body: any;
   try { body = await request.json(); } catch { return err(400, "bad_json", "요청 형식이 올바르지 않아요."); }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return err(400, "bad_json", "요청 형식이 올바르지 않아요.");
   const email = String(body?.email ?? "").trim().toLowerCase();
   const password = String(body?.password ?? "");
   if (!EMAIL_RE.test(email) || email.length > 254) return err(400, "bad_email", "이메일 주소를 확인해 주세요.");
   if (password.length < 8 || password.length > 128) return err(400, "weak_password", "비밀번호는 8자 이상이어야 해요.");
-  return { email, password };
+  return { email, password, next: signupNext(body?.next) ?? "/" };
 }
 
 const b64url = (buf: ArrayBuffer | Uint8Array) =>
   btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+// Google sign-in runs from our own domain (acard-google-domain) so Google's account screen names notes.example.com, not the
+// Supabase project host. Google allows one fixed redirect URI, so the state names the host the login started on, signed
+// with a key derived from the client secret; the callback hands the single-use Google code back to that host, where
+// the PKCE verifier and nonce cookies live. GoTrue then makes the session from the id_token (same Google identity).
+const GOOGLE_AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
+const googleCallback = (env: AccountEnv, request: Request) => `${siteUrl(env, request)}/api/auth/google/callback`;
+const sha256Hex = async (text: string) =>
+  [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+const stateKey = (secret: string) =>
+  crypto.subtle.importKey("raw", new TextEncoder().encode("acard-google-state:" + secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+
+export async function signGoogleState(secret: string, state: { h: string; i: string; x: number }): Promise<string> {
+  const body = b64url(new TextEncoder().encode(JSON.stringify(state)));
+  return body + "." + b64url(await crypto.subtle.sign("HMAC", await stateKey(secret), new TextEncoder().encode(body)));
+}
+
+async function readGoogleState(secret: string, raw: string | null): Promise<{ h: string; i: string } | null> {
+  const [body, mac, extra] = (raw ?? "").split(".");
+  if (!body || !mac || extra !== undefined) return null;
+  try {
+    const unb64 = (s: string) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (ch) => ch.charCodeAt(0));
+    if (!(await crypto.subtle.verify("HMAC", await stateKey(secret), unb64(mac), new TextEncoder().encode(body)))) return null;
+    const state = JSON.parse(new TextDecoder().decode(unb64(body)));
+    if (typeof state?.h !== "string" || !/^https?:\/\/[^/?#\s]+$/.test(state.h) || typeof state.i !== "string" || !state.i) return null;
+    if (typeof state.x !== "number" || state.x < Date.now()) return null;
+    return { h: state.h, i: state.i };
+  } catch { return null; }
+}
 
 async function verifyHook(request: Request, body: string, secret: string): Promise<boolean> {
   const id = request.headers.get("webhook-id");
@@ -152,8 +194,14 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
   if (path === "/api/hooks/send-email" && post) {
     const body = await request.text();
     if (!env.SEND_EMAIL_HOOK_SECRET || !(await verifyHook(request, body, env.SEND_EMAIL_HOOK_SECRET))) return err(401, "bad_signature", "invalid signature");
-    const { user, email_data } = JSON.parse(body);
-    const link = `${siteUrl(env, request)}/api/auth/confirm?token_hash=${encodeURIComponent(email_data.token_hash)}&type=${encodeURIComponent(email_data.email_action_type)}`;
+    let parsed: any;
+    try { parsed = JSON.parse(body); } catch { return err(400, "bad_json", "요청 형식이 올바르지 않아요."); }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !parsed.user || typeof parsed.user !== "object" || Array.isArray(parsed.user) || !parsed.email_data || typeof parsed.email_data !== "object" || Array.isArray(parsed.email_data)) return err(400, "bad_json", "요청 형식이 올바르지 않아요.");
+    const { user, email_data } = parsed;
+    const site = siteUrl(env, request);
+    const back = typeof email_data.redirect_to === "string" && email_data.redirect_to.startsWith(site + "/") ? signupNext(email_data.redirect_to.slice(site.length)) : null;
+    const next = back ? "&next=" + encodeURIComponent(back) : "";
+    const link = `${siteUrl(env, request)}/api/auth/confirm?token_hash=${encodeURIComponent(email_data.token_hash)}&type=${encodeURIComponent(email_data.email_action_type)}${next}`;
     const entry = { to: user.email, type: email_data.email_action_type, link, at: new Date().toISOString() };
     await env.OUTBOX?.put(`mail:${user.email}:${Date.now()}`, JSON.stringify(entry), { expirationTtl: 60 * 60 * 24 });
     return json({});
@@ -170,7 +218,8 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
   if (path === "/api/auth/signup" && post) {
     const lim = await limited(request, env, "signup"); if (lim) return lim;
     const c = await readCreds(request); if (c instanceof Response) return c;
-    const r = await gotrue(env, "/signup", { body: { email: c.email, password: c.password } });
+    const destination = c.next !== "/" ? `?redirect_to=${encodeURIComponent(siteUrl(env, request) + c.next)}` : "";
+    const r = await gotrue(env, "/signup" + destination, { body: { email: c.email, password: c.password } });
     if (!r.ok) {
       const code = gotrueCode(r.data);
       if (code === "weak_password") return err(400, code, "더 강한 비밀번호를 써 주세요.");
@@ -202,6 +251,7 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
   if (path === "/api/auth/forgot" && post) {
     const lim = await limited(request, env, "forgot"); if (lim) return lim;
     let body: any; try { body = await request.json(); } catch { return err(400, "bad_json", "요청 형식이 올바르지 않아요."); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return err(400, "bad_json", "요청 형식이 올바르지 않아요.");
     const email = String(body?.email ?? "").trim().toLowerCase();
     if (!EMAIL_RE.test(email)) return err(400, "bad_email", "이메일 주소를 확인해 주세요.");
     const r = await gotrue(env, "/recover", { body: { email } });
@@ -214,13 +264,14 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
     const type = url.searchParams.get("type") ?? "";
     const r = await gotrue(env, "/verify", { body: { type: type === "signup" ? "email" : type, token_hash } });
     if (!r.ok) return redirect("/login?e=link");
-    return redirect(type === "recovery" ? "/reset" : "/?welcome=1", sessionCookies(r.data));
+    return redirect(type === "recovery" ? "/reset" : signupNext(url.searchParams.get("next")) ?? "/?welcome=1", sessionCookies(r.data));
   }
 
   if (path === "/api/auth/reset" && post) {
     const me = await readSession(request, env);
     if (!me) return err(401, "no_session", "링크가 만료됐어요. 다시 요청해 주세요.");
     let body: any; try { body = await request.json(); } catch { return err(400, "bad_json", "요청 형식이 올바르지 않아요."); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return err(400, "bad_json", "요청 형식이 올바르지 않아요.");
     const password = String(body?.password ?? "");
     if (password.length < 8 || password.length > 128) return err(400, "weak_password", "비밀번호는 8자 이상이어야 해요.");
     const r = await gotrue(env, "/user", { method: "PUT", body: { password }, token: me.token });
@@ -232,8 +283,39 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
   if (path === "/api/auth/google" && request.method === "GET") {
     const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
     const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+    if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
+      const nonce = b64url(crypto.getRandomValues(new Uint8Array(32)));
+      const id = b64url(crypto.getRandomValues(new Uint8Array(16)));
+      const state = await signGoogleState(env.GOOGLE_CLIENT_SECRET, { h: url.origin, i: id, x: Date.now() + 600_000 });
+      const q = new URLSearchParams({
+        client_id: env.GOOGLE_CLIENT_ID, redirect_uri: googleCallback(env, request), response_type: "code", scope: "openid email profile",
+        state, nonce: await sha256Hex(nonce), code_challenge: challenge, code_challenge_method: "S256",
+      });
+      return redirect(`${GOOGLE_AUTHORIZE}?${q}`, [setCookie(GAUTH, `${id}.${verifier}.${nonce}`, 600), setCookie(NEXT, safeNext(url.searchParams.get("next")), 600)]);
+    }
     const q = new URLSearchParams({ provider: "google", redirect_to: `${siteUrl(env, request)}/api/auth/callback`, code_challenge: challenge, code_challenge_method: "s256" });
     return redirect(`${env.SUPABASE_URL}/auth/v1/authorize?${q}`, [setCookie(VERIFIER, verifier, 600), setCookie(NEXT, safeNext(url.searchParams.get("next")), 600)]);
+  }
+
+  if (path === "/api/auth/google/callback" && request.method === "GET") {
+    const fail = redirect("/login?e=oauth", [setCookie(GAUTH, "", 0), setCookie(NEXT, "", 0)]);
+    if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return fail;
+    const state = await readGoogleState(env.GOOGLE_CLIENT_SECRET, url.searchParams.get("state"));
+    if (!state) return fail;
+    if (state.h !== url.origin) return redirect(state.h + path + url.search);
+    const jar = readCookies(request);
+    const [id, verifier, nonce] = (jar[GAUTH] ?? "").split(".");
+    const code = url.searchParams.get("code");
+    if (!code || !verifier || !nonce || id !== state.i) return fail;
+    const tokens: any = await fetch(GOOGLE_TOKEN, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ code, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, redirect_uri: googleCallback(env, request), grant_type: "authorization_code", code_verifier: verifier }),
+    }).then((res) => (res.ok ? res.json() : null)).catch(() => null);
+    if (typeof tokens?.id_token !== "string") return fail;
+    const r = await gotrue(env, "/token?grant_type=id_token", { body: { provider: "google", id_token: tokens.id_token, nonce } });
+    if (!r.ok) return fail;
+    return redirect(safeNext(jar[NEXT]), [...sessionCookies(r.data), setCookie(GAUTH, "", 0), setCookie(NEXT, "", 0)]);
   }
 
   if (path === "/api/auth/callback" && request.method === "GET") {
@@ -279,6 +361,7 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
 
   if (path === "/api/profile" && post) {
     let body: any; try { body = await request.json(); } catch { return err(400, "bad_json", "요청 형식이 올바르지 않아요."); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) return err(400, "bad_json", "요청 형식이 올바르지 않아요.");
     const patch: Record<string, unknown> = {};
     if (body.display_name !== undefined) {
       const name = String(body.display_name).trim();

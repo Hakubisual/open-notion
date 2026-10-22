@@ -98,7 +98,9 @@ function settingsPatch(body) {
     if (!(body.cover.startsWith("https://") || /^\/(?!\/)/.test(body.cover)) || cover.protocol !== "https:" || cover.username || cover.password) throw new EditorInputError("Invalid cover URL.");
   }
   if ("width" in body && !["default", "normal", "full"].includes(body.width)) throw new EditorInputError("Invalid width.");
-  if ("font" in body && !["default", "serif", "mono"].includes(body.font)) throw new EditorInputError("Invalid font.");
+  // "report" = the research-report page style (cream page, serif headings, numbered equations): a value of the existing
+  // font column, so no schema change; an older build that does not know it draws the page in the normal style.
+  if ("font" in body && !["default", "serif", "mono", "report"].includes(body.font)) throw new EditorInputError("Invalid font.");
   if ("favorite" in body && typeof body.favorite !== "boolean") throw new EditorInputError("Invalid favorite.");
   return body;
 }
@@ -174,9 +176,11 @@ export async function handleEditorApi(request, db, url, helpers) {
     if (action === "settings" && method === "GET") return json({ settings: meta.settings });
     if (action === "settings" && method === "PUT") {
       const patch = settingsPatch(await objectBody(request));
-      const settings = { ...meta.settings, ...patch };
+      const keys = Object.keys(patch);
       const { statement } = versionInsert(db, slug, await snapshotPage(db, slug));
-      await db.batch([statement, db.prepare("DELETE FROM editor_page_settings WHERE page = ?").bind(slug), insertRow(db, "editor_page_settings", settingsRow(slug, settings))]);
+      await db.batch([statement, db.prepare(`INSERT INTO editor_page_settings (page, ${keys.join(", ")}) VALUES (?, ${keys.map(() => "?").join(", ")}) ON CONFLICT(page) DO UPDATE SET ${keys.map(key => key + " = excluded." + key).join(", ")}`)
+        .bind(slug, ...keys.map(key => key === "favorite" ? (patch[key] ? 1 : 0) : patch[key]))]);
+      const { settings } = await readEditorPageMeta(db, slug);
       return json({ settings });
     }
 
@@ -259,15 +263,19 @@ export async function handleEditorApi(request, db, url, helpers) {
     }
     if (action === "permanent" && method === "DELETE") {
       if (!meta.trashed) return json({ error: "Move the page to trash first." }, 409);
+      const cleanup = helpers.permanentDeletePlan ? await helpers.permanentDeletePlan(db, slug) : { pages: [slug], statements: [] };
       await db.batch([
-        db.prepare("UPDATE editor_trash SET permanent = 1 WHERE page = ?").bind(slug),
-        db.prepare("UPDATE pages SET parent = NULL WHERE parent = ?").bind(slug),
-        db.prepare("DELETE FROM blocks WHERE page = ?").bind(slug),
-        db.prepare("DELETE FROM links WHERE src = ? OR dst = ?").bind(slug, slug),
-        db.prepare("DELETE FROM editor_page_settings WHERE page = ?").bind(slug),
-        db.prepare("DELETE FROM editor_comments WHERE page = ?").bind(slug),
-        db.prepare("DELETE FROM editor_history WHERE page = ?").bind(slug),
-        db.prepare("DELETE FROM pages WHERE slug = ?").bind(slug),
+        ...cleanup.statements,
+        ...cleanup.pages.flatMap((member) => [
+          db.prepare("INSERT INTO editor_trash (page, deleted, permanent) VALUES (?, ?, 1) ON CONFLICT(page) DO UPDATE SET permanent = 1").bind(member, Date.now()),
+          db.prepare("UPDATE pages SET parent = NULL WHERE parent = ?").bind(member),
+          db.prepare("DELETE FROM blocks WHERE page = ?").bind(member),
+          db.prepare("DELETE FROM links WHERE src = ? OR dst = ?").bind(member, member),
+          db.prepare("DELETE FROM editor_page_settings WHERE page = ?").bind(member),
+          db.prepare("DELETE FROM editor_comments WHERE page = ?").bind(member),
+          db.prepare("DELETE FROM editor_history WHERE page = ?").bind(member),
+          db.prepare("DELETE FROM pages WHERE slug = ?").bind(member),
+        ]),
       ]);
       return json({ ok: true, slug });
     }

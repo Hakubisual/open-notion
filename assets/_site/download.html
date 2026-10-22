@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="meta.dl.title">Download Acard</title>
+<meta name="description" content="The Acard app for Windows and macOS. Free, no account needed, your notes stay on your computer." data-i18n-attr="content:meta.dl.desc">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://notes.example.com/download">
+<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="website"><meta property="og:site_name" content="Acard"><meta property="og:url" content="https://notes.example.com/download">
+<meta property="og:title" content="Download Acard">
+<meta property="og:description" content="The Acard app for Windows and macOS. Free, no account needed, your notes stay on your computer.">
+<meta property="og:image" content="https://notes.example.com/og.png"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Acard - AI writes. People read with ease.">
+<meta property="og:locale" content="en_US"><meta property="og:locale:alternate" content="ko_KR"><meta property="og:locale:alternate" content="zh_CN">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Download Acard"><meta name="twitter:description" content="The Acard app for Windows and macOS. Free, no account needed, your notes stay on your computer."><meta name="twitter:image" content="https://notes.example.com/og.png"><meta name="twitter:image:alt" content="Acard - AI writes. People read with ease.">
+<link rel="preload" href="/fonts/pretendard-core.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/_site/styles.css">
+<style>
+.dl { max-width: 1120px; margin: 0 auto; padding: 88px 24px 120px; }
+.dl h1 { margin: 0; text-align: center; font-size: var(--fs-72); line-height: 1.15; font-weight: 800; letter-spacing: -0.04em; }
+.dl .sub { margin: 18px auto 56px; max-width: 720px; text-align: center; font-size: var(--fs-24); color: #55534e; }
+.dl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.dl-card { padding: 36px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); display: flex; flex-direction: column; }
+.dl-card h2 { margin: 0; display: flex; align-items: center; gap: 12px; font-size: var(--fs-32); font-weight: 700; letter-spacing: -0.02em; }
+.dl-card h2 svg { width: 30px; height: 30px; flex: none; }
+.dl-meta { margin: 8px 0 26px; color: var(--muted); font-size: var(--fs-17); }
+.dl-btns { display: grid; gap: 12px; }
+.dl-btns .btn { height: 64px; font-size: var(--fs-19); }
+.dl-pending { margin: 0; padding: 18px 20px; border-radius: 10px; background: var(--bg-soft); color: var(--ink-2); font-size: var(--fs-17); }
+.dl-note { margin-top: 24px; padding: 18px 20px; border-radius: 10px; background: var(--accent-soft); color: var(--ink-2); font-size: var(--fs-16); line-height: 1.65; }
+.dl-note b { color: var(--ink); }
+.dl-note ol { margin: 6px 0 0; padding-left: 20px; }
+.dl-facts { margin-top: 56px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+.dl-facts div { padding: 26px 28px; border-radius: 12px; background: var(--bg-soft); }
+.dl-facts h3 { margin: 0 0 6px; font-size: var(--fs-21); font-weight: 700; }
+.dl-facts p { margin: 0; color: var(--muted); font-size: var(--fs-16); }
+.dl-facts code { font-family: var(--mono); font-size: .92em; }
+.dl-foot { margin-top: 48px; text-align: center; color: var(--muted); font-size: var(--fs-16); }
+.dl-foot a { color: var(--accent); }
+@media (max-width: 860px) {
+  .dl { padding: 40px 18px 72px; }
+  .dl h1 { font-size: var(--fs-38); }
+  .dl .sub { font-size: var(--fs-17); margin-bottom: 28px; }
+  .dl-grid, .dl-facts { grid-template-columns: 1fr; gap: 16px; }
+  .dl-facts { margin-top: 28px; }
+  .dl-card { padding: 22px; }
+  .dl-card h2 { font-size: var(--fs-24); }
+  .dl-meta { margin-bottom: 18px; }
+  .dl-btns .btn { height: 52px; font-size: var(--fs-17); }
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #191919; --bg-soft: #232323; --ink: #ececec; --ink-2: #d4d4d4; --muted: #a3a3a3; --line: #333; --accent-soft: #2a2640; }
+  body { background: var(--bg); }
+  .nav { background: var(--bg); }
+  .dl .sub { color: #b5b3ae; }
+}
+</style>
+</head>
+<body>
+<header class="nav">
+  <div class="nav-in">
+    <a class="brand" href="/"><svg class="wordmark" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+    <nav class="nav-links">
+      <a href="/#features" data-i18n="land.nav.product">Product</a>
+      <a href="/#pricing" data-i18n="land.nav.pricing">Pricing</a>
+      <a href="/guide" data-i18n="land.nav.guide">Get started</a>
+    </nav>
+    <div class="nav-right">
+      <nav class="lang-switch" aria-label="Language" data-i18n-attr="aria-label:lang.label"><a href="?lang=en" data-lang="en" lang="en">EN</a><a href="?lang=ko" data-lang="ko" lang="ko">한국어</a><a href="?lang=zh" data-lang="zh" lang="zh-CN">中文</a></nav>
+    </div>
+  </div>
+</header>
+<main class="dl">
+  <h1 data-i18n="dl.title">Download Acard</h1>
+  <p class="sub" data-i18n="dl.sub">Free, no account needed. Your notes are saved on your computer, and your AI agents can write to them.</p>
+  <div class="dl-grid">
+    <section class="dl-card" id="windows">
+      <h2><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 5.1 10.4 4v7.1H3zm8.4-1.2L21 2.5v8.6h-9.6zM3 12.9h7.4V20L3 18.9zm8.4 0H21v8.6l-9.6-1.4z"/></svg><span>Windows</span></h2>
+      <p class="dl-meta"><span data-i18n="dl.win.req">Windows 10 or 11, 64-bit</span> · <span data-i18n="dl.version">Version</span> <span data-release-version="win">-</span></p>
+      <div class="dl-btns" data-release-ready="win"><a class="btn btn-primary" href="/download/windows" data-i18n="dl.win.button">Download for Windows</a></div>
+      <p class="dl-pending" data-release-pending="win" data-i18n="dl.pending">This build is on its way. Check back soon.</p>
+      <div class="dl-note" data-i18n-html="dl.win.smartscreen"><b>If Windows says "Windows protected your PC"</b>, click <b>More info</b> and then <b>Run anyway</b>. The installer is not code-signed yet, so Windows does not recognise it. Signing is being set up.</div>
+    </section>
+    <section class="dl-card" id="mac">
+      <h2><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.8-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.1-.8 1.5 0 1.9.8 3.2.8 1.3 0 2.1-1.2 2.9-2.4.9-1.3 1.3-2.7 1.3-2.8-.1 0-2.5-1-2.4-3.9ZM14 5.5c.7-.8 1.1-1.9 1-3-1 0-2.1.6-2.8 1.4-.6.7-1.2 1.8-1 2.9 1 .1 2.1-.5 2.8-1.3Z"/></svg><span>macOS</span></h2>
+      <p class="dl-meta"><span data-i18n="dl.mac.req">macOS 12 or later</span> · <span data-i18n="dl.version">Version</span> <span data-release-version="mac">-</span></p>
+      <div class="dl-btns" data-release-ready="mac">
+        <a class="btn btn-primary" href="/download/mac-arm64" data-i18n="dl.mac.arm">Download for Apple Silicon (M1-M4)</a>
+        <a class="btn" href="/download/mac-x64" data-i18n="dl.mac.intel">Download for Intel Mac</a>
+      </div>
+      <p class="dl-pending" data-release-pending="mac" data-i18n="dl.pending">This build is on its way. Check back soon.</p>
+      <div class="dl-note" data-i18n-html="dl.mac.gatekeeper"><b>The first time you open it</b>, macOS says Apple could not verify it, because the app is not notarized yet.<ol><li>Drag Acard to Applications and open it once, then click <b>Done</b>.</li><li>Open <b>System Settings &gt; Privacy &amp; Security</b>, scroll down and click <b>Open Anyway</b>.</li><li>Confirm with your password. After that it opens normally.</li></ol></div>
+    </section>
+  </div>
+  <div class="dl-facts">
+    <div><h3 data-i18n="dl.fact.data.title">Your data stays yours</h3><p data-i18n-html="dl.fact.data">Notes live in one folder on your computer (<code>%APPDATA%\Acard</code> on Windows, <code>~/Library/Application Support/Acard</code> on Mac). Uninstalling keeps it.</p></div>
+    <div><h3 data-i18n="dl.fact.update.title">Updates itself</h3><p data-i18n="dl.fact.update">The Windows app checks for a new version when it starts and asks you to restart. Your notes are not touched.</p></div>
+    <div><h3 data-i18n="dl.fact.web.title">Publish when you want</h3><p data-i18n="dl.fact.web">Connect an notes.example.com account from the app to publish pages and keep cloud backups.</p></div>
+  </div>
+  <p class="dl-foot" data-i18n-html="dl.foot">Prefer to build it yourself? The source is on <a href="https://github.com/Hakubisual/open-notion-acard" rel="noopener">GitHub</a>.</p>
+</main>
+</body>
+</html>

@@ -16,7 +16,7 @@
 .reader .page-top-main > .blocks .callout { margin: 32px 0 0; }
 .reader .page-top-main > .blocks > :last-child { margin-bottom: 0; }
 .reader .page-side {
-  width: 100%; aspect-ratio: 457 / 304; margin: 0; border-radius: 12px; overflow: clip; background-color: var(--bg-soft);
+  width: 100%; aspect-ratio: 457 / 304; margin: 0; border-radius: var(--radius-md); overflow: clip; background-color: var(--bg-soft);
 }
 .reader .brandside { display: grid; place-items: center; background-image: var(--grad-glow), var(--grad-1); }
 .reader .brandside img { width: 29%; height: auto; }
@@ -27,17 +27,26 @@
 .reader .home-tasks + .overview { margin-top: 36px; }
 .reader .blocks .callout {
   display: flex; align-items: center; gap: 20px; min-height: 64px; margin: 24px 0;
-  padding: 16px 18px; border: 0; border-radius: 9px; background-color: var(--mint); color: var(--fg);
+  padding: 16px 18px; border: 0; border-radius: var(--radius-sm); background-color: var(--mint); color: var(--fg);
   font-size: var(--fs-16); line-height: 1.75;
 }
 .reader .callout .callout-ico { flex: 0 0 28px; width: 28px; height: 28px; color: var(--tag-green-fg); }
 .reader .callout-body { min-width: 0; overflow-wrap: anywhere; }
 .reader .page-top + .blocks > :first-child { margin-top: 0; }
+/* Block rhythm (ref-1): one 4px scale; headings sit close to their text. Each block follows an anchor span. */
+.reader .blocks > :is(h2, h3) { margin: var(--space-10) 0 var(--space-3); }
+.reader .blocks > h2 { margin-top: var(--space-12); }
+.reader .blocks > :is(h4, h5) { margin: var(--space-6) 0 var(--space-2); }
+.reader .blocks > span:first-child + * { margin-top: 0; }
+.reader .blocks > :is(p, ul, ol) { margin: 0 0 var(--space-4); }
+.reader .blocks > :is(h2, h3, h4) + span + .callout { margin-top: var(--space-3); }
 @media (max-width: 1099px) {
   .reader .page-top { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   .reader .page-side { aspect-ratio: 3 / 1; }
 }
 @media (max-width: 599px) {
+  .reader .blocks > h2 { margin-top: var(--space-10); }
+  .reader .blocks > h3 { margin-top: var(--space-8); }
   .reader .page-top { gap: 20px; margin-bottom: 20px; padding-bottom: 20px; }
   .reader .page-top .lede, .reader .page-top-main > .blocks > p { font-size: var(--fs-17); }
   .reader .blocks .callout { gap: 14px; padding: 14px 16px; }

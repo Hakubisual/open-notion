@@ -1,9 +1,11 @@
 import { Database } from "bun:sqlite";
+import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assembleWorkerSource } from "./assemble-worker";
+import { pgD1 } from "../gate/pg-d1";
 
 mock.module("cloudflare:workers", () => ({ DurableObject: class {}, WorkerEntrypoint: class {} }));
 
@@ -14,13 +16,20 @@ const SECRET_TEXT = "zebra-other-confidential";
 const ROOT_MEDIA = "1111111111111111";
 const OTHER_MEDIA = "2222222222222222";
 
+// D1 and workspace Durable Objects refuse more than 100 bound parameters in one statement; a test can turn that on.
+let maxParams = Infinity;
+// Member stores answer over the network, so overlapping requests interleave between statements; a test can turn on a
+// read whose result arrives on a later turn to get the same interleaving here.
+let slowReads = false;
+const later = <T>(value: T) => (slowReads ? new Promise<T>((done) => setImmediate(() => done(value))) : value);
 function d1(sqlite: Database) {
+  const limit = (params: unknown[]) => { if (params.length > maxParams) throw new Error("too many SQL variables: " + params.length); };
   const statement = (sql: string, params: unknown[] = []): any => ({
     sql, params,
     bind: (...next: unknown[]) => statement(sql, next),
-    run: async () => ({ success: true, meta: { changes: sqlite.query(sql).run(...(params as any[])).changes } }),
-    all: async () => ({ results: sqlite.query(sql).all(...(params as any[])) }),
-    first: async () => sqlite.query(sql).get(...(params as any[])) ?? null,
+    run: async () => { limit(params); return { success: true, meta: { changes: sqlite.query(sql).run(...(params as any[])).changes } }; },
+    all: async () => { limit(params); return later({ results: sqlite.query(sql).all(...(params as any[])) }); },
+    first: async () => { limit(params); return later(sqlite.query(sql).get(...(params as any[])) ?? null); },
   });
   return {
     prepare: (sql: string) => statement(sql),
@@ -216,6 +225,9 @@ describe("sharing", () => {
     expect(page.status).toBe(200);
     expect(page.text).toContain("root body");
     expect(page.text).not.toContain(SECRET_TEXT);
+    expect(page.text).toContain('<meta property="og:title" content="Acard">');
+    expect(page.text).not.toMatch(/<meta (?:property|name)="(?:og|twitter):[a-z]+" content="[^"]*(?:Shared root|root body)/);
+    expect(page.text).not.toContain('rel="canonical"');
     expect(page.text).toContain(url + "/child/");
     expect((await call("GET", url + "/child/")).status).toBe(200);
     expect((await call("GET", url + "/other/")).status).toBe(404);
@@ -239,6 +251,15 @@ describe("sharing", () => {
     expect(page.text).toContain('data-ui-invalid="1"');
     expect(page.text).toContain('class="ui-fallback"');
     expect(page.text).toContain(".ui-stat{");
+  });
+
+  test("a link page keeps a card-grid card's box when its private link is dropped (#105)", async () => {
+    const blocks = [{ id: "r1", type: "paragraph", text: "root body" }, { id: "c1", type: "component", text: '{"items":[{"title":"빠른 시작","href":"/new"},{"title":"협업"}]}', meta: { ui: "card-grid" } }];
+    expect((await asOwner("PUT", "/api/page/root", { body: { blocks } })).status).toBe(200);
+    const url = (await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } })).data.link.url as string;
+    const page = await call("GET", url);
+    expect(page.text.match(/class="ui-cards-item"/g)).toHaveLength(2);
+    expect(page.text).not.toContain('href="/new"');
   });
 
   test("a link page sends sized AVIF/WebP copies with width/height, lazy below the first image, original kept as the link", async () => {
@@ -366,6 +387,9 @@ describe("sharing", () => {
     expect(frameCsp).not.toContain("allow-same-origin");
     expect(frameCsp).toContain("default-src 'none'");
     expect(frameCsp).toContain("frame-ancestors 'self'");
+    expect(doc.headers.get("x-frame-options")).not.toBe("DENY");
+    expect(doc.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(doc.headers.get("strict-transport-security")).toBe("max-age=31536000; includeSubDomains");
     expect(doc.headers.get("set-cookie")).toBeNull();
     expect((await call("GET", url + "/frame/h2")).status).toBe(404);
     expect((await call("GET", url + "/frame/r1")).status).toBe(404);
@@ -384,6 +408,931 @@ describe("sharing", () => {
   async function np5Guest(role: "read" | "edit" | "full") {
     if (!np5Guests[role]) np5Guests[role] = await verify(await invite("root", "np5-" + role + "@example.com", role), "np5-" + role + "@example.com");
     return np5Guests[role];
+  }
+
+  test("guest database reads exclude private row pages and their appearance (#86)", async () => {
+    const made = await asOwner("POST", "/api/db", { body: { title: "Row visibility", slug: "audit86-rows", parent: "root", page: true } });
+    expect(made.status).toBe(200);
+    const slug = made.data.slug;
+    const title = (await asOwner("GET", "/api/db/" + slug)).data.properties.find((p: any) => p.type === "title").id;
+    const publicRow = (await asOwner("POST", "/api/db/" + slug + "/rows", { body: { props: { [title]: "Visible row" } } })).data.row;
+    const privateRow = (await asOwner("POST", "/api/db/" + slug + "/rows", { body: { props: { [title]: "audit86-private-title" } } })).data.row;
+    expect((await asOwner("PUT", "/api/page/" + privateRow.page + "/settings", { body: { icon: "secret", cover: "g3" } })).status).toBe(200);
+    expect((await asOwner("PUT", "/api/page/" + privateRow.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+    const guest = await np5Guest("read");
+    expect((await call("GET", "/api/page/" + privateRow.page, { cookie: guest })).status).toBe(401);
+    expect((await asOwner("GET", "/api/db/" + slug)).data.rows.map((r: any) => r.id)).toEqual([publicRow.id, privateRow.id]);
+    const visible = await call("GET", "/api/db/" + slug, { cookie: guest });
+    expect(visible.status).toBe(200);
+    expect(visible.data.rows.map((r: any) => r.id)).toEqual([publicRow.id]);
+    expect(visible.text).not.toContain("audit86-private-title");
+    expect(visible.text).not.toContain('"pageIcon":"secret"');
+    expect(visible.text).not.toContain('"cover":"g3"');
+    const link = (await asOwner("PUT", "/api/page/" + slug + "/access/general", { body: { mode: "link", role: "read" } })).data.link.url;
+    expect((await call("GET", link)).text).not.toContain("audit86-private-title");
+    expect((await call("GET", link + "/" + privateRow.page + "/")).status).toBe(404);
+    await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  test("guest database reads keep rows without their own page (imported tables, #86)", async () => {
+    const made = await asOwner("POST", "/api/db", { body: { title: "Imported", slug: "audit86-imported", parent: "root", page: true } });
+    expect(made.status).toBe(200);
+    const id = (owner.query("SELECT id FROM databases WHERE slug = ?").get(made.data.slug) as { id: string }).id;
+    owner.query("INSERT INTO db_rows (id, database_id, page, props, ord, created, updated) VALUES (?, ?, NULL, '{}', 5, 1, 1)").run("audit86-pageless", id);
+    const guest = await np5Guest("read");
+    const seen = await call("GET", "/api/db/" + made.data.slug, { cookie: guest });
+    expect(seen.status).toBe(200);
+    expect(seen.data.rows.map((r: any) => r.id)).toContain("audit86-pageless");
+    await asOwner("DELETE", "/api/db/" + made.data.slug);
+  });
+
+  for (const role of ["none", "read"] as const) for (const action of ["props", "ord", "delete"] as const) {
+    test("guest row " + action + " requires row edit permission, not database edit (" + role + ", #86)", async () => {
+      const slug = (await asOwner("POST", "/api/db", { body: { title: "Row edits", slug: "audit86-" + role + "-" + action, parent: "root", page: true } })).data.slug;
+      const title = (await asOwner("GET", "/api/db/" + slug)).data.properties.find((p: any) => p.type === "title").id;
+      const rowTitle = "Unchanged " + role + " " + action;
+      const row = (await asOwner("POST", "/api/db/" + slug + "/rows", { body: { props: { [title]: rowTitle } } })).data.row;
+      const guest = await np5Guest("edit");
+      expect((await asOwner("PUT", "/api/page/" + row.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+      if (role === "read") await invite(row.page, "np5-edit@example.com", "read");
+      expect((await call("GET", "/api/page/" + row.page, { cookie: guest })).status).toBe(role === "read" ? 200 : 401);
+      const path = "/api/db/" + slug + "/rows/" + row.id;
+      const body = action === "props" ? { props: { [title]: "Changed" } } : { ord: 999 };
+      expect((await call(action === "delete" ? "DELETE" : "PATCH", path, { cookie: guest, body })).status).toBe(401);
+      const unchanged = (await asOwner("GET", "/api/db/" + slug)).data.rows[0];
+      expect(unchanged).toMatchObject({ id: row.id, pageTitle: rowTitle, ord: row.ord });
+      await invite(row.page, "np5-edit@example.com", "edit");
+      expect((await call("PATCH", path, { cookie: guest, body: { props: { [title]: "Allowed" } } })).status).toBe(200);
+      expect((await call("DELETE", path, { cookie: guest })).status).toBe(200);
+      await asOwner("DELETE", "/api/db/" + slug);
+    });
+  }
+
+  for (const action of ["add", "clear"] as const) {
+    test("a guest two-way relation " + action + " cannot change a private target row (#86)", async () => {
+      const source = (await asOwner("POST", "/api/db", { body: { title: "Source", slug: "audit86b-source-" + action, parent: "root", page: true } })).data.slug;
+      const target = (await asOwner("POST", "/api/db", { body: { title: "Target", slug: "audit86b-target-" + action, parent: "root", page: true } })).data.slug;
+      const rel = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Related", type: "relation", config: { database: target, synced: true } } })).data;
+      const sourceRow = (await asOwner("POST", "/api/db/" + source + "/rows", { body: { props: {} } })).data.row;
+      const privateRow = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: {} } })).data.row;
+      const path = "/api/db/" + source + "/rows/" + sourceRow.id;
+      if (action === "clear") expect((await asOwner("PATCH", path, { body: { props: { [rel.property.id]: [privateRow.id] } } })).status).toBe(200);
+      expect((await asOwner("PUT", "/api/page/" + privateRow.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+      const guest = await np5Guest("edit");
+      expect((await call("GET", "/api/page/" + privateRow.page, { cookie: guest })).status).toBe(401);
+      expect((await call("PATCH", "/api/db/" + target + "/rows/" + privateRow.id, { cookie: guest, body: { props: {} } })).status).toBe(401);
+      const values = async () => [
+        (await asOwner("GET", "/api/db/" + source)).data.rows.find((r: any) => r.id === sourceRow.id).props[rel.property.id],
+        (await asOwner("GET", "/api/db/" + target)).data.rows.find((r: any) => r.id === privateRow.id).props[rel.pair.id],
+      ];
+      const before = action === "add" ? [[], []] : [[privateRow.id], [sourceRow.id]];
+      expect(await values()).toEqual(before);
+      const next = action === "add" ? [privateRow.id] : [];
+      expect((await call("PATCH", path, { cookie: guest, body: { props: { [rel.property.id]: next } } })).status).toBe(401);
+      expect(await values()).toEqual(before);
+      await invite(privateRow.page, "np5-edit@example.com", "edit");
+      expect((await call("PATCH", path, { cookie: guest, body: { props: { [rel.property.id]: next } } })).status).toBe(200);
+      expect(await values()).toEqual(action === "add" ? [[privateRow.id], [sourceRow.id]] : [[], []]);
+      await asOwner("DELETE", "/api/db/" + source);
+      await asOwner("DELETE", "/api/db/" + target);
+    });
+  }
+
+  test("guest row delete, row buttons, templates, schema changes and sub-items cannot change a private row indirectly (#86)", async () => {
+    const source = (await asOwner("POST", "/api/db", { body: { title: "Source", slug: "audit86b-paths-source", parent: "root", page: true } })).data.slug;
+    const target = (await asOwner("POST", "/api/db", { body: { title: "Target", slug: "audit86b-paths-target", parent: "root", page: true } })).data.slug;
+    const rel = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Related", type: "relation", config: { database: target, synced: true } } })).data;
+    const note = (await asOwner("POST", "/api/db/" + target + "/properties", { body: { name: "Note", type: "text" } })).data.property;
+    const title = (await asOwner("GET", "/api/db/" + target)).data.properties.find((p: any) => p.type === "title").id;
+    const open = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: { [title]: "open" } } })).data.row;
+    const privateRow = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: { [title]: "private" } } })).data.row;
+    const sourceRow = (await asOwner("POST", "/api/db/" + source + "/rows", { body: { props: { [rel.property.id]: [open.id, privateRow.id] } } })).data.row;
+    const button = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Touch", type: "button", config: { actions: [{ type: "update_related", relation: rel.property.id, values: { [title]: "touched" } }] } } })).data.property;
+    expect((await asOwner("PUT", "/api/page/" + privateRow.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+    const guest = await np5Guest("edit");
+    const targetRows = async () => Object.fromEntries((await asOwner("GET", "/api/db/" + target)).data.rows.map((r: any) => [r.id, { title: r.pageTitle, back: r.props[rel.pair.id], note: r.props[note.id] }]));
+    const before = await targetRows();
+    expect(before[privateRow.id].back).toEqual([sourceRow.id]);
+
+    expect((await call("DELETE", "/api/db/" + source + "/rows/" + sourceRow.id, { cookie: guest })).status).toBe(401);
+    expect((await call("POST", "/api/db/" + source + "/rows/" + sourceRow.id + "/button/" + button.id, { cookie: guest, body: {} })).status).toBe(401);
+    expect((await call("POST", "/api/db/" + source + "/templates", { cookie: guest, body: { name: "Link private", props: { [rel.property.id]: [privateRow.id] } } })).status).toBe(401);
+    expect((await call("PATCH", "/api/db/" + target + "/properties/" + note.id, { cookie: guest, body: { type: "number" } })).status).toBe(401);
+    expect((await call("PATCH", "/api/db/" + source + "/properties/" + rel.property.id, { cookie: guest, body: { config: { database: target, synced: false } } })).status).toBe(200);
+    expect((await asOwner("GET", "/api/db/" + source)).data.properties.find((p: any) => p.id === rel.property.id).config.synced).toBe(false);
+    expect((await call("PATCH", "/api/db/" + source + "/properties/" + rel.property.id, { cookie: guest, body: { config: { database: target, synced: true } } })).status).toBe(401);
+    expect(await targetRows()).toEqual(before);
+    expect((await asOwner("GET", "/api/db/" + source)).data.templates).toEqual([]);
+
+    const tree = (await asOwner("POST", "/api/db", { body: { title: "Tree", slug: "audit86b-paths-tree", parent: "root", page: true } })).data.slug;
+    const sub = (await asOwner("PATCH", "/api/db/" + tree, { body: { subitems: true } })).data.config.subitems;
+    const privateParent = (await asOwner("POST", "/api/db/" + tree + "/rows", { body: { props: {} } })).data.row;
+    const openParent = (await asOwner("POST", "/api/db/" + tree + "/rows", { body: { props: {} } })).data.row;
+    const child = (await asOwner("POST", "/api/db/" + tree + "/rows", { body: { props: { [sub.parent]: [privateParent.id] } } })).data.row;
+    expect((await asOwner("PUT", "/api/page/" + privateParent.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+    const children = async () => (await asOwner("GET", "/api/db/" + tree)).data.rows.find((r: any) => r.id === privateParent.id).props[sub.children];
+    expect(await children()).toEqual([child.id]);
+    expect((await call("PATCH", "/api/db/" + tree + "/rows/" + openParent.id, { cookie: guest, body: { props: { [sub.children]: [child.id] } } })).status).toBe(401);
+    expect((await call("PATCH", "/api/db/" + tree + "/rows/" + child.id, { cookie: guest, body: { props: { [sub.parent]: [openParent.id] } } })).status).toBe(401);
+    expect(await children()).toEqual([child.id]);
+
+    await invite(privateRow.page, "np5-edit@example.com", "edit");
+    expect((await call("POST", "/api/db/" + source + "/templates", { cookie: guest, body: { name: "Link private", props: { [rel.property.id]: [privateRow.id] } } })).status).toBe(200);
+    expect((await call("PATCH", "/api/db/" + target + "/properties/" + note.id, { cookie: guest, body: { type: "number" } })).status).toBe(200);
+    for (const slug of [source, target, tree]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // #86 B1: a row without its own page (ZIP/markdown import) follows its own database's role, not the route's database.
+  for (const action of ["row", "database"] as const) {
+    test("guest " + action + " delete cannot change a page-less row in a read-only database through a two-way relation (#86)", async () => {
+      const email = "np5-read@example.com";
+      const guest = await np5Guest("read");
+      const childRule = (await invite("child", email, "full")).rule;
+      const source = (await asOwner("POST", "/api/db", { body: { title: "Source", slug: "audit86c-src-" + action, parent: "child", page: true } })).data.slug;
+      const target = (await asOwner("POST", "/api/db", { body: { title: "Imported", slug: "audit86c-imp-" + action, parent: "root", page: true } })).data.slug;
+      const rel = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Related", type: "relation", config: { database: target, synced: true } } })).data;
+      const imported = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: {} } })).data.row;
+      owner.query("UPDATE db_rows SET page = NULL WHERE id = ?").run(imported.id);
+      owner.query("DELETE FROM pages WHERE slug = ?").run(imported.page);
+      const sourceRow = (await asOwner("POST", "/api/db/" + source + "/rows", { body: { props: { [rel.property.id]: [imported.id] } } })).data.row;
+      const snapshot = () => [owner.query("SELECT props, updated FROM db_rows WHERE id = ?").get(imported.id), owner.query("SELECT * FROM db_relation_links ORDER BY prop_id, src_row, dst_row").all()];
+      const before = snapshot();
+      expect(JSON.parse((before[0] as any).props)[rel.pair.id]).toEqual([sourceRow.id]);
+      expect((await call("GET", "/api/db/" + target, { cookie: guest })).status).toBe(200);
+      expect((await call("PATCH", "/api/db/" + target + "/rows/" + imported.id, { cookie: guest, body: { props: {} } })).status).toBe(401);
+      const path = action === "row" ? "/api/db/" + source + "/rows/" + sourceRow.id : "/api/db/" + source;
+      expect((await call("DELETE", path, { cookie: guest })).status).toBe(401);
+      expect(snapshot()).toEqual(before);
+      await invite(target, email, "edit");
+      expect((await call("DELETE", path, { cookie: guest })).status).toBe(200);
+      expect(JSON.parse((owner.query("SELECT props FROM db_rows WHERE id = ?").get(imported.id) as any).props)[rel.pair.id]).toEqual([]);
+      await asOwner("DELETE", "/api/db/" + source);
+      await asOwner("DELETE", "/api/db/" + target);
+      expect((await asOwner("DELETE", "/api/page/child/access/rules/" + childRule)).status).toBe(200);
+    });
+  }
+
+  // #86 B2: a row button checks every row every step will change before the first write, and writes all steps or none.
+  test("a guest row button whose later step links a private row writes nothing (#86)", async () => {
+    const source = (await asOwner("POST", "/api/db", { body: { title: "Source", slug: "audit86c-btn-source", parent: "root", page: true } })).data.slug;
+    const target = (await asOwner("POST", "/api/db", { body: { title: "Target", slug: "audit86c-btn-target", parent: "root", page: true } })).data.slug;
+    const rel = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Related", type: "relation", config: { database: target, synced: true } } })).data;
+    const note = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Note", type: "text" } })).data.property;
+    const sourceRow = (await asOwner("POST", "/api/db/" + source + "/rows", { body: { props: {} } })).data.row;
+    const privateRow = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: {} } })).data.row;
+    expect((await asOwner("PUT", "/api/page/" + privateRow.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+    const guest = await np5Guest("edit");
+    const actions = [{ type: "update_row", values: { [note.id]: "step1-written" } }, { type: "update_row", values: { [rel.property.id]: [privateRow.id] } }];
+    const button = await call("POST", "/api/db/" + source + "/properties", { cookie: guest, body: { name: "Two steps", type: "button", config: { actions } } });
+    expect(button.status).toBe(200);
+    const snapshot = () => [owner.query("SELECT id, props, updated FROM db_rows WHERE id IN (?, ?) ORDER BY id").all(sourceRow.id, privateRow.id), owner.query("SELECT * FROM db_relation_links ORDER BY prop_id, src_row, dst_row").all()];
+    const before = snapshot();
+    const pressed = await call("POST", "/api/db/" + source + "/rows/" + sourceRow.id + "/button/" + button.data.property.id, { cookie: guest, body: {} });
+    expect(pressed.status).toBe(401);
+    expect(pressed.data.updated).toBe(0);
+    expect(snapshot()).toEqual(before);
+    await invite(privateRow.page, "np5-edit@example.com", "edit");
+    const allowed = await call("POST", "/api/db/" + source + "/rows/" + sourceRow.id + "/button/" + button.data.property.id, { cookie: guest, body: {} });
+    expect(allowed.status).toBe(200);
+    const after = (await asOwner("GET", "/api/db/" + source)).data.rows.find((r: any) => r.id === sourceRow.id).props;
+    expect([after[note.id], after[rel.property.id]]).toEqual(["step1-written", [privateRow.id]]);
+    await asOwner("DELETE", "/api/db/" + source);
+    await asOwner("DELETE", "/api/db/" + target);
+  });
+
+  // #86 write-path sweep: every server path that can change a table row, property or relation value, tried by a guest
+  // with full access to the shared root against a row it may not edit. Each path must refuse (401/403) and leave every
+  // table byte-identical. tests/share.test.ts "every table write path ..." fails when a write path has no case here.
+  let sweepGuest = "";
+  // One more verified guest; the per-IP verify limit (20 / 15 min) belongs to the invite tests, so this one keeps it as it found it.
+  async function sweepVerify() {
+    const saved = owner.query("SELECT key, count, reset FROM share_rate").all();
+    const cookie = await verify(await invite("root", "sweep-full@example.com", "full"), "sweep-full@example.com");
+    owner.query("DELETE FROM share_rate").run();
+    for (const row of saved as any[]) owner.query("INSERT INTO share_rate (key, count, reset) VALUES (?, ?, ?)").run(row.key, row.count, row.reset);
+    return cookie;
+  }
+  const sweepTables = ["pages", "blocks", "databases", "db_rows", "db_properties", "db_relation_links", "db_relation_locks", "db_templates", "db_views", "db_counters", "editor_trash"];
+  const tableSnapshot = () => Object.fromEntries(sweepTables.map((table) => [table, owner.query("SELECT * FROM " + table + " ORDER BY 1, 2").all()]));
+  async function sweepFixture(tag: string) {
+    if (!sweepGuest) sweepGuest = await sweepVerify();
+    const source = (await asOwner("POST", "/api/db", { body: { title: "Src " + tag, slug: "wp-src-" + tag, parent: "root", page: true } })).data.slug;
+    const target = (await asOwner("POST", "/api/db", { body: { title: "Tgt " + tag, slug: "wp-tgt-" + tag, parent: "root", page: true } })).data.slug;
+    const rel = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Related", type: "relation", config: { database: target, synced: true } } })).data;
+    const note = (await asOwner("POST", "/api/db/" + target + "/properties", { body: { name: "Note", type: "text" } })).data.property;
+    const srcNote = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Memo", type: "text" } })).data.property;
+    const open = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: { [note.id]: "open" } } })).data.row;
+    const priv = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: { [note.id]: "private" } } })).data.row;
+    const src = (await asOwner("POST", "/api/db/" + source + "/rows", { body: { props: { [rel.property.id]: [open.id, priv.id] } } })).data.row;
+    const blank = (await asOwner("POST", "/api/db/" + source + "/rows", { body: { props: {} } })).data.row;
+    expect((await asOwner("PUT", "/api/page/" + priv.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+    expect((await call("GET", "/api/page/" + priv.page, { cookie: sweepGuest })).status).toBe(401);
+    return { tag, source, target, rel: rel.property.id, pair: rel.pair.id, note: note.id, srcNote: srcNote.id, open, priv, src, blank, extra: {} as Record<string, any>, cleanup: [] as string[] };
+  }
+  type Fx = Awaited<ReturnType<typeof sweepFixture>>;
+  const g = (method: string, path: string, body?: unknown) => call(method, path, { cookie: sweepGuest, body });
+  const ownerButton = async (fx: Fx, actions: unknown[]) => (await asOwner("POST", "/api/db/" + fx.source + "/properties", { body: { name: "Btn", type: "button", config: { actions } } })).data.property.id;
+  const SWEEP: Record<string, { setup?: (fx: Fx) => Promise<void>; run: (fx: Fx) => Promise<{ status: number }> }> = {
+    "row-patch-props": { run: (fx) => g("PATCH", "/api/db/" + fx.target + "/rows/" + fx.priv.id, { props: { [fx.note]: "changed" } }) },
+    "row-patch-ord": { run: (fx) => g("PATCH", "/api/db/" + fx.target + "/rows/" + fx.priv.id, { ord: 999 }) },
+    "row-delete": { run: (fx) => g("DELETE", "/api/db/" + fx.target + "/rows/" + fx.priv.id) },
+    "row-create-linking": { run: (fx) => g("POST", "/api/db/" + fx.source + "/rows", { props: { [fx.rel]: [fx.priv.id] } }) },
+    "relation-add": { run: (fx) => g("PATCH", "/api/db/" + fx.source + "/rows/" + fx.blank.id, { props: { [fx.rel]: [fx.priv.id] } }) },
+    "relation-clear": { run: (fx) => g("PATCH", "/api/db/" + fx.source + "/rows/" + fx.src.id, { props: { [fx.rel]: [fx.open.id] } }) },
+    "linked-row-delete": { run: (fx) => g("DELETE", "/api/db/" + fx.source + "/rows/" + fx.src.id) },
+    "linked-db-delete": { run: (fx) => g("DELETE", "/api/db/" + fx.source) },
+    "button-update-related": {
+      setup: async (fx) => { fx.extra.button = await ownerButton(fx, [{ type: "update_related", relation: fx.rel, values: { [fx.note]: "touched" } }]); },
+      run: (fx) => g("POST", "/api/db/" + fx.source + "/rows/" + fx.src.id + "/button/" + fx.extra.button, {}),
+    },
+    "button-update-row-link": {
+      setup: async (fx) => { fx.extra.button = await ownerButton(fx, [{ type: "update_row", values: { [fx.srcNote]: "step1" } }, { type: "update_row", values: { [fx.rel]: [fx.priv.id] } }]); },
+      run: (fx) => g("POST", "/api/db/" + fx.source + "/rows/" + fx.blank.id + "/button/" + fx.extra.button, {}),
+    },
+    "button-create-row-link": {
+      setup: async (fx) => { fx.extra.button = await ownerButton(fx, [{ type: "update_row", values: { [fx.srcNote]: "step1" } }, { type: "create_row", database: fx.source, values: { [fx.rel]: [fx.priv.id] } }]); },
+      run: (fx) => g("POST", "/api/db/" + fx.source + "/rows/" + fx.blank.id + "/button/" + fx.extra.button, {}),
+    },
+    "block-button-create-row": {
+      setup: async (fx) => {
+        const slug = "wp-page-" + fx.tag;
+        expect((await asOwner("POST", "/api/pages", { body: { title: slug, slug, parent: "root" } })).status).toBe(200);
+        expect((await asOwner("PUT", "/api/page/" + slug, { body: { blocks: [{ id: "btn", type: "button", text: "add", meta: { actions: [{ type: "create_row", database: fx.source, values: { [fx.rel]: [fx.priv.id] } }] } }] } })).status).toBe(200);
+        fx.extra.page = slug;
+        fx.cleanup.push(slug);
+      },
+      run: (fx) => g("POST", "/api/page/" + fx.extra.page + "/button/btn", {}),
+    },
+    "template-post": { run: (fx) => g("POST", "/api/db/" + fx.source + "/templates", { name: "Link private", props: { [fx.rel]: [fx.priv.id] } }) },
+    "template-schedule": {
+      setup: async (fx) => { fx.extra.template = (await asOwner("POST", "/api/db/" + fx.source + "/templates", { body: { name: "Owner linked", props: { [fx.rel]: [fx.priv.id] } } })).data.template.id; },
+      run: (fx) => g("PATCH", "/api/db/" + fx.source + "/templates/" + fx.extra.template, { recurrence: { freq: "day", interval: 1, tz: "UTC", hour: 0, minute: 0 } }),
+    },
+    "template-post-scalar": { run: (fx) => g("POST", "/api/db/" + fx.source + "/templates", { name: "Scalar link", props: { [fx.rel]: fx.priv.id } }) },
+    "template-patch": {
+      setup: async (fx) => { fx.extra.template = (await asOwner("POST", "/api/db/" + fx.source + "/templates", { body: { name: "Plain", props: {} } })).data.template.id; },
+      run: (fx) => g("PATCH", "/api/db/" + fx.source + "/templates/" + fx.extra.template, { props: { [fx.rel]: [fx.priv.id] } }),
+    },
+    "property-type-change": { run: (fx) => g("PATCH", "/api/db/" + fx.target + "/properties/" + fx.note, { type: "number" }) },
+    "property-unique-id": { run: (fx) => g("POST", "/api/db/" + fx.target + "/properties", { name: "No", type: "unique_id" }) },
+    "property-delete": { run: (fx) => g("DELETE", "/api/db/" + fx.target + "/properties/" + fx.note) },
+    "property-synced-create": { run: (fx) => g("POST", "/api/db/" + fx.source + "/properties", { name: "Again", type: "relation", config: { database: fx.target, synced: true } }) },
+    "property-synced-enable": {
+      setup: async (fx) => { fx.extra.oneWay = (await asOwner("POST", "/api/db/" + fx.source + "/properties", { body: { name: "One way", type: "relation", config: { database: fx.target } } })).data.property.id; },
+      run: (fx) => g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.extra.oneWay, { config: { database: fx.target, synced: true } }),
+    },
+    "property-synced-disable": {
+      setup: async (fx) => {
+        fx.extra.hidden = (await asOwner("POST", "/api/db", { body: { title: "Hidden " + fx.tag, slug: "wp-hid-" + fx.tag, parent: "other", page: true } })).data.slug;
+        fx.extra.toHidden = (await asOwner("POST", "/api/db/" + fx.source + "/properties", { body: { name: "To hidden", type: "relation", config: { database: fx.extra.hidden, synced: true } } })).data.property.id;
+      },
+      run: (fx) => g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.extra.toHidden, { config: { database: fx.extra.hidden, synced: false } }),
+    },
+    "property-synced-drop-pair": { run: (fx) => g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { config: { database: fx.target, synced: false }, dropPair: true }) },
+    "subitems-on": { run: (fx) => g("PATCH", "/api/db/" + fx.target, { subitems: true }) },
+    "subitem-move": {
+      setup: async (fx) => {
+        const sub = (await asOwner("PATCH", "/api/db/" + fx.source, { body: { subitems: true } })).data.config.subitems;
+        const parent = (await asOwner("POST", "/api/db/" + fx.source + "/rows", { body: { props: {} } })).data.row;
+        const child = (await asOwner("POST", "/api/db/" + fx.source + "/rows", { body: { props: { [sub.parent]: [parent.id] } } })).data.row;
+        expect((await asOwner("PUT", "/api/page/" + parent.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+        Object.assign(fx.extra, { sub, child });
+      },
+      run: (fx) => g("PATCH", "/api/db/" + fx.source + "/rows/" + fx.extra.child.id, { props: { [fx.extra.sub.parent]: [fx.blank.id] } }),
+    },
+    "row-page-title": { run: (fx) => g("POST", "/api/page/" + fx.priv.page + "/rename", { title: "renamed" }) },
+    "row-page-save": { run: (fx) => g("PUT", "/api/page/" + fx.priv.page, { blocks: [], title: "renamed", base_updated: 0 }) },
+    "row-page-history-restore": { run: (fx) => g("POST", "/api/page/" + fx.priv.page + "/history/x/restore", {}) },
+    "row-page-permanent": { run: (fx) => g("DELETE", "/api/page/" + fx.priv.page + "/permanent") },
+    "row-page-duplicate": { run: (fx) => g("POST", "/api/page/" + fx.priv.page + "/duplicate", {}) },
+    "rules": { run: (fx) => g("POST", "/api/db/" + fx.target + "/rules", { config: { trigger: { type: "created" }, action: { type: "set", property: fx.note, value: "x" } } }) },
+    "form-config": { run: (fx) => g("PUT", "/api/db/" + fx.target + "/form", { enabled: true }) },
+    "import": { run: () => g("POST", "/api/import", {}) },
+    "sync": { run: () => g("POST", "/api/sync", {}) },
+    "home-starter": { run: () => g("POST", "/api/home/starter", {}) },
+  };
+  for (const [key, path] of Object.entries(SWEEP)) {
+    test("guest write path " + key + " cannot change a row it may not edit and writes nothing (#86)", async () => {
+      const fx = await sweepFixture(key);
+      if (path.setup) await path.setup(fx);
+      const before = tableSnapshot();
+      const res = await path.run(fx);
+      expect([401, 403]).toContain(res.status);
+      expect(tableSnapshot()).toEqual(before);
+      for (const slug of fx.cleanup) {
+        await asOwner("DELETE", "/api/page/" + slug);
+        expect((await asOwner("DELETE", "/api/page/" + slug + "/permanent")).status).toBe(200);
+        // A permanent delete keeps a tombstone; this test page never existed for the rest of the file.
+        owner.query("DELETE FROM editor_trash WHERE page = ?").run(slug);
+      }
+      for (const slug of [fx.source, fx.target, fx.extra.hidden].filter(Boolean)) await asOwner("DELETE", "/api/db/" + slug);
+    });
+  }
+
+  // Gate review of 0039b9a: a guest-seeded database could claim another database's property as its two-way pair, and
+  // turning that relation off with dropPair deleted the private property.
+  test("a guest-seeded relation cannot claim another database's property as its pair (#86)", async () => {
+    const fx = await sweepFixture("forged-pair");
+    const made = await g("POST", "/api/pages", { title: "Forged", slug: "wp-forged", parent: "root", kind: "db", properties: [{ id: "title", name: "Title", type: "title" }, { id: "fake", name: "Fake", type: "relation", config: { database: fx.source, synced: true, pair: fx.note } }] });
+    expect(made.status).toBe(200);
+    const fake = (await asOwner("GET", "/api/db/" + made.data.slug)).data.properties.find((p: any) => p.name === "Fake");
+    expect([fake.config.synced, fake.config.pair]).toEqual([false, ""]);
+    owner.query("UPDATE db_properties SET config = ? WHERE id = ?").run(JSON.stringify({ ...fake.config, synced: true, pair: fx.note }), fake.id);
+    const before = tableSnapshot();
+    const res = await g("PATCH", "/api/db/" + made.data.slug + "/properties/" + fake.id, { config: { database: fx.source, synced: false }, dropPair: true });
+    expect(res.status).toBe(200);
+    const after = tableSnapshot();
+    expect(owner.query("SELECT id FROM db_properties WHERE id = ?").get(fx.note)).toEqual({ id: fx.note });
+    for (const table of ["db_rows", "db_relation_links", "databases", "pages", "blocks"]) expect({ table, rows: after[table] }).toEqual({ table, rows: before[table] });
+    for (const slug of [made.data.slug, fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+    await asOwner("DELETE", "/api/page/" + made.data.slug);
+    expect((await asOwner("DELETE", "/api/page/" + made.data.slug + "/permanent")).status).toBe(200);
+    owner.query("DELETE FROM editor_trash WHERE page = ?").run(made.data.slug);
+  });
+
+  // Gate review 3 (B4): a guest turned on a recurrence for an owner template linking a private row, and the owner-run tick
+  // then linked a new row to it. A recurrence-only PATCH must check the stored values; the scheduler then writes nothing.
+  test("a guest cannot schedule an owner template that links a private row; the owner tick links nothing (#86)", async () => {
+    const fx = await sweepFixture("schedule-tick");
+    const template = (await asOwner("POST", "/api/db/" + fx.source + "/templates", { body: { name: "Owner linked", props: { [fx.rel]: [fx.priv.id] } } })).data.template.id;
+    const back = () => (owner.query("SELECT props FROM db_rows WHERE id = ?").get(fx.priv.id) as any).props;
+    const before = back();
+    const res = await g("PATCH", "/api/db/" + fx.source + "/templates/" + template, { recurrence: { freq: "day", interval: 1, tz: "UTC", hour: 0, minute: 0 } });
+    expect(res.status).toBe(401);
+    expect((owner.query("SELECT recurrence FROM db_templates WHERE id = ?").get(template) as any).recurrence).toBeNull();
+    env.RECURRING_TICK_SECRET = "tick-secret";
+    try {
+      const tick = await worker.fetch(new Request("https://notes.example.com/__recurring/tick", { method: "POST", headers: { "content-type": "application/json", "x-recurring-tick": "tick-secret" }, body: JSON.stringify({ ws: "owner", now: Date.now() + 3 * 24 * 60 * 60 * 1000 }) }), env, {});
+      expect(tick.status).toBe(200);
+      expect(((await tick.json()) as any).created).toEqual([]);
+    } finally {
+      delete env.RECURRING_TICK_SECRET;
+    }
+    expect(back()).toBe(before);
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/templates/" + template, { body: { recurrence: null } })).status).toBe(200);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // Gate review 3 (B3): turning off a two-way relation with dropPair deleted the pair property and with it the value
+  // the private row held; it needs every row of the paired database. The guest can still do it once it may edit them.
+  test("a guest dropPair cannot erase a private row's relation value, and works once the guest may edit every row (#86)", async () => {
+    const fx = await sweepFixture("drop-pair-direct");
+    const res = await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { config: { database: fx.target, synced: false }, dropPair: true });
+    expect(res.status).toBe(401);
+    expect(owner.query("SELECT id FROM db_properties WHERE id = ?").get(fx.pair)).toEqual({ id: fx.pair });
+    expect(JSON.parse((owner.query("SELECT props FROM db_rows WHERE id = ?").get(fx.priv.id) as any).props)[fx.pair]).toEqual([fx.src.id]);
+    await invite(fx.priv.page, "sweep-full@example.com", "edit");
+    const allowed = await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { config: { database: fx.target, synced: false }, dropPair: true });
+    expect(allowed.status).toBe(200);
+    expect(owner.query("SELECT id FROM db_properties WHERE id = ?").get(fx.pair)).toBeNull();
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // Gate re-review of b5283a1: a relation value stored as one string (not an array) skipped the template check, and the
+  // owner tick normalised it into a link to the private row.
+  test("a guest template with a single-string relation value is checked like an array and the tick links nothing (#86)", async () => {
+    const fx = await sweepFixture("scalar-tick");
+    const back = () => (owner.query("SELECT props FROM db_rows WHERE id = ?").get(fx.priv.id) as any).props;
+    const before = back();
+    expect((await g("POST", "/api/db/" + fx.source + "/templates", { name: "Scalar", props: { [fx.rel]: fx.priv.id } })).status).toBe(401);
+    const plain = (await g("POST", "/api/db/" + fx.source + "/templates", { name: "Plain", props: {} })).data.template.id;
+    expect((await g("PATCH", "/api/db/" + fx.source + "/templates/" + plain, { props: { [fx.rel]: fx.priv.id }, recurrence: { freq: "day", interval: 1, tz: "UTC", hour: 0, minute: 0 } })).status).toBe(401);
+    env.RECURRING_TICK_SECRET = "tick-secret";
+    try {
+      const tick = await worker.fetch(new Request("https://notes.example.com/__recurring/tick", { method: "POST", headers: { "content-type": "application/json", "x-recurring-tick": "tick-secret" }, body: JSON.stringify({ ws: "owner", now: Date.now() + 3 * 24 * 60 * 60 * 1000 }) }), env, {});
+      expect(((await tick.json()) as any).created).toEqual([]);
+    } finally {
+      delete env.RECURRING_TICK_SECRET;
+    }
+    expect(back()).toBe(before);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  const ownerTick = async () => {
+    env.RECURRING_TICK_SECRET = "tick-secret";
+    try {
+      const tick = await worker.fetch(new Request("https://notes.example.com/__recurring/tick", { method: "POST", headers: { "content-type": "application/json", "x-recurring-tick": "tick-secret" }, body: JSON.stringify({ ws: "owner", now: Date.now() + 3 * 24 * 60 * 60 * 1000 }) }), env, {});
+      return { status: tick.status, created: ((await tick.json()) as any).created };
+    } finally {
+      delete env.RECURRING_TICK_SECRET;
+    }
+  };
+  const daily = { freq: "day", interval: 1, tz: "UTC", hour: 0, minute: 0 };
+
+  // Gate review 5 (B7): under a one-link limit the template check looked only at the last id while the template kept every
+  // id, so once the limit was lifted the owner tick linked all of them, the private row included.
+  test("a template saved under a one-link limit is checked for every id it keeps; lifting the limit later links no private row (#86)", async () => {
+    const fx = await sweepFixture("limit-tick");
+    const back = () => (owner.query("SELECT props FROM db_rows WHERE id = ?").get(fx.priv.id) as any).props;
+    const before = back();
+    const relation = (await asOwner("GET", "/api/db/" + fx.source)).data.properties.find((prop: any) => prop.id === fx.rel);
+    expect((await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { config: { ...relation.config, limit: 1 } })).status).toBe(200);
+    const posted = await g("POST", "/api/db/" + fx.source + "/templates", { name: "Limit", props: { [fx.rel]: [fx.priv.id, fx.open.id] } });
+    const template = posted.data?.template?.id;
+    if (template) await g("PATCH", "/api/db/" + fx.source + "/templates/" + template, { recurrence: daily });
+    expect((await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { config: { ...relation.config, limit: null } })).status).toBe(200);
+    const tick = await ownerTick();
+    // The template keeps what a row made under the limit gets (the last id) and is checked for exactly that value.
+    const stored = template ? JSON.parse((owner.query("SELECT props FROM db_templates WHERE id = ?").get(template) as any).props)[fx.rel] : null;
+    expect({ post: posted.status, stored, tick: tick.status, privateRowAfterTick: back() }).toEqual({ post: 200, stored: [fx.open.id], tick: 200, privateRowAfterTick: before });
+    // Every id it keeps is checked: the private row as the kept (last) id is refused.
+    expect((await g("POST", "/api/db/" + fx.source + "/templates", { name: "Limit last", props: { [fx.rel]: [fx.open.id, fx.priv.id] } })).status).toBe(401);
+    if (template) await asOwner("DELETE", "/api/db/" + fx.source + "/templates/" + template);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // Gate review 5 (B8): a template key that matched no property name was not checked when saved, and the tick matched it
+  // against the names at run time, so renaming the relation to that key made the owner tick link the private row.
+  test("a template key naming no property is not kept, so renaming a relation to it later links no private row (#86)", async () => {
+    const fx = await sweepFixture("rename-tick");
+    const back = () => (owner.query("SELECT props FROM db_rows WHERE id = ?").get(fx.priv.id) as any).props;
+    const before = back();
+    const posted = await g("POST", "/api/db/" + fx.source + "/templates", { name: "Alias", props: { Alias: fx.priv.id } });
+    const template = posted.data?.template?.id;
+    if (template) await g("PATCH", "/api/db/" + fx.source + "/templates/" + template, { recurrence: daily });
+    expect((await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { name: "Alias" })).status).toBe(200);
+    const tick = await ownerTick();
+    const stored = template ? JSON.parse((owner.query("SELECT props FROM db_templates WHERE id = ?").get(template) as any).props) : null;
+    expect({ post: posted.status, stored, tick: tick.status, privateRowAfterTick: back() }).toEqual({ post: 400, stored: null, tick: 200, privateRowAfterTick: before });
+    if (template) await asOwner("DELETE", "/api/db/" + fx.source + "/templates/" + template);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // Gate review 5 (N2): a template refuses relation values that can never link (like row POST), stores name keys under the
+  // property id and keeps the relation value as the list the tick writes.
+  test("a template stores relation values as id-keyed lists and refuses values that cannot link (#86)", async () => {
+    const fx = await sweepFixture("tpl-shapes");
+    const post = (props: unknown) => asOwner("POST", "/api/db/" + fx.source + "/templates", { body: { name: "Shape", props } });
+    const refused: Record<string, number> = {};
+    for (const [label, value] of Object.entries({ comma: fx.open.id + "," + fx.priv.id, newline: fx.open.id + "\n" + fx.priv.id, object: { id: fx.open.id }, objectList: [{ id: fx.open.id }], number: 12345, boolean: true, missing: "no-such-row" })) {
+      refused[label] = (await post({ [fx.rel]: value })).status;
+    }
+    expect(refused).toEqual({ comma: 400, newline: 400, object: 400, objectList: 400, number: 400, boolean: 400, missing: 400 });
+    const byName = await post({ Related: fx.open.id });
+    expect(byName.status).toBe(200);
+    expect(JSON.parse((owner.query("SELECT props FROM db_templates WHERE id = ?").get(byName.data.template.id) as any).props)).toEqual({ [fx.rel]: [fx.open.id] });
+    const plain = (await post({})).data.template.id;
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/templates/" + plain, { body: { props: { [fx.rel]: true } } })).status).toBe(400);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // ---- #86 gate review 6: a relation link is made only with the permission of whoever saved the value ----
+  const tickAt = async (days: number) => {
+    env.RECURRING_TICK_SECRET = "tick-secret";
+    try {
+      const tick = await worker.fetch(new Request("https://notes.example.com/__recurring/tick", { method: "POST", headers: { "content-type": "application/json", "x-recurring-tick": "tick-secret" }, body: JSON.stringify({ ws: "owner", now: Date.now() + days * 24 * 60 * 60 * 1000 }) }), env, {});
+      return { status: tick.status, body: (await tick.json()) as any };
+    } finally {
+      delete env.RECURRING_TICK_SECRET;
+    }
+  };
+  // Every edge touching the private row (both directions); a tick that links it adds two.
+  const privLinks = (fx: Fx) => owner.query("SELECT prop_id, src_row, dst_row FROM db_relation_links WHERE src_row = ? OR dst_row = ? ORDER BY 1, 2, 3").all(fx.priv.id, fx.priv.id);
+  const storedProps = (template: string) => JSON.parse((owner.query("SELECT props FROM db_templates WHERE id = ?").get(template) as any).props);
+  const dropDbs = async (fx: Fx) => { for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug); };
+  const sourceRows = (fx: Fx) => (owner.query("SELECT COUNT(*) AS n FROM db_rows r JOIN databases d ON d.id = r.database_id WHERE d.slug = ?").get(fx.source) as any).n as number;
+  const templateView = async (fx: Fx, template: string) => (await asOwner("GET", "/api/db/" + fx.source)).data.templates.find((t: any) => t.id === template);
+  // A guest of its own (edit on root), so revoking it touches no other test. Keeps the per-IP verify limit as it found it.
+  async function freshGuest(email: string, role = "edit") {
+    const saved = owner.query("SELECT key, count, reset FROM share_rate").all();
+    const found = await invite("root", email, role);
+    const cookie = await verify(found, email);
+    owner.query("DELETE FROM share_rate").run();
+    for (const row of saved as any[]) owner.query("INSERT INTO share_rate (key, count, reset) VALUES (?, ?, ?)").run(row.key, row.count, row.reset);
+    return { cookie, rule: found.rule, hash: new Bun.CryptoHasher("sha256").update(cookie.split(".")[1]).digest("hex") };
+  }
+  const sourceId = (fx: Fx) => (owner.query("SELECT id FROM databases WHERE slug = ?").get(fx.source) as any).id as string;
+  // A template row exactly as a build before this fix stored it: no saver record. recurrence copied from a real schedule.
+  async function legacyTemplate(fx: Fx, name: string, props: Record<string, unknown>) {
+    const made = (await asOwner("POST", "/api/db/" + fx.source + "/templates", { body: { name: "schedule source", props: {} } })).data.template.id;
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/templates/" + made, { body: { recurrence: daily } })).status).toBe(200);
+    const recurrence = (owner.query("SELECT recurrence FROM db_templates WHERE id = ?").get(made) as any).recurrence;
+    expect((await asOwner("DELETE", "/api/db/" + fx.source + "/templates/" + made)).status).toBe(200);
+    const id = sourceId(fx) + "_tlegacy" + name;
+    owner.query("INSERT INTO db_templates (id, database_id, name, icon, props, blocks, ord, recurrence) VALUES (?, ?, ?, '', ?, '[]', 0, ?)").run(id, sourceId(fx), name, JSON.stringify(props), recurrence);
+    return id;
+  }
+  // Names of the tests below; the write-path inventory test fails when one of the required ones is gone.
+  const SAVER_TESTS = new Set<string>();
+  const saverTest = (name: string, title: string, fn: () => Promise<void>) => { SAVER_TESTS.add(name); test(title + " (#86 " + name + ")", fn); };
+
+  // B9: a value saved while the property was text was never checked as a relation; the owner then turned the property into
+  // a two-way relation and the owner-run tick linked the private row.
+  test("a template value saved on a text property never links when the owner turns it into a two-way relation (#86 b9-text-to-relation)", async () => {
+    const fx = await sweepFixture("b9-text");
+    const templates: string[] = [];
+    for (const value of [fx.priv.id, [fx.priv.id]]) {
+      const posted = await g("POST", "/api/db/" + fx.source + "/templates", { name: "Memo", props: { [fx.srcNote]: value } });
+      expect(posted.status).toBe(200);
+      templates.push(posted.data.template.id);
+      expect((await g("PATCH", "/api/db/" + fx.source + "/templates/" + posted.data.template.id, { recurrence: daily })).status).toBe(200);
+    }
+    const before = privLinks(fx);
+    const turned = await asOwner("PATCH", "/api/db/" + fx.source + "/properties/" + fx.srcNote, { body: { type: "relation", config: { database: fx.target, synced: true } } });
+    expect(turned.status).toBe(200);
+    const tick = await tickAt(3);
+    expect({ tick: tick.status, privLinks: privLinks(fx) }).toEqual({ tick: 200, privLinks: before });
+    // The values were kept aside, not turned into links.
+    expect(templates.map((id) => storedProps(id)[fx.srcNote])).toEqual([undefined, undefined]);
+    const kept = owner.query("SELECT ref, value FROM db_value_backups WHERE prop_id = ? AND kind = 'template' ORDER BY ref").all(fx.srcNote) as any[];
+    expect(kept.map((row) => [row.ref, JSON.parse(row.value)]).sort()).toEqual([[templates[0], fx.priv.id], [templates[1], [fx.priv.id]]].sort());
+    expect(turned.data.unlinked).toBeGreaterThanOrEqual(2);
+    await dropDbs(fx);
+  });
+
+  test("a guest who turns a relation into text and saves a template value links nothing once the owner turns it back (#86 b9-relation-text-relation)", async () => {
+    const fx = await sweepFixture("b9-back");
+    expect((await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { type: "text" })).status).toBe(200);
+    const posted = await g("POST", "/api/db/" + fx.source + "/templates", { name: "Back", props: { [fx.rel]: fx.priv.id } });
+    expect(posted.status).toBe(200);
+    expect((await g("PATCH", "/api/db/" + fx.source + "/templates/" + posted.data.template.id, { recurrence: daily })).status).toBe(200);
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { body: { type: "relation", config: { database: fx.target, synced: true } } })).status).toBe(200);
+    const before = privLinks(fx);
+    const tick = await tickAt(3);
+    expect({ tick: tick.status, privLinks: privLinks(fx) }).toEqual({ tick: 200, privLinks: before });
+    expect(storedProps(posted.data.template.id)[fx.rel]).toBeUndefined();
+    await dropDbs(fx);
+  });
+
+  // N6: the same gap for row cells. A guest-written text cell became a link when the owner turned the property into a
+  // relation (text -> one-way -> two-way). Old values are kept aside and the response says how many were not linked.
+  test("a text cell never becomes a link when the property turns into a relation; the value is kept aside and counted (#86 n6-row-text-to-relation)", async () => {
+    const fx = await sweepFixture("n6-row");
+    expect((await g("PATCH", "/api/db/" + fx.source + "/rows/" + fx.blank.id, { props: { [fx.srcNote]: fx.priv.id } })).status).toBe(200);
+    const before = privLinks(fx);
+    const oneWay = await asOwner("PATCH", "/api/db/" + fx.source + "/properties/" + fx.srcNote, { body: { type: "relation", config: { database: fx.target } } });
+    const twoWay = await asOwner("PATCH", "/api/db/" + fx.source + "/properties/" + fx.srcNote, { body: { config: { database: fx.target, synced: true } } });
+    expect({ oneWay: oneWay.status, twoWay: twoWay.status, privLinks: privLinks(fx), unlinked: oneWay.data.unlinked }).toEqual({ oneWay: 200, twoWay: 200, privLinks: before, unlinked: 1 });
+    expect(JSON.parse((owner.query("SELECT props FROM db_rows WHERE id = ?").get(fx.blank.id) as any).props)[fx.srcNote]).toEqual([]);
+    const kept = owner.query("SELECT kind, ref, value FROM db_value_backups WHERE prop_id = ? AND ref = ?").all(fx.srcNote, fx.blank.id) as any[];
+    expect(kept.map((row) => [row.kind, JSON.parse(row.value)])).toEqual([["row", fx.priv.id]]);
+    await dropDbs(fx);
+  });
+
+  // B11 (gate review 7): deleting a property left its row and template values under the old id, and a property POST could
+  // reuse that id, so a guest made it a relation with the same id; once the owner turned on two-way the tick linked the
+  // private row. Deleting now moves the values to db_value_backups, and a POST id that still has values gets a fresh id.
+  test("a deleted property's values never come back as links through a new property with the same id (#86 b11-delete-recreate)", async () => {
+    const fx = await sweepFixture("b11-del");
+    const posted = await g("POST", "/api/db/" + fx.source + "/templates", { name: "Memo", props: { [fx.srcNote]: fx.priv.id } });
+    expect(posted.status).toBe(200);
+    expect((await g("PATCH", "/api/db/" + fx.source + "/templates/" + posted.data.template.id, { recurrence: daily })).status).toBe(200);
+    expect((await g("PATCH", "/api/db/" + fx.source + "/rows/" + fx.blank.id, { props: { [fx.srcNote]: fx.priv.id } })).status).toBe(200);
+    const before = privLinks(fx);
+    expect((await g("DELETE", "/api/db/" + fx.source + "/properties/" + fx.srcNote)).status).toBe(200);
+    const again = await g("POST", "/api/db/" + fx.source + "/properties", { id: fx.srcNote, name: "Memo", type: "relation", config: { database: fx.target } });
+    expect(again.status).toBe(200);
+    const id = again.data.property.id;
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/properties/" + id, { body: { config: { database: fx.target, synced: true } } })).status).toBe(200);
+    const tick = await tickAt(3);
+    expect({ tick: tick.status, privLinks: privLinks(fx) }).toEqual({ tick: 200, privLinks: before });
+    expect([storedProps(posted.data.template.id)[fx.srcNote], JSON.parse((owner.query("SELECT props FROM db_rows WHERE id = ?").get(fx.blank.id) as any).props)[fx.srcNote]]).toEqual([undefined, undefined]);
+    const kept = owner.query("SELECT kind, value, reason FROM db_value_backups WHERE prop_id = ? ORDER BY kind").all(fx.srcNote) as any[];
+    expect(kept.map((row) => [row.kind, JSON.parse(row.value), row.reason])).toEqual([["row", fx.priv.id, "delete"], ["template", fx.priv.id, "delete"]]);
+    await dropDbs(fx);
+  });
+
+  test("a property POST never reuses an id that rows or templates still hold values for (#86 b11-leftover-id)", async () => {
+    const fx = await sweepFixture("b11-id");
+    // Values a build before this fix left behind when the property was deleted.
+    const stale = sourceId(fx) + "_pstale";
+    const template = (await asOwner("POST", "/api/db/" + fx.source + "/templates", { body: { name: "Stale", props: {} } })).data.template.id;
+    owner.query("UPDATE db_templates SET props = ? WHERE id = ?").run(JSON.stringify({ [stale]: fx.priv.id }), template);
+    const made = await g("POST", "/api/db/" + fx.source + "/properties", { id: stale, name: "Again", type: "relation", config: { database: fx.target } });
+    expect(made.status).toBe(200);
+    expect(made.data.property.id).not.toBe(stale);
+    const fresh = await g("POST", "/api/db/" + fx.source + "/properties", { id: sourceId(fx) + "_punused", name: "Unused", type: "text" });
+    expect(fresh.data.property.id).toBe(sourceId(fx) + "_punused");
+    await dropDbs(fx);
+  });
+
+  // B10: templates stored by earlier builds (id key + one string, id key + extra ids) have no saver record. They may have
+  // been saved by a guest, so in a database a guest could ever edit they do not run until someone saves them again.
+  saverTest("legacy-guest-db", "a legacy template with no saver record links no private row and is shown as stopped", async () => {
+    const fx = await sweepFixture("b10-legacy");
+    const scalar = await legacyTemplate(fx, "b6", { [fx.rel]: fx.priv.id });
+    const extra = await legacyTemplate(fx, "b7", { [fx.rel]: [fx.priv.id, fx.open.id] });
+    const before = privLinks(fx);
+    const rows = sourceRows(fx);
+    const tick = await tickAt(3);
+    expect({ tick: tick.status, privLinks: privLinks(fx), rows: sourceRows(fx) }).toEqual({ tick: 200, privLinks: before, rows });
+    expect([(await templateView(fx, scalar)).blocked, (await templateView(fx, extra)).blocked].every((b) => typeof b === "string" && b.length > 0)).toBe(true);
+    expect((await tickAt(5)).status).toBe(200);
+    expect({ privLinks: privLinks(fx), rows: sourceRows(fx) }).toEqual({ privLinks: before, rows });
+    // The owner saving it again makes it the owner's template; then it runs as the owner.
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/templates/" + scalar, { body: { props: { [fx.rel]: [fx.open.id] } } })).status).toBe(200);
+    expect((await templateView(fx, scalar)).blocked).toBeNull();
+    await tickAt(7);
+    expect(sourceRows(fx)).toBe(rows + 1);
+    expect(privLinks(fx)).toEqual(before);
+    await dropDbs(fx);
+  });
+
+  test("a legacy template in a database no guest could ever edit still runs as the owner (#86)", async () => {
+    expect((await asOwner("POST", "/api/pages", { body: { title: "Solo", slug: "wp-solo", parent: null } })).status).toBe(200);
+    const source = (await asOwner("POST", "/api/db", { body: { title: "Solo src", slug: "wp-solo-src", parent: "wp-solo", page: true } })).data.slug;
+    const target = (await asOwner("POST", "/api/db", { body: { title: "Solo tgt", slug: "wp-solo-tgt", parent: "wp-solo", page: true } })).data.slug;
+    const rel = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Related", type: "relation", config: { database: target, synced: true } } })).data.property.id;
+    const row = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: {} } })).data.row;
+    expect((await asOwner("PUT", "/api/page/" + row.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+    const fx = { source, target, priv: row } as unknown as Fx;
+    const id = await legacyTemplate(fx, "solo", { [rel]: [row.id] });
+    await tickAt(3);
+    expect(sourceRows(fx)).toBe(1);
+    expect(privLinks(fx).length).toBe(2);
+    expect((await templateView(fx, id)).blocked).toBeNull();
+    await dropDbs(fx);
+    await asOwner("DELETE", "/api/page/wp-solo");
+    expect((await asOwner("DELETE", "/api/page/wp-solo/permanent")).status).toBe(200);
+    // These pages never existed for the rest of the file: no tombstones, and the private row page's slug ("새-행") must not
+    // keep its inherit-off setting for the next row that takes the same slug.
+    owner.query("DELETE FROM editor_trash WHERE page IN ('wp-solo', 'wp-solo-src', 'wp-solo-tgt')").run();
+    owner.query("DELETE FROM share_pages WHERE page = ?").run(row.page);
+  });
+
+  // Lead order on gate review 6: the saver must still resolve, with the narrower of its permission when it saved and now.
+  // Anything that cannot be resolved stops that template: nothing is written, the refusal is recorded and shown, and the
+  // next tick refuses again (no other permission is borrowed). Making a row from it is refused the same way.
+  const SAVER_BREAKS: Record<string, (fx: Fx, guest: { rule: string; hash: string }, template: string) => Promise<void>> = {
+    "session-revoked": async (_fx, guest) => { owner.query("UPDATE share_sessions SET revoked = 1 WHERE token_hash = ?").run(guest.hash); },
+    "session-deleted": async (_fx, guest) => { owner.query("DELETE FROM share_sessions WHERE token_hash = ?").run(guest.hash); },
+    "saver-unreadable": async (_fx, _guest, template) => { owner.query("UPDATE db_template_savers SET roles = 'not json' WHERE template_id = ?").run(template); },
+    "rule-revoked": async (_fx, guest) => { expect((await asOwner("DELETE", "/api/page/root/access/rules/" + guest.rule)).status).toBe(200); },
+    "role-narrowed": async (_fx, guest) => { expect((await asOwner("PATCH", "/api/page/root/access/rules/" + guest.rule, { body: { role: "read" } })).status).toBe(200); },
+  };
+  for (const [name, breakSaver] of Object.entries(SAVER_BREAKS)) {
+    saverTest(name, "a guest-saved schedule whose saver can no longer be resolved (" + name + ") writes nothing, is recorded and stays stopped", async () => {
+      const fx = await sweepFixture("sv-" + name);
+      const guest = await freshGuest("saver-" + name + "@example.com");
+      const posted = await call("POST", "/api/db/" + fx.source + "/templates", { cookie: guest.cookie, body: { name: "Guest daily", props: { [fx.rel]: [fx.open.id] } } });
+      expect(posted.status).toBe(200);
+      const template = posted.data.template.id;
+      expect((await call("PATCH", "/api/db/" + fx.source + "/templates/" + template, { cookie: guest.cookie, body: { recurrence: daily } })).status).toBe(200);
+      // Control: while the saver resolves, the tick runs it and links the row it could edit.
+      const rows = sourceRows(fx);
+      expect((await tickAt(3)).status).toBe(200);
+      expect(sourceRows(fx)).toBe(rows + 1);
+      await breakSaver(fx, guest, template);
+      const before = tableSnapshot();
+      const first = await tickAt(5);
+      expect(first.status).toBe(200);
+      expect(first.body.created.filter((c: any) => c.template === template)).toEqual([]);
+      expect(tableSnapshot()).toEqual(before);
+      expect(typeof (await templateView(fx, template)).blocked).toBe("string");
+      expect((await tickAt(7)).status).toBe(200);
+      expect(tableSnapshot()).toEqual(before);
+      const fromTemplate = await asOwner("POST", "/api/db/" + fx.source + "/rows", { body: { template, props: {} } });
+      expect(fromTemplate.status).toBe(403);
+      expect(tableSnapshot()).toEqual(before);
+      // The owner saving only the schedule again does not lend the owner's permission to the guest's values: the saver is
+      // checked again on the next run and the template stops again, writing no row.
+      expect((await asOwner("PATCH", "/api/db/" + fx.source + "/templates/" + template, { body: { recurrence: daily } })).status).toBe(200);
+      const rowsBeforeOwnerSchedule = sourceRows(fx);
+      await tickAt(9);
+      expect({ rows: sourceRows(fx), stopped: typeof (await templateView(fx, template)).blocked }).toEqual({ rows: rowsBeforeOwnerSchedule, stopped: "string" });
+      await dropDbs(fx);
+    });
+  }
+
+  test("an owner-saved template linking a private row still runs, and a guest saver keeps linking rows it may edit (#86)", async () => {
+    const fx = await sweepFixture("sv-owner");
+    const template = (await asOwner("POST", "/api/db/" + fx.source + "/templates", { body: { name: "Owner daily", props: { [fx.rel]: [fx.priv.id] } } })).data.template.id;
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/templates/" + template, { body: { recurrence: daily } })).status).toBe(200);
+    const before = privLinks(fx).length;
+    await tickAt(3);
+    expect(privLinks(fx).length).toBe(before + 2);
+    expect((await templateView(fx, template)).blocked).toBeNull();
+    const made = await asOwner("POST", "/api/db/" + fx.source + "/rows", { body: { template, props: {} } });
+    expect(made.status).toBe(200);
+    await dropDbs(fx);
+  });
+
+  // N5: an owner API caller may still send a property name as a template key; it is stored under the id. A name that
+  // matches no property or more than one is a 400, never a silent drop.
+  saverTest("n5-name-keys", "a template name key matching two properties is refused", async () => {
+    const slug = (await asOwner("POST", "/api/db", { body: { title: "Dup names", slug: "wp-dup-names", parent: "root", page: true } })).data.slug;
+    const first = (await asOwner("POST", "/api/db/" + slug + "/properties", { body: { name: "Dup", type: "text" } })).data.property.id;
+    expect((await asOwner("POST", "/api/db/" + slug + "/properties", { body: { name: "Dup", type: "text" } })).status).toBe(200);
+    const dup = await asOwner("POST", "/api/db/" + slug + "/templates", { body: { name: "T", props: { Dup: "x" } } });
+    expect(dup.status).toBe(400);
+    const plain = (await asOwner("POST", "/api/db/" + slug + "/templates", { body: { name: "T", props: {} } })).data.template.id;
+    expect((await asOwner("PATCH", "/api/db/" + slug + "/templates/" + plain, { body: { props: { Dup: "x" } } })).status).toBe(400);
+    const byId = await asOwner("POST", "/api/db/" + slug + "/templates", { body: { name: "T", props: { [first]: "x" } } });
+    expect([byId.status, storedProps(byId.data.template.id)]).toEqual([200, { [first]: "x" }]);
+    await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // B10 migration: stored templates are rewritten to the checked shape; the original values stay in the backup table.
+  saverTest("migration", "the template migration clears every legacy shape and keeps the original values", async () => {
+    const fx = await sweepFixture("b10-migrate");
+    const relation = (await asOwner("GET", "/api/db/" + fx.source)).data.properties.find((prop: any) => prop.id === fx.rel);
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { body: { config: { ...relation.config, limit: 1 } } })).status).toBe(200);
+    const shapes = {
+      i: await legacyTemplate(fx, "mi", { [fx.rel]: fx.open.id }),
+      ii: await legacyTemplate(fx, "mii", { [fx.rel]: [fx.priv.id, fx.open.id] }),
+      iii: await legacyTemplate(fx, "miii", { [fx.rel]: [fx.src.id] }),
+    };
+    const original = Object.fromEntries(Object.entries(shapes).map(([k, id]) => [k, storedProps(id)]));
+    const migrate = async () => {
+      env.TEMPLATE_MIGRATE_SECRET = "migrate-secret";
+      try {
+        const res = await worker.fetch(new Request("https://notes.example.com/__templates/migrate", { method: "POST", headers: { "content-type": "application/json", "x-template-migrate": "migrate-secret" }, body: JSON.stringify({ ws: "owner" }) }), env, {});
+        return { status: res.status, body: (await res.json()) as any };
+      } finally {
+        delete env.TEMPLATE_MIGRATE_SECRET;
+      }
+    };
+    const run = await migrate();
+    expect(run.status).toBe(200);
+    expect([run.body.before.i >= 1, run.body.before.ii >= 1, run.body.before.iii >= 1]).toEqual([true, true, true]);
+    expect(run.body.after).toEqual({ i: 0, ii: 0, iii: 0 });
+    expect(run.body.changed).toEqual(expect.arrayContaining(Object.values(shapes)));
+    expect(Object.fromEntries(Object.entries(shapes).map(([k, id]) => [k, storedProps(id)]))).toEqual({ i: { [fx.rel]: [fx.open.id] }, ii: { [fx.rel]: [fx.open.id] }, iii: { [fx.rel]: [] } });
+    for (const [k, id] of Object.entries(shapes)) {
+      const kept = owner.query("SELECT value FROM db_value_backups WHERE kind = 'template' AND ref = ?").all(id) as any[];
+      expect({ k, kept: kept.map((row) => JSON.parse(row.value)) }).toEqual({ k, kept: [original[k]] });
+    }
+    // Wrong secret: not found. A second run changes nothing.
+    expect((await worker.fetch(new Request("https://notes.example.com/__templates/migrate", { method: "POST", headers: { "x-template-migrate": "nope" }, body: "{}" }), env, {})).status).toBe(404);
+    expect((await migrate()).body.changed).toEqual([]);
+    await dropDbs(fx);
+  });
+
+  // Gate review of 0039b9a: one batch for all button steps must still run database rules once per step.
+  test("an owner row button runs rules on every step like separate saves (#86)", async () => {
+    const slug = (await asOwner("POST", "/api/db", { body: { title: "Rule steps", slug: "wp-rule-steps", parent: "root", page: true } })).data.slug;
+    const flag = (await asOwner("POST", "/api/db/" + slug + "/properties", { body: { name: "Flag", type: "checkbox" } })).data.property.id;
+    const memo = (await asOwner("POST", "/api/db/" + slug + "/properties", { body: { name: "Note", type: "text" } })).data.property.id;
+    expect((await asOwner("POST", "/api/db/" + slug + "/rules", { body: { config: { trigger: { type: "changed", property: flag, value: true }, action: { type: "set", property: memo, value: "rule-fired" } } } })).status).toBe(201);
+    const row = (await asOwner("POST", "/api/db/" + slug + "/rows", { body: { props: { [memo]: "before" } } })).data.row;
+    const button = (await asOwner("POST", "/api/db/" + slug + "/properties", { body: { name: "Toggle", type: "button", config: { actions: [{ type: "update_row", values: { [flag]: true } }, { type: "update_row", values: { [flag]: false } }] } } })).data.property.id;
+    const pressed = await asOwner("POST", "/api/db/" + slug + "/rows/" + row.id + "/button/" + button, { body: {} });
+    expect([pressed.status, pressed.data.updated]).toEqual([200, 2]);
+    const props = (await asOwner("GET", "/api/db/" + slug)).data.rows[0].props;
+    expect([props[flag], props[memo]]).toEqual([false, "rule-fired"]);
+    await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // Gate review of 0039b9a: one batch for all button steps must still run database rules once per step.
+  test("an owner row button runs rules on every step like separate saves (#86)", async () => {
+    const slug = (await asOwner("POST", "/api/db", { body: { title: "Rule steps", slug: "wp-rule-steps", parent: "root", page: true } })).data.slug;
+    const flag = (await asOwner("POST", "/api/db/" + slug + "/properties", { body: { name: "Flag", type: "checkbox" } })).data.property.id;
+    const memo = (await asOwner("POST", "/api/db/" + slug + "/properties", { body: { name: "Note", type: "text" } })).data.property.id;
+    expect((await asOwner("POST", "/api/db/" + slug + "/rules", { body: { config: { trigger: { type: "changed", property: flag, value: true }, action: { type: "set", property: memo, value: "rule-fired" } } } })).status).toBe(201);
+    const row = (await asOwner("POST", "/api/db/" + slug + "/rows", { body: { props: { [memo]: "before" } } })).data.row;
+    const button = (await asOwner("POST", "/api/db/" + slug + "/properties", { body: { name: "Toggle", type: "button", config: { actions: [{ type: "update_row", values: { [flag]: true } }, { type: "update_row", values: { [flag]: false } }] } } })).data.property.id;
+    const pressed = await asOwner("POST", "/api/db/" + slug + "/rows/" + row.id + "/button/" + button, { body: {} });
+    expect([pressed.status, pressed.data.updated]).toEqual([200, 2]);
+    const props = (await asOwner("GET", "/api/db/" + slug)).data.rows[0].props;
+    expect([props[flag], props[memo]]).toEqual([false, "rule-fired"]);
+    await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // Every statement that writes table data, by function (and by handleApi route), with the sweep case or the reason that
+  // covers it. A new write statement, or one moved to another function, fails this test until it is listed here.
+  const WRITE_SQL = /(?:INSERT(?: OR [A-Z]+)? INTO|UPDATE|DELETE FROM|REPLACE INTO)\s+(?:db_rows|db_relation_links|db_properties|db_templates|databases|db_views|db_counters|db_rules|db_relation_locks|db_forms|db_template_runs)\b/g;
+  const WRITE_PATHS: Record<string, { count: number; cases?: string[]; reason?: string }> = {
+    "gate/_worker.js#importZip": { count: 1, cases: ["import"] },
+    "gate/_worker.js#runDueTemplates": { count: 4, reason: "runs later as the owner, so a guest request is checked when it stores the values or a schedule: template POST, PATCH props, and any PATCH that leaves a recurrence on", cases: ["template-post", "template-patch", "template-schedule"] },
+    "gate/_worker.js#CYCLE_GUARD": { count: 1, cases: ["subitem-move"] },
+    "gate/_worker.js#migrateTemplates": { count: 1, reason: "one-time rewrite behind TEMPLATE_MIGRATE_SECRET (no guest route); only narrows stored values to the checked shape and keeps the originals in db_value_backups (test: template migration)" },
+    "gate/_worker.js#applyRowProps": { count: 10, cases: ["relation-add", "relation-clear", "row-create-linking"] },
+    "gate/_worker.js#deleteRowsWithRelations": { count: 1, cases: ["row-delete", "linked-row-delete"] },
+    "gate/_worker.js#rowDeleteRelationStatements": { count: 3, cases: ["linked-row-delete", "linked-db-delete"] },
+    "gate/_worker.js#nextUniqueId": { count: 1, cases: ["property-unique-id"] },
+    "gate/_worker.js#ensureUniqueIds": { count: 3, cases: ["property-unique-id", "property-type-change"] },
+    "gate/_worker.js#createDatabase": { count: 2, reason: "makes a new database under a page the guest may edit; seeded relations lose any pair (test: forged seed pair)" },
+    "gate/_worker.js#relationCacheStatement": { count: 1, cases: ["relation-add", "linked-row-delete"] },
+    "gate/_worker.js#relationConversionStatements": { count: 2, cases: ["property-type-change", "property-delete"], reason: "clears the old values of a property the request turns into a relation; runs only after the type-change check (every row of the database editable) and keeps the values in db_value_backups" },
+    "gate/_worker.js#enableRelationPair": { count: 6, cases: ["property-synced-create", "property-synced-enable", "subitems-on"] },
+    "gate/_worker.js#disableRelationPairStatements": { count: 5, cases: ["property-synced-disable", "property-synced-drop-pair", "row-page-permanent"], reason: "a pair counts only when it lives in the target database and points back (test: forged seed pair)" },
+    "gate/_worker.js#switchSubitems": { count: 4, cases: ["subitems-on"] },
+    "gate/_worker.js#saveProperties": { count: 2, reason: "only for a database createDatabase or the ZIP import just made; relation pair is never taken from input (test: forged seed pair)" },
+    "gate/_worker.js#syncPageTitleToRow": { count: 2, cases: ["row-page-title", "row-page-save"] },
+    "gate/_worker.js#syncDbSeed": { count: 6, cases: ["sync"] },
+    "gate/_worker.js#prepareCreateRow": { count: 1, cases: ["row-create-linking", "button-create-row-link", "block-button-create-row"] },
+    "gate/_worker.js#preparePatchRow": { count: 1, cases: ["row-patch-props", "button-update-row-link", "button-update-related"] },
+    "gate/_worker.js#permanentDeletePlan": { count: 7, cases: ["row-page-permanent"] },
+    "gate/_worker.js#handleApi:db PATCH": { count: 1, cases: ["subitems-on"], reason: "title/icon/config of the database page itself; the route needs edit on it" },
+    "gate/_worker.js#handleApi:db DELETE": { count: 8, cases: ["linked-db-delete"] },
+    "gate/_worker.js#handleApi:properties POST": { count: 2, cases: ["property-unique-id", "property-synced-create"] },
+    "gate/_worker.js#handleApi:properties PATCH": { count: 4, cases: ["property-type-change", "property-synced-enable", "property-synced-disable"] },
+    "gate/_worker.js#handleApi:properties DELETE": { count: 3, cases: ["property-delete"] },
+    "gate/_worker.js#handleApi:rows PATCH": { count: 1, cases: ["row-patch-ord"] },
+    "gate/_worker.js#handleApi:views POST": { count: 1, reason: "view settings only, no row values; the route needs edit on the database" },
+    "gate/_worker.js#handleApi:views PATCH": { count: 1, reason: "view settings only, no row values; the route needs edit on the database" },
+    "gate/_worker.js#handleApi:views DELETE": { count: 1, reason: "view settings only, no row values; the route needs edit on the database" },
+    "gate/_worker.js#handleApi:templates POST": { count: 1, cases: ["template-post", "template-post-scalar"] },
+    "gate/_worker.js#handleApi:templates PATCH": { count: 1, cases: ["template-patch", "template-schedule"] },
+    "gate/_worker.js#handleApi:templates DELETE": { count: 1, reason: "removes a template, no row values" },
+    "features/db-rules.js": { count: 3, cases: ["rules"] },
+    "features/form-row.js": { count: 1, cases: ["form-config"], reason: "public form submit makes a new row; relation is not an allowed form field" },
+    "features/home-setup.js": { count: 2, cases: ["home-starter"] },
+  };
+  async function tableWriteInventory() {
+    const files = ["gate/_worker.js", "agent-api.js", "editor-pages.js", ...[...new Bun.Glob("features/*.js").scanSync({ cwd: ROOT })].map((f) => f.replace(/\\/g, "/")).sort()];
+    const out: Record<string, number> = {};
+    for (const file of files) {
+      let fn = file.startsWith("gate/") ? "(top)" : "";
+      let route = "";
+      for (const line of (await readFile(join(ROOT, file), "utf8")).split("\n")) {
+        if (file === "gate/_worker.js") {
+          const m = /^(?:async )?function (\w+)|^const (\w+) =/.exec(line);
+          if (m) { fn = m[1] || m[2]; route = ""; }
+          if (fn === "handleApi") {
+            const r = /^ {4,6}if \((?:!target && |target && )?(?:method === "(\w+)"|kind === "(\w+)")/.exec(line);
+            if (r) route = (r[2] ? r[2] : route.split(" ")[0]) + (r[1] ? " " + r[1] : "");
+          }
+        }
+        const n = (line.match(WRITE_SQL) || []).length;
+        if (n) { const key = file + (fn ? "#" + fn : "") + (fn === "handleApi" && route ? ":" + route : ""); out[key] = (out[key] || 0) + n; }
+      }
+    }
+    return out;
+  }
+  test("every table write path is listed with a guest sweep case or a reason, and every guest write route is swept (#86)", async () => {
+    const found = await tableWriteInventory();
+    expect(found).toEqual(Object.fromEntries(Object.entries(WRITE_PATHS).map(([key, entry]) => [key, entry.count])));
+    for (const [key, entry] of Object.entries(WRITE_PATHS)) {
+      expect({ key, covered: !!(entry.cases?.length || entry.reason) }).toEqual({ key, covered: true });
+      for (const name of entry.cases ?? []) expect({ key, name, swept: name in SWEEP }).toEqual({ key, name, swept: true });
+    }
+    // Guest write routes (features/share.js GUEST_ROUTES) that reach table data, each with its sweep cases.
+    const share = await readFile(join(ROOT, "features", "share.js"), "utf8");
+    const routes = [...share.matchAll(/^\s+\["([A-Z|]+)", (.+), "(\w+)"(?:, [^\]]+)?\],$/gm)].map((m) => m[1] + " " + m[2]).filter((r) => !/^GET(\|HEAD)? /.test(r));
+    const GUEST_WRITE_ROUTES: Record<string, string[]> = {
+      "POST /^\\/api\\/pages$/": [],
+      'PUT new RegExp(P + "$")': ["row-page-save"],
+      'DELETE new RegExp(P + "$")': [],
+      'POST new RegExp(P + "\\\\/rename$")': ["row-page-title"],
+      'POST new RegExp(P + "\\\\/move$")': [],
+      'PATCH new RegExp(P + "\\\\/blocks$")': ["row-page-save"],
+      'POST new RegExp(P + "\\\\/button\\\\/[^/]+$")': ["block-button-create-row"],
+      'PUT new RegExp(P + "\\\\/settings$")': [],
+      'POST new RegExp(P + "\\\\/comments$")': [],
+      'PATCH|DELETE new RegExp(P + "\\\\/comments\\\\/[^/]+$")': [],
+      'POST new RegExp(P + "\\\\/history\\\\/[^/]+\\\\/restore$")': ["row-page-history-restore"],
+      'POST new RegExp(P + "\\\\/access\\\\/request$")': [],
+      'GET|POST|PUT|PATCH|DELETE new RegExp(P + "\\\\/(?:access|share)(?:\\\\/.*)?$")': [],
+      "PATCH /^\\/api\\/db\\/([^/]+)$/": ["subitems-on"],
+      "DELETE /^\\/api\\/db\\/([^/]+)$/": ["linked-db-delete"],
+      "POST|PATCH|DELETE /^\\/api\\/db\\/([^/]+)\\/(?:rows|properties|views|templates)(?:\\/[^/]+)?$/": ["row-patch-props", "row-delete", "row-create-linking", "property-type-change", "property-delete", "template-post", "template-patch"],
+      "POST /^\\/api\\/db\\/([^/]+)\\/rows\\/[^/]+\\/button\\/[^/]+$/": ["button-update-related", "button-update-row-link", "button-create-row-link"],
+    };
+    expect(routes).toEqual(Object.keys(GUEST_WRITE_ROUTES));
+    // Gate review 6 + lead order: the link-time saver check keeps one test per way a saver can stop resolving, plus the
+    // legacy and migration cases. Removing one of them fails here.
+    expect([...SAVER_TESTS].sort()).toEqual(["legacy-guest-db", "migration", "n5-name-keys", "role-narrowed", "rule-revoked", "saver-unreadable", "session-deleted", "session-revoked"]);
+    for (const names of Object.values(GUEST_WRITE_ROUTES)) for (const name of names) expect(name in SWEEP).toBe(true);
+  });
+
+  test("deleting a database whose rows are two-way linked stays under the D1 100-parameter limit (#86)", async () => {
+    const source = (await asOwner("POST", "/api/db", { body: { title: "Many", slug: "wp-many-src", parent: "root", page: true } })).data.slug;
+    const target = (await asOwner("POST", "/api/db", { body: { title: "Many back", slug: "wp-many-tgt", parent: "root", page: true } })).data.slug;
+    const rel = (await asOwner("POST", "/api/db/" + source + "/properties", { body: { name: "Related", type: "relation", config: { database: target, synced: true } } })).data;
+    const back = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: {} } })).data.row;
+    for (let i = 0; i < 130; i += 1) expect((await asOwner("POST", "/api/db/" + source + "/rows", { body: { props: { [rel.property.id]: [back.id] } } })).status).toBe(200);
+    if (!sweepGuest) sweepGuest = await sweepVerify();
+    maxParams = 100;
+    try {
+      const res = await call("DELETE", "/api/db/" + source, { cookie: sweepGuest });
+      expect(res.status).toBe(200);
+    } finally {
+      maxParams = Infinity;
+    }
+    expect((await asOwner("GET", "/api/db/" + target)).data.rows[0].props[rel.pair.id]).toEqual([]);
+    expect(owner.query("SELECT COUNT(*) AS n FROM db_relation_links WHERE src_row = ? OR dst_row = ?").get(back.id, back.id)).toEqual({ n: 0 });
+    await asOwner("DELETE", "/api/db/" + target);
+  });
+
+  for (const hidden of ["database", "row"] as const) {
+    test("guest rollups and relation formulas exclude hidden " + hidden + " targets (#86)", async () => {
+      const source = (await asOwner("POST", "/api/db", { body: { title: "Source", slug: "audit86-source-" + hidden, parent: "root", page: true } })).data.slug;
+      const target = (await asOwner("POST", "/api/db", { body: { title: "Target", slug: "audit86-target-" + hidden, parent: hidden === "database" ? "other" : "root", page: true } })).data.slug;
+      const property = async (slug: string, body: unknown) => {
+        const result = await asOwner("POST", "/api/db/" + slug + "/properties", { body });
+        expect(result.status).toBe(200);
+        return result.data.property;
+      };
+      const amount = await property(target, { name: "Amount", type: "number" });
+      const relation = await property(source, { name: "Related", type: "relation", config: { database: target } });
+      const rollup = await property(source, { name: "Total", type: "rollup", config: { relation_property: relation.id, target_property: amount.id, function: "sum" } });
+      const formula = await property(source, { name: "Formula", type: "formula", config: { expression: 'prop("Related").map(current.prop("Amount")).sum()' } });
+      const title = (await asOwner("GET", "/api/db/" + target)).data.properties.find((p: any) => p.type === "title").id;
+      const privateRow = (await asOwner("POST", "/api/db/" + target + "/rows", { body: { props: { [title]: "Target " + hidden, [amount.id]: 987654 } } })).data.row;
+      await asOwner("POST", "/api/db/" + source + "/rows", { body: { props: { [relation.id]: [privateRow.id] } } });
+      const guest = await np5Guest("read");
+      if (hidden === "row") expect((await asOwner("PUT", "/api/page/" + privateRow.page + "/access/settings", { body: { inherit: false } })).status).toBe(200);
+      else await invite(privateRow.page, "np5-read@example.com", "read");
+      expect((await call("GET", "/api/page/" + privateRow.page, { cookie: guest })).status).toBe(hidden === "row" ? 401 : 200);
+      const ownerResult = (await asOwner("GET", "/api/db/" + source)).data.rows[0];
+      expect(ownerResult.computed).toMatchObject({ [rollup.id]: 987654, [formula.id]: 987654 });
+      const result = await call("GET", "/api/db/" + source, { cookie: guest });
+      expect(result.status).toBe(200);
+      expect(result.data.rows[0].computed).toMatchObject({ [rollup.id]: 0, [formula.id]: 0 });
+      await asOwner("DELETE", "/api/db/" + source);
+      await asOwner("DELETE", "/api/db/" + target);
+    });
   }
 
   test("a guest can change a two-way relation only when it may edit both databases (notion-parity-5 C2)", async () => {
@@ -598,12 +1547,70 @@ describe("sharing", () => {
     const indexed = await call("GET", url);
     expect(indexed.headers.get("x-robots-tag")).toBe("index, follow");
     expect(indexed.text).toContain("Acard 사이트");
+    expect(indexed.text).toContain('<link rel="canonical" href="https://notes.example.com' + url + '">');
+    expect(indexed.text).toContain('<meta property="og:title" content="Shared root">');
+    expect(indexed.text).toContain('<meta property="og:url" content="https://notes.example.com' + url + '">');
+    expect((await call("GET", url + "/child/?utm_source=x")).text).toContain('<link rel="canonical" href="https://notes.example.com' + url + '/child">');
     expect((await asOwner("GET", "/api/page/root/access")).data.publish.url).toBe(url);
     expect((await asOwner("DELETE", "/api/page/root/access/publish")).status).toBe(200);
     expect((await call("GET", url)).status).toBe(404);
     expect((await call("GET", url + "/child/")).status).toBe(404);
     await asOwner("PUT", "/api/page/root/access/settings", { body: { publishSubpages: false, allowIndex: false, siteTitle: "" } });
   });
+
+  test("shared subpage cards strip inline markdown, escape and truncate plain text, and fetch one paragraph per page", async () => {
+    for (const [slug, parent] of [["cards-root", null], ["cards-a", "cards-root"], ["cards-b", "cards-root"], ["cards-empty", "cards-root"]]) {
+      expect((await asOwner("POST", "/api/pages", { body: { slug, title: slug, parent } })).status).toBe(200);
+    }
+    const markdown = "**bold**, *italic*, _under_, `code`, [link](https://notes.example.com), [[slug]] snake_case_name a*b <tag> & " + "x".repeat(80);
+    const plain = "bold, italic, under, code, link, slug snake_case_name a*b <tag> & " + "x".repeat(80);
+    const insert = owner.query("INSERT INTO blocks (page, id, ord, type, text, checked, indent) VALUES (?, ?, ?, ?, ?, 0, 0)");
+    for (const slug of ["cards-a", "cards-b"]) {
+      insert.run(slug, "heading", 0, "heading1", "Not a paragraph");
+      insert.run(slug, "blank", 1, "paragraph", "   ");
+      // Insertion order differs from ord, so selecting the first stored row is wrong.
+      for (let i = 0; i < 20; i++) insert.run(slug, "later" + i, 10 + i, "paragraph", "Later paragraph " + i);
+      insert.run(slug, "first", 2, "paragraph", slug === "cards-a" ? markdown : "Second page summary");
+    }
+    await asOwner("PUT", "/api/page/cards-root/access/settings", { body: { publishSubpages: true } });
+    const published = await asOwner("POST", "/api/page/cards-root/access/publish");
+    expect(published.status).toBe(201);
+    const db = env.DB;
+    const queries: { sql: string; params: unknown[]; rows: { page: string; text: string }[] }[] = [];
+    env.DB = { ...db, prepare(sql: string) {
+      const wrap = (statement: any, params: unknown[]): any => ({ ...statement,
+        bind: (...values: unknown[]) => wrap(statement.bind(...values), values),
+        all: async () => {
+          const result = await statement.all();
+          if (/FROM blocks\b/.test(sql) && sql.includes("paragraph")) queries.push({ sql, params, rows: result.results });
+          return result;
+        },
+      });
+      return wrap(db.prepare(sql), []);
+    } };
+    let rendered;
+    try { rendered = await call("GET", published.data.url); } finally { env.DB = db; }
+    expect(rendered.status).toBe(200);
+    const summaries = [...rendered.text.matchAll(/<small>(.*?)<\/small>/g)].map(match => match[1]);
+    expect(queries).toHaveLength(1);
+    // Execute the exact production query through pgD1 as well, not a SQL-string mock.
+    const lite = new PGlite();
+    try {
+      await lite.exec("CREATE TABLE blocks (page TEXT, id TEXT, ord BIGINT, type TEXT, text TEXT)");
+      const pg = pgD1({ query: async (sql, params) => {
+        const result = await lite.query<Record<string, unknown>>(sql, params);
+        return { rows: result.rows, count: result.affectedRows ?? result.rows.length };
+      }, transaction: async () => { throw new Error("Summary reads do not use transactions"); } });
+      const rows = owner.query("SELECT page, id, ord, type, text FROM blocks WHERE page LIKE 'cards-%'").all() as { page: string; id: string; ord: number; type: string; text: string }[];
+      for (const row of rows) await pg.prepare("INSERT INTO blocks VALUES (?, ?, ?, ?, ?)").bind(row.page, row.id, row.ord, row.type, row.text).run();
+      const result = await pg.prepare(queries[0].sql).bind(...queries[0].params).all();
+      const expectedRows = [{ page: "cards-a", text: markdown }, { page: "cards-b", text: "Second page summary" }];
+      expect({ summaries, sqliteRows: queries[0].rows, postgresRows: result.results }).toEqual({
+        summaries: [plain.slice(0, 70).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"), "Second page summary"],
+        sqliteRows: expectedRows, postgresRows: expectedRows,
+      });
+    } finally { await lite.close(); }
+  }, 20000);
 
   test("a permanently deleted page takes its sharing rules and requests with it", async () => {
     const first = await asOwner("POST", "/api/pages", { body: { title: "Temp", slug: "temp-share" } });
@@ -617,6 +1624,17 @@ describe("sharing", () => {
     expect(owner.query("SELECT count(*) AS n FROM share_requests WHERE page = 'temp-share'").get()).toEqual({ n: 0 });
     expect((await call("GET", "/api/page/temp-share", { cookie: guest })).status).toBe(401);
     expect((await call("GET", "/api/tree", { cookie: guest })).data.pages).toEqual([]);
+  });
+
+  test("robots.txt, sitemap.xml and the share image are public; signed-in paths stay behind the gate", async () => {
+    const robots = await call("GET", "/robots.txt");
+    expect(robots.status).toBe(200);
+    expect(robots.text).toContain("Sitemap: https://notes.example.com/sitemap.xml");
+    const sitemap = await call("GET", "/sitemap.xml");
+    expect(sitemap.status).toBe(200);
+    expect(sitemap.headers.get("content-type")).toContain("application/xml");
+    for (const path of ["/og.png", "/apple-touch-icon.png", "/favicon.ico"]) expect((await call("GET", path)).status, path).toBe(404);
+    expect((await call("GET", "/api/tree")).status).toBe(401);
   });
 
   test("state changes from another origin are refused", async () => {
@@ -644,6 +1662,154 @@ describe("sharing", () => {
     await asOwner("DELETE", "/api/page/root/access/rules/" + found.rule);
   });
 
+  // A permanent delete keeps a tombstone; these test pages never existed for the rest of the file.
+  async function dropPage(slug: string) {
+    await asOwner("DELETE", "/api/page/" + slug);
+    expect((await asOwner("DELETE", "/api/page/" + slug + "/permanent")).status).toBe(200);
+    owner.query("DELETE FROM editor_trash WHERE page = ?").run(slug);
+  }
+
+  // #114: a visitor with an edit link and no account used to see only a read-only page. The link page now offers an email
+  // check (mailed 6-digit code, no sign-up) that opens a guest session holding that link.
+  test("an edit link visitor confirms an email code and then edits text, blocks, cells, rows and checkboxes (#114)", async () => {
+    const mails: { to: string[]; text: string }[] = [];
+    const before = globalThis.fetch;
+    globalThis.fetch = (async (input: any, init?: any) => {
+      if (String(input instanceof Request ? input.url : input) === "https://api.resend.com/emails") { mails.push(JSON.parse(init.body)); return Response.json({ id: "m1" }); }
+      return before(input, init);
+    }) as typeof fetch;
+    env.RESEND_API_KEY = "re_test";
+    // The per-IP verify limit belongs to the invite tests; this test leaves it as it found it (like sweepVerify).
+    const savedRate = owner.query("SELECT key, count, reset FROM share_rate").all();
+    owner.query("DELETE FROM share_rate").run();
+    try {
+      const page = (await asOwner("POST", "/api/pages", { body: { title: "Edit link", slug: "e114", parent: null } })).data.slug;
+      expect((await asOwner("PUT", "/api/page/" + page, { body: { blocks: [{ id: "t1", type: "paragraph", text: "before" }] } })).status).toBe(200);
+      const dbSlug = (await asOwner("POST", "/api/db", { body: { title: "Tasks", slug: "e114-db", parent: page, page: true } })).data.slug;
+      const title = (await asOwner("GET", "/api/db/" + dbSlug)).data.properties.find((p: any) => p.type === "title").id;
+      const flag = (await asOwner("POST", "/api/db/" + dbSlug + "/properties", { body: { name: "Done", type: "checkbox" } })).data.property.id;
+      const row = (await asOwner("POST", "/api/db/" + dbSlug + "/rows", { body: { props: { [title]: "row one" } } })).data.row;
+      const url = (await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "link", role: "edit" } })).data.link.url as string;
+      const token = url.split("/").pop()!;
+
+      const shown = await call("GET", url);
+      expect(shown.status).toBe(200);
+      expect(shown.text).toContain("편집 허용");
+      expect(shown.text).toContain('href="/s/o/l/' + token + '"');
+      expect((await call("PUT", "/api/page/" + page, { body: { blocks: [] } })).status).toBe(401);
+
+      expect((await call("GET", "/s/o/l/" + token)).text).toContain("코드 받기");
+      expect((await call("POST", "/s/o/l/" + token, { form: { email: "not-an-email" } })).status).toBe(400);
+      const asked = await call("POST", "/s/o/l/" + token, { form: { email: "Seymour@Example.com" } });
+      expect(asked.status).toBe(200);
+      expect(mails).toHaveLength(1);
+      expect(mails[0].to).toEqual(["seymour@example.com"]);
+      const code = /\b(\d{6})\b/.exec(mails[0].text)![1];
+      expect(asked.text).not.toContain(code);
+      const verifyUrl = /action="(\/s\/o\/i\/[A-Za-z0-9_-]{43})"/.exec(asked.text)![1];
+      expect((await call("POST", verifyUrl, { form: { email: "other@example.com", code } })).status).toBe(401);
+      const done = await call("POST", verifyUrl, { form: { email: "seymour@example.com", code } });
+      expect(done.status).toBe(303);
+      expect(done.headers.get("location")).toBe("/edit/" + page + "/");
+      const guest = "acard_guest=" + /acard_guest=([^;]+)/.exec(done.headers.get("set-cookie")!)![1];
+
+      expect((await call("GET", "/edit/" + page + "/", { cookie: guest })).status).toBe(200);
+      expect((await call("PUT", "/api/page/" + page, { cookie: guest, body: { blocks: [{ id: "t1", type: "paragraph", text: "typed by link guest" }] } })).status).toBe(200);
+      const current = (await call("GET", "/api/page/" + page, { cookie: guest })).data;
+      const order = [...current.blocks.map((b: any) => b.id), "t2"];
+      expect((await call("PATCH", "/api/page/" + page + "/blocks", { cookie: guest, body: { base_updated: current.page.updated, upserts: [{ id: "t2", type: "paragraph", text: "new block", ord: order.length - 1 }], deletes: [], order } })).status).toBe(200);
+      expect((await call("PATCH", "/api/db/" + dbSlug + "/rows/" + row.id, { cookie: guest, body: { props: { [title]: "cell by link guest" } } })).status).toBe(200);
+      expect((await call("PATCH", "/api/db/" + dbSlug + "/rows/" + row.id, { cookie: guest, body: { props: { [flag]: true } } })).status).toBe(200);
+      expect((await call("POST", "/api/db/" + dbSlug + "/rows", { cookie: guest, body: { props: { [title]: "row by link guest" } } })).status).toBe(200);
+      expect((await asOwner("GET", "/api/page/" + page)).data.blocks.map((b: any) => b.text)).toEqual(["typed by link guest", "new block"]);
+      const rows = (await asOwner("GET", "/api/db/" + dbSlug)).data.rows;
+      expect(rows.map((r: any) => r.pageTitle).sort()).toEqual(["cell by link guest", "row by link guest"]);
+      expect(rows.find((r: any) => r.id === row.id).props[flag]).toBe(true);
+      // The link grants this page only: other pages stay closed.
+      expect((await call("PUT", "/api/page/other", { cookie: guest, body: { blocks: [] } })).status).toBe(401);
+
+      // Lowering the link to read takes edit away from that session at once.
+      expect((await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "link", role: "read" } })).status).toBe(200);
+      expect((await call("PUT", "/api/page/" + page, { cookie: guest, body: { blocks: [] } })).status).toBe(401);
+      await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "invited" } });
+      await asOwner("DELETE", "/api/db/" + dbSlug);
+      await dropPage(page);
+      owner.query("DELETE FROM editor_trash WHERE page = ?").run(dbSlug);
+    } finally {
+      globalThis.fetch = before;
+      delete env.RESEND_API_KEY;
+      owner.query("DELETE FROM share_rate").run();
+      for (const row of savedRate as any[]) owner.query("INSERT INTO share_rate (key, count, reset) VALUES (?, ?, ?)").run(row.key, row.count, row.reset);
+    }
+  });
+
+  test("overlapping code requests for one email send at most three mails (#114 gate review)", async () => {
+    const savedRate = owner.query("SELECT key, count, reset FROM share_rate").all();
+    owner.query("DELETE FROM share_rate").run();
+    let mails = 0;
+    const before = globalThis.fetch;
+    globalThis.fetch = (async (input: any, init?: any) => String(input instanceof Request ? input.url : input) === "https://api.resend.com/emails" ? (mails += 1, Response.json({ id: "m" })) : before(input, init)) as typeof fetch;
+    env.RESEND_API_KEY = "re_test";
+    const page = (await asOwner("POST", "/api/pages", { body: { title: "Burst", slug: "b114", parent: null } })).data.slug;
+    try {
+      const token = ((await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "link", role: "edit" } })).data.link.url as string).split("/").pop();
+      slowReads = true;
+      const answers = await Promise.all(Array.from({ length: 12 }, () => call("POST", "/s/o/l/" + token, { form: { email: "burst@example.com" } }))).finally(() => { slowReads = false; });
+      expect(answers.filter((r) => r.status === 200)).toHaveLength(3);
+      expect(answers.filter((r) => r.status === 429)).toHaveLength(9);
+      expect(mails).toBe(3);
+    } finally {
+      globalThis.fetch = before;
+      delete env.RESEND_API_KEY;
+      await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "invited" } });
+      await dropPage(page);
+      owner.query("DELETE FROM share_rate").run();
+      for (const row of savedRate as any[]) owner.query("INSERT INTO share_rate (key, count, reset) VALUES (?, ?, ?)").run(row.key, row.count, row.reset);
+    }
+  });
+
+  test("a read link offers no email step and its visitors write nothing (#114)", async () => {
+    const savedRate = owner.query("SELECT key, count, reset FROM share_rate").all();
+    owner.query("DELETE FROM share_rate").run();
+    const page = (await asOwner("POST", "/api/pages", { body: { title: "Read link", slug: "r114", parent: null } })).data.slug;
+    expect((await asOwner("PUT", "/api/page/" + page, { body: { blocks: [{ id: "t1", type: "paragraph", text: "keep" }] } })).status).toBe(200);
+    const url = (await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "link", role: "read" } })).data.link.url as string;
+    const token = url.split("/").pop()!;
+    const shown = await call("GET", url);
+    expect(shown.text).toContain("읽기 전용");
+    expect(shown.text).not.toContain("/s/o/l/");
+    const snapshot = () => JSON.stringify([owner.query("SELECT * FROM blocks WHERE page = ?").all(page), owner.query("SELECT count(*) AS n FROM share_invites").get(), owner.query("SELECT count(*) AS n FROM share_sessions").get()]);
+    const before = snapshot();
+    expect((await call("GET", "/s/o/l/" + token)).status).toBe(404);
+    expect((await call("POST", "/s/o/l/" + token, { form: { email: "r@example.com" } })).status).toBe(404);
+    expect((await call("PUT", "/api/page/" + page, { body: { blocks: [] } })).status).toBe(401);
+    expect(snapshot()).toBe(before);
+    // An edit link turned back to read refuses a code that was asked for while it allowed editing.
+    const mails: { text: string }[] = [];
+    const realFetchNow = globalThis.fetch;
+    globalThis.fetch = (async (input: any, init?: any) => String(input instanceof Request ? input.url : input) === "https://api.resend.com/emails" ? (mails.push(JSON.parse(init.body)), Response.json({ id: "m" })) : realFetchNow(input, init)) as typeof fetch;
+    env.RESEND_API_KEY = "re_test";
+    try {
+      await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "link", role: "edit" } });
+      const asked = await call("POST", "/s/o/l/" + token, { form: { email: "late@example.com" } });
+      const verifyUrl = /action="(\/s\/o\/i\/[A-Za-z0-9_-]{43})"/.exec(asked.text)![1];
+      await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "link", role: "read" } });
+      expect((await call("POST", verifyUrl, { form: { email: "late@example.com", code: /\b(\d{6})\b/.exec(mails[0].text)![1] } })).status).toBe(401);
+    } finally {
+      globalThis.fetch = realFetchNow;
+      delete env.RESEND_API_KEY;
+    }
+    // Without a mail key no code is made and the visitor is told so.
+    await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "link", role: "edit" } });
+    const pending = owner.query("SELECT count(*) AS n FROM share_invites WHERE email = 'nomail@example.com' AND used IS NULL").get();
+    expect((await call("POST", "/s/o/l/" + token, { form: { email: "nomail@example.com" } })).status).toBe(503);
+    expect(owner.query("SELECT count(*) AS n FROM share_invites WHERE email = 'nomail@example.com' AND used IS NULL").get()).toEqual(pending);
+    await asOwner("PUT", "/api/page/" + page + "/access/general", { body: { mode: "invited" } });
+    await dropPage(page);
+    owner.query("DELETE FROM share_rate").run();
+    for (const row of savedRate as any[]) owner.query("INSERT INTO share_rate (key, count, reset) VALUES (?, ?, ?)").run(row.key, row.count, row.reset);
+  });
+
   // Every route the worker knows must sit behind the resolver: a guest that may read only "root" sends every method
   // to every route aimed at "other" and must never get its content or change it.
   test("no route lets a guest reach a page it was not given", async () => {
@@ -660,6 +1826,7 @@ describe("sharing", () => {
       }
     }
     const samples = [
+      "/import", "/import/",
       "/api/sync", "/api/upload", "/api/media-usage", "/api/media/" + OTHER_MEDIA, "/api/link-preview?url=https://x.test", "/api/media/import", "/api/page/other/attachments", "/api/import", "/api/import/md", "/api/export?slug=other",
       "/api/export?scope=all", "/api/tree", "/api/search?q=zebra", "/api/backlinks?slug=other", "/api/pages", "/api/page/other", "/api/page/other/rename",
       "/api/page/other/move", "/api/page/other/blocks", "/api/page/other/settings", "/api/page/other/comments", "/api/page/other/comments/oc",
@@ -678,7 +1845,7 @@ describe("sharing", () => {
       "/api/parts", "/api/parts/kit", "/api/parts/kit/share", "/api/parts/themes", "/api/parts/themes/kit", "/api/parts/themes/kit/share", "/p/" + "A".repeat(43) + "/acard-part.json", "/api/tags", "/api/tags/merge", "/api/tags/x", "/api/tags/x/pages", "/api/page/other/tags", "/api/v1/folders/tags", "/api/v1/folders/move",
       "/api/page-view/migrate", "/api/page-view/undo", "/api/v1/page-view/migrate", "/api/v1/pages/other/view", "/api/page/other/view",
       "/api/v1/journal/start", "/api/v1/journal/log", "/api/v1/journal/end", "/api/v1/journal/memory", "/api/v1/journal/visual", "/api/v1/doc-guides/split", "/api/v1/components", "/api/v1/components/stat",
-      "/other/", "/edit/other/", "/print/other/", "/media/" + OTHER_MEDIA, "/api/media/" + OTHER_MEDIA + "/meta", "/p/" + "A".repeat(43), "/s/i/" + "A".repeat(43), "/s/logout", "/s/r/other",
+      "/other/", "/edit/other/", "/print/other/", "/media/" + OTHER_MEDIA, "/api/media/" + OTHER_MEDIA + "/meta", "/p/" + "A".repeat(43), "/s/i/" + "A".repeat(43), "/s/l/" + "A".repeat(43), "/s/logout", "/s/r/other",
     ];
     const uncovered = [...[...literals].filter((path) => !samples.some((sample) => sample.split("?")[0] === path)), ...patterns.filter((re) => !samples.some((sample) => re.test(sample.split("?")[0]))).map(String)];
     expect(uncovered).toEqual([]);

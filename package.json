@@ -1,9 +1,9 @@
 {
-  "name": "open-notion",
+  "name": "acard-local",
   "private": true,
   "type": "module",
-  "version": "0.1.0",
-  "description": "OpenNotion: a fast, self-hosted Notion-style workspace for teams on an internal network",
+  "version": "0.2.0",
+  "description": "Acard Local: a self-hosted, local-first Notion-style workspace. Server + desktop app, MIT.",
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261015.1",
     "@electric-sql/pglite": "^0.5.10",
@@ -24,8 +24,9 @@
     "zod": "^4.6.7"
   },
   "license": "MIT",
+  "homepage": "https://acard.dev",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Hakubisual/open-notion.git"
+    "url": "https://github.com/Hakubisual/open-notion-acard.git"
   }
 }

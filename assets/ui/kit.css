@@ -6,8 +6,8 @@
   --ui-gap: 16px;
   --ui-pad-card: 18px 20px;
   --ui-border: 1px solid var(--line);
-  --ui-shadow-card: 0 1px 2px rgba(30, 28, 50, .04);
-  --ui-shadow-item: 0 1px 3px rgba(30, 28, 50, .06);
+  --ui-shadow-card: var(--shadow-sm);
+  --ui-shadow-item: var(--shadow-sm);
   --ui-col-todo: #f5f5f8;
   --ui-col-doing: #f1eefd;
   --ui-col-done: #ecf8f1;
@@ -15,11 +15,11 @@
   --ui-col-head-doing: var(--accent);
   --ui-col-head-done: #1d7550;
   --ui-progress-h: 6px;
-  --ui-btn-h: 40px;
+  --ui-hover: color-mix(in srgb, var(--color-text) 6%, transparent);
 }
-html[data-theme="dark"] { --ui-col-todo: #23232a; --ui-col-doing: #2a2643; --ui-col-done: #1f2f28; --ui-col-head-done: #8ee0b5; --ui-shadow-item: 0 1px 3px rgba(0, 0, 0, .35); }
+html[data-theme="dark"] { --ui-col-todo: #23232a; --ui-col-doing: #2a2643; --ui-col-done: #1f2f28; --ui-col-head-done: #8ee0b5; }
 @media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]):not([data-theme="dark"]) { --ui-col-todo: #23232a; --ui-col-doing: #2a2643; --ui-col-done: #1f2f28; --ui-col-head-done: #8ee0b5; --ui-shadow-item: 0 1px 3px rgba(0, 0, 0, .35); }
+  html:not([data-theme="light"]):not([data-theme="dark"]) { --ui-col-todo: #23232a; --ui-col-doing: #2a2643; --ui-col-done: #1f2f28; --ui-col-head-done: #8ee0b5; }
 }
 
 .ui-kanban[hidden], .ui-table[hidden] { display: none; }
@@ -29,11 +29,39 @@ html[data-theme="dark"] { --ui-col-todo: #23232a; --ui-col-doing: #2a2643; --ui-
 .ui-card-head h2 svg { width: 20px; height: 20px; color: var(--fg-dim); }
 .ui-soft { background: var(--accent-soft); border-radius: var(--ui-radius-card); }
 
-.ui-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 34px; line-height: normal; padding: 0 14px; border-radius: var(--ui-radius-item); border: var(--ui-border); background: var(--surface); color: var(--fg); font: inherit; font-size: var(--fs-14); font-weight: 600; cursor: pointer; text-decoration: none; }
-.ui-btn-primary { height: var(--ui-btn-h); padding: 0 18px; background: var(--accent); border-color: var(--accent); color: var(--on-accent); box-shadow: 0 2px 8px rgba(100, 80, 220, .25); }
-.ui-btn-primary:hover { background: var(--accent-strong); }
-.ui-btn-sm { height: 32px; padding: 0 14px; }
-.ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* ds10 primitives (#95): one button / field / menu / dialog look, tokens only. editor.css maps the editor's
+   .mini, .minibtn, .slash, .ctxmenu and .editor-panel onto the same values; tests/ui-primitives.test.ts keeps both honest. */
+.ui-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: var(--control-h-md); padding: 0 var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--fs-14); font-weight: 600; line-height: 1.2; white-space: nowrap; text-decoration: none; cursor: pointer; transition: background-color var(--dur-fast), border-color var(--dur-fast), box-shadow var(--dur-fast); }
+.ui-btn:hover { background: var(--ui-hover); }
+.ui-btn:focus-visible { outline: 2px solid transparent; border-color: var(--color-accent); box-shadow: var(--focus-ring); }
+.ui-btn:disabled, .ui-btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+.ui-btn-sm { min-height: var(--control-h-sm); padding: 0 var(--space-3); font-size: var(--fs-13); }
+.ui-btn-md { min-height: var(--control-h-md); padding: 0 var(--space-4); font-size: var(--fs-14); }
+.ui-btn-lg { min-height: var(--control-h-lg); padding: 0 var(--space-5); font-size: var(--fs-15); }
+.ui-btn-primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-on-accent); box-shadow: var(--shadow-sm); }
+.ui-btn-primary:hover { background: var(--color-accent-strong); border-color: var(--color-accent-strong); }
+.ui-btn-secondary { border-color: var(--color-accent); color: var(--color-accent-strong); }
+.ui-btn-secondary:hover { background: var(--color-accent-soft); }
+.ui-btn-ghost { background: transparent; border-color: transparent; }
+.ui-btn-danger { background: var(--color-danger-bg); border-color: var(--color-danger-bg); color: var(--color-danger-fg); }
+.ui-btn-danger:hover { background: var(--color-danger-bg); border-color: var(--color-danger-fg); }
+
+.ui-input, .ui-select, .ui-textarea { box-sizing: border-box; min-width: 0; min-height: var(--control-h-md); padding: 0 var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: var(--fs-14); transition: border-color var(--dur-fast), box-shadow var(--dur-fast); }
+.ui-textarea { padding: var(--space-2) var(--space-3); line-height: var(--lh-ui); resize: vertical; }
+.ui-input::placeholder, .ui-textarea::placeholder { color: var(--color-text-dim); }
+/* !important only to beat tokens.css' global field outline; forced-colors still paints the transparent outline. */
+.ui-input:focus, .ui-select:focus, .ui-textarea:focus { outline: 2px solid transparent !important; border-color: var(--color-accent); box-shadow: var(--focus-ring); }
+
+.ui-menu { min-width: 200px; padding: var(--space-2); color: var(--color-text); background: var(--color-raised); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); }
+.ui-menu-item { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-h-md); padding: 0 var(--space-3); border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--color-text); font: inherit; font-size: var(--fs-14); text-align: left; cursor: pointer; }
+.ui-menu-item:hover { background: var(--ui-hover); }
+.ui-menu-item[aria-selected="true"], .ui-menu-item[aria-checked="true"] { background: var(--color-accent-soft); color: var(--color-accent-strong); }
+.ui-menu-item.danger { color: var(--color-danger-fg); }
+
+.ui-dialog { width: min(480px, calc(100vw - 32px)); max-height: 80vh; overflow: auto; padding: var(--space-6); color: var(--color-text); background: var(--color-raised); border: 1px solid var(--color-border); border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); }
+.ui-dialog-head { display: flex; align-items: center; gap: var(--space-3); margin: 0 0 var(--space-4); }
+.ui-dialog-head h2 { flex: 1; margin: 0; font-size: var(--fs-19); line-height: var(--lh-tight); }
+.ui-dialog-foot { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-6); }
 
 .ui-seg { display: inline-flex; border: var(--ui-border); border-radius: var(--ui-radius-item); padding: 2px; gap: 2px; background: var(--surface); }
 .ui-seg button { border: 0; background: none; color: var(--fg-dim); font: inherit; font-size: var(--fs-13); font-weight: 600; height: 28px; min-width: 52px; padding: 0 12px; border-radius: 8px; cursor: pointer; }
@@ -46,7 +74,7 @@ html[data-theme="dark"] { --ui-col-todo: #23232a; --ui-col-doing: #2a2643; --ui-
 .ui-badge.tone-purple { background: var(--tag-purple-bg); color: var(--tag-purple-fg); }
 .ui-badge.tone-pink { background: var(--tag-pink-bg); color: var(--tag-pink-fg); }
 .ui-badge.tone-yellow { background: var(--tag-yellow-bg); color: var(--tag-yellow-fg); }
-.ui-count { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: var(--ui-radius-pill); background: rgba(127, 127, 140, .14); font-size: var(--fs-12); font-weight: 700; }
+.ui-count { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: var(--ui-radius-pill); background: var(--color-neutral-bg); font-size: var(--fs-12); font-weight: 700; }
 
 .ui-progress { height: var(--ui-progress-h); border-radius: var(--ui-radius-pill); background: var(--bar-track); overflow: hidden; flex: 1; }
 .ui-progress > i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }

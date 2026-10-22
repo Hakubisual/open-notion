@@ -88,14 +88,35 @@
     return post("/api/profile", { home_layout: widgets === null ? null : { widgets } });
   }
 
-  async function render(root, layout) {
+  // local: the local app's profile extras (local/server.ts localProfile) - its steps replace agent sign-in and sharing.
+  function checklistHtml(checklist, local) {
+    const first = ["page", "첫 페이지 쓰기", "나만의 첫 페이지를 작성해요", "/edit/page-" + Math.random().toString(36).slice(2, 8) + "/?new&create"];
+    if (local) checklist = Object.assign({}, checklist, { mcp: local.mcpCopied, backup: local.backupDone });
+    const steps = local ? [
+      first,
+      ["mcp", "로컬 MCP 주소 복사", "Claude Code·Codex에 이 PC의 Acard를 붙여요", local.mcp],
+      ["import", "노션·마크다운 가져오기", "노션 zip이나 .md 파일을 끌어다 놓아요", "/import"],
+      ["backup", "백업 파일 받기", "내 PC의 페이지를 zip 하나로 받아 둬요", "/__local/archive/export"],
+    ] : [
+      first,
+      ["agent", "에이전트 연결하기", "Claude Code·Codex에 Acard를 붙여요", "/settings/agents/"],
+      ["import", "노션에서 가져오기", "내보낸 zip을 끌어다 놓아요", "/import"],
+      ["share", "공유 링크 만들기", "한 번에 게시하고 링크를 보내요", href(checklist.shareSlug || "index") + "?share=1"],
+    ];
+    const done = steps.filter(([key]) => checklist[key]).length;
+    let collapsed = done === 4;
+    try { collapsed = collapsed || localStorage.getItem("acard-start-collapsed") === "1"; } catch {}
+    return '<section class="ui-card home-checklist" data-done="' + done + '"><div class="ui-card-head"><h2>' + icon("spark") + 'Acard 시작하기</h2><span class="home-check-summary"' + (collapsed ? "" : " hidden") + '>' + done + ' / 4 완료</span>' +
+      '<button class="ui-btn ui-btn-sm" type="button" data-checklist-toggle aria-expanded="' + !collapsed + '" aria-controls="home-checklist-body">' + (collapsed ? "펼치기" : "접기") + '</button></div><div id="home-checklist-body"' + (collapsed ? " hidden" : "") + '><div class="home-check-progress"><span>' + done + ' / 4 완료</span><div class="ui-progress" role="progressbar" aria-label="시작하기 진행률" aria-valuemin="0" aria-valuemax="4" aria-valuenow="' + done + '"><i style="width:' + done * 25 + '%"></i></div></div><div class="home-check-grid">' +
+      steps.map(([key, title, description, target]) => '<a class="home-check-step" data-step="' + key + '" data-complete="' + Boolean(checklist[key]) + '" href="' + esc(target) + '"' + (key === "backup" ? " download" : "") + '><span class="home-check-circle" aria-label="' + (checklist[key] ? "완료" : "미완료") + '">' + (checklist[key] ? "✓" : "") + '</span><span class="home-check-copy"><b>' + title + '</b><span>' + description + '</span></span><span class="home-check-arrow" aria-hidden="true">→</span></a>').join("") + '</div></div></section>';
+  }
+
+  async function render(root, layout, local) {
     const widgets = layout ? layout.widgets : null;
     const fr = await fetch("/api/first-run").then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    const top = firstRunHtml(fr);
-    if (widgets && !widgets.length) { root.innerHTML = top; root.hidden = !top; return; }
-    if (!widgets) { root.innerHTML = top + offerHtml(); root.hidden = false; return; }
     const data = await fetch("/api/home/summary").then((r) => r.json());
-    const parts = ORDER.filter((k) => widgets.includes(k)).sort((a, b) => widgets.indexOf(a) - widgets.indexOf(b)).map((k) => (k === "board" ? boardHtml(data.board) : k === "progress" ? progressHtml(data) : k === "blog" ? blogHtml(data.blog) : notesHtml(data)));
+    const top = checklistHtml(data.checklist, local) + (fr && fr.tasks && fr.tasks.length ? firstRunHtml(fr) : "");
+    const parts = widgets ? ORDER.filter((k) => widgets.includes(k)).sort((a, b) => widgets.indexOf(a) - widgets.indexOf(b)).map((k) => (k === "board" ? boardHtml(data.board) : k === "progress" ? progressHtml(data) : k === "blog" ? blogHtml(data.blog) : notesHtml(data))) : [offerHtml()];
     root.innerHTML = '<div class="home-top"><h1 class="home-title">홈</h1><a class="ui-btn ui-btn-primary" href="/settings#home">' + icon("spark") + "홈 꾸미기</a></div>" + top + parts.join("");
     root.hidden = false;
     document.body.classList.add("home-custom");
@@ -103,6 +124,28 @@
 
   function wire(root, state) {
     root.addEventListener("click", async (e) => {
+      const step = state.local && e.target.closest('.home-check-step[data-step="mcp"], .home-check-step[data-step="backup"]');
+      if (step) {
+        if (step.dataset.step === "mcp") {
+          e.preventDefault();
+          await navigator.clipboard.writeText(state.local.mcp).catch(() => {});
+          step.querySelector(".home-check-copy > span").textContent = "복사했어요 · " + state.local.mcp;
+          state.local = (await post("/api/profile", { step: "mcp" }).catch(() => null) || {}).local || state.local;
+        } else state.local = Object.assign({}, state.local, { backupDone: true });
+        const at = root.querySelector('.home-check-step[data-step="' + step.dataset.step + '"]');
+        at.dataset.complete = "true"; at.querySelector(".home-check-circle").textContent = "✓";
+        return;
+      }
+      const toggle = e.target.closest("[data-checklist-toggle]");
+      if (toggle) {
+        const collapsed = toggle.getAttribute("aria-expanded") === "true";
+        toggle.setAttribute("aria-expanded", String(!collapsed));
+        toggle.textContent = collapsed ? "펼치기" : "접기";
+        root.querySelector("#home-checklist-body").hidden = collapsed;
+        root.querySelector(".home-check-summary").hidden = !collapsed;
+        try { localStorage.setItem("acard-start-collapsed", collapsed ? "1" : "0"); } catch {}
+        return;
+      }
       const view = e.target.closest("[data-view]");
       if (view) {
         const card = view.closest(".home-w");
@@ -119,7 +162,7 @@
         return;
       }
       if (e.target.closest("[data-connect-close]")) { e.target.closest(".home-connect").remove(); post("/api/first-run", { state: "dismissed" }).catch(() => {}); return; }
-      if (e.target.closest("[data-offer-close]")) { await saveLayout([]).catch(() => {}); root.hidden = true; return; }
+      if (e.target.closest("[data-offer-close]")) { await saveLayout([]).catch(() => {}); state.layout = { widgets: [] }; await render(root, state.layout, state.local); return; }
       const apply = e.target.closest("[data-offer-apply]");
       if (apply) {
         const picks = [...root.querySelectorAll(".home-pick input:checked")].map((i) => i.value);
@@ -130,7 +173,7 @@
           await post("/api/home/starter", { presets: picks.filter((p) => p !== "progress") });
           await saveLayout(ORDER.filter((k) => picks.includes(k)));
           state.layout = { widgets: ORDER.filter((k) => picks.includes(k)) };
-          await render(root, state.layout);
+          await render(root, state.layout, state.local);
         } catch { msg.textContent = "저장하지 못했어요. 다시 시도해 주세요."; apply.disabled = false; }
       }
     });
@@ -151,21 +194,21 @@
     if (!article || document.getElementById("acard-home")) return;
     const res = await fetch("/api/profile").catch(() => null);
     if (!res || !res.ok) return;
-    const { profile } = await res.json();
+    const { profile, local } = await res.json();
     if (!profile) return;
     const root = document.createElement("div");
     root.id = "acard-home";
     root.hidden = true;
     article.before(root);
-    const state = { layout: profile.home_layout === undefined ? { widgets: [] } : profile.home_layout };
+    const state = { layout: profile.home_layout === undefined ? { widgets: [] } : profile.home_layout, local: local || null };
     wire(root, state);
-    await render(root, state.layout);
+    await render(root, state.layout, state.local);
     let again = null;
     document.addEventListener("acard:page-fresh", () => {
       const fresh = document.getElementById("article");
       if (fresh && !root.isConnected) fresh.before(root);
     });
-    document.addEventListener("acard:live-home", () => { clearTimeout(again); again = setTimeout(() => render(root, state.layout).catch(() => {}), 250); });
+    document.addEventListener("acard:live-home", () => { clearTimeout(again); again = setTimeout(() => render(root, state.layout, state.local).catch(() => {}), 250); });
   }
 
   start();

@@ -6,23 +6,26 @@ import { join } from "node:path";
 import { createAgentToken, ensureAgentSchema } from "../agent-api.js";
 import { inline, pgD1 } from "../gate/pg-d1";
 import { assembleWorkerSource } from "./assemble-worker";
+import { cookie } from "./db-harness";
 
 // acard-db-load: several agents writing one page at once. Every statement yields before it runs, so concurrent
 // requests interleave statement by statement the way they do against Postgres; a batch is one transaction.
 const WORKER_SOURCE = assembleWorkerSource();
 const turn = () => new Promise<void>((next) => setImmediate(next));
+let afterRead: ((sql: string) => Promise<void>) | undefined;
+let afterBatch: ((sql: string[]) => Promise<void>) | undefined;
 function d1(sqlite: Database) {
   const statement = (sql: string, params: unknown[] = []) => ({
     sql, params,
     bind: (...next: unknown[]) => statement(sql, next),
     execute: () => ({ success: true, meta: { changes: sqlite.query(sql).run(...(params as any[])).changes } }),
     run: async () => { await turn(); return { success: true, meta: { changes: sqlite.query(sql).run(...(params as any[])).changes } }; },
-    all: async () => { await turn(); return { results: sqlite.query(sql).all(...(params as any[])) }; },
+    all: async () => { await turn(); const results = sqlite.query(sql).all(...(params as any[])); await afterRead?.(sql); return { results }; },
     first: async () => { await turn(); return sqlite.query(sql).get(...(params as any[])) ?? null; },
   });
   return {
     prepare: (sql: string) => statement(sql),
-    batch: async (list: ReturnType<typeof statement>[]) => { await turn(); return sqlite.transaction(() => list.map((item) => item.execute()))(); },
+    batch: async (list: ReturnType<typeof statement>[]) => { await turn(); const result = sqlite.transaction(() => list.map((item) => item.execute()))(); await afterBatch?.(list.map(item => item.sql)); return result; },
   };
 }
 
@@ -39,12 +42,87 @@ const call = async (method: string, path: string, token: string, body?: unknown)
 const texts = (slug: string) => (sqlite.query("SELECT text FROM blocks WHERE page = ? ORDER BY ord").all(slug) as { text: string }[]).map((row) => row.text);
 
 beforeEach(async () => {
+  afterRead = undefined;
+  afterBatch = undefined;
   sqlite = new Database(":memory:");
   const db = d1(sqlite);
   worker = new Function(WORKER_SOURCE)();
   env = { DB: db, GATE_PASSWORD: "pw", GATE_SECRET: "secret", ASSETS: { fetch: async () => new Response("not found", { status: 404 }) } };
   await worker.fetch(new Request("https://notes.test/api/v1/me"), env);
   await ensureAgentSchema(db);
+});
+
+test("concurrent appends from the same block read preserve both texts (#84)", async () => {
+  const writer = (await createAgentToken(env.DB, { name: "agent", scopes: ["read", "write"] })).token;
+  const slug = (await call("POST", "/api/v1/pages", writer, { markdown: "---\ntitle: Append race\n---\nbase\n" })).data.slug;
+  let release!: () => void;
+  const bothRead = new Promise<void>(resolve => { release = resolve; });
+  let reads = 0;
+  afterRead = async sql => {
+    if (!sql.startsWith("SELECT id, type, text, checked, indent, meta FROM blocks")) return;
+    if (++reads === 2) { afterRead = undefined; release(); }
+    await bothRead;
+  };
+  const results = await Promise.all(["first", "second"].map(text => call("POST", "/api/v1/pages/" + slug + "/append", writer, { markdown: text, idempotencyKey: text })));
+  expect(results.map(result => result.status)).toEqual([200, 200]);
+  expect(texts(slug).sort()).toEqual(["base", "first", "second"]);
+  expect((await call("POST", "/api/v1/pages/" + slug + "/append", writer, { markdown: "first", idempotencyKey: "first" })).data.duplicate).toBe(true);
+  expect(texts(slug)).toHaveLength(3);
+});
+
+test("a human save after the agent claim is never overwritten by its later content write (#84)", async () => {
+  const writer = (await createAgentToken(env.DB, { name: "agent", scopes: ["read", "write"] })).token;
+  const slug = (await call("POST", "/api/v1/pages", writer, { markdown: "---\ntitle: Claim race\n---\nbase\n" })).data.slug;
+  const auth = await cookie();
+  let humanStatus = 0;
+  afterBatch = async statements => {
+    if (!statements.some(sql => sql.includes("UPDATE pages SET updated = MAX(updated + 1"))) return;
+    afterBatch = undefined;
+    const current = await worker.fetch(new Request("https://notes.test/api/page/" + slug, { headers: { cookie: auth } }), env).then(r => r.json()) as any;
+    const human = await worker.fetch(new Request("https://notes.test/api/page/" + slug, { method: "PUT", headers: { cookie: auth, "content-type": "application/json" }, body: JSON.stringify({ base_updated: current.page.updated, blocks: [{ id: "human", type: "paragraph", text: "human edit" }] }) }), env);
+    humanStatus = human.status;
+  };
+  const result = await call("PUT", "/api/v1/pages/" + slug, writer, { markdown: "agent rewrite" });
+  expect(humanStatus).toBe(200);
+  expect([200, 409]).toContain(result.status);
+  expect(texts(slug)).toContain("human edit");
+});
+
+test("concurrent append retries commit one receipt and one history snapshot (#84)", async () => {
+  const writer = (await createAgentToken(env.DB, { name: "agent", scopes: ["read", "write"] })).token;
+  const slug = (await call("POST", "/api/v1/pages", writer, { markdown: "---\ntitle: Receipt race\n---\nbase\n" })).data.slug;
+  const results = await Promise.all([0, 1].map(() => call("POST", "/api/v1/pages/" + slug + "/append", writer, { markdown: "once [[linked]]", idempotencyKey: "receipt" })));
+  expect(results.map(result => result.status)).toEqual([200, 200]);
+  expect(results.filter(result => result.data.duplicate)).toHaveLength(1);
+  expect(texts(slug)).toEqual(["base", "once [[linked]]"]);
+  expect(sqlite.query("SELECT dst FROM links WHERE src = ?").all(slug)).toEqual([{ dst: "linked" }]);
+  const history = sqlite.query("SELECT snapshot FROM editor_history WHERE page = ?").all(slug) as { snapshot: string }[];
+  expect(history).toHaveLength(1);
+  expect(JSON.parse(history[0].snapshot).blocks.map((block: any) => block.text)).toEqual(["base"]);
+});
+
+test("failed agent content writes roll the claim history and activity back (#84)", async () => {
+  const writer = (await createAgentToken(env.DB, { name: "agent", scopes: ["read", "write"] })).token;
+  const slug = (await call("POST", "/api/v1/pages", writer, { markdown: "---\ntitle: Rollback\n---\nbase\n" })).data.slug;
+  const before = sqlite.query("SELECT * FROM pages WHERE slug = ?").get(slug);
+  const activity = sqlite.query("SELECT * FROM agent_activity WHERE page = ?").all(slug);
+  sqlite.exec("CREATE TRIGGER reject_agent BEFORE INSERT ON blocks WHEN new.text = 'reject' BEGIN SELECT RAISE(ABORT, 'test rejection'); END");
+  for (const [method, path] of [["PUT", ""], ["POST", "/append"]]) {
+    expect((await call(method, "/api/v1/pages/" + slug + path, writer, { markdown: "reject" })).status).toBe(500);
+    expect(sqlite.query("SELECT * FROM pages WHERE slug = ?").get(slug)).toEqual(before);
+    expect(sqlite.query("SELECT * FROM agent_activity WHERE page = ?").all(slug)).toEqual(activity);
+    expect(sqlite.query("SELECT * FROM editor_history WHERE page = ?").all(slug)).toEqual([]);
+    expect(texts(slug)).toEqual(["base"]);
+  }
+});
+
+test("large appends preserve ordering across bounded insert batches (#84)", async () => {
+  const writer = (await createAgentToken(env.DB, { name: "agent", scopes: ["read", "write"] })).token;
+  const slug = (await call("POST", "/api/v1/pages", writer, { markdown: "---\ntitle: Long append\n---\nbase\n" })).data.slug;
+  const added = Array.from({ length: 30 }, (_, index) => "line " + index);
+  expect((await call("POST", "/api/v1/pages/" + slug + "/append", writer, { markdown: added.join("\n\n") })).status).toBe(200);
+  expect(texts(slug)).toEqual(["base", ...added]);
+  expect(sqlite.query("SELECT ord FROM blocks WHERE page = ? ORDER BY ord").all(slug)).toEqual(Array.from({ length: 31 }, (_, ord) => ({ ord })));
 });
 
 test("concurrent agent PUTs on one page all succeed and the page ends as exactly one of them, whole", async () => {

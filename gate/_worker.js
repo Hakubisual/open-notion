@@ -242,11 +242,19 @@ async function createSchema(db) {
     db.prepare("CREATE TABLE IF NOT EXISTS db_relation_locks (pair_key TEXT PRIMARY KEY, version INTEGER NOT NULL DEFAULT 0)"),
     db.prepare("CREATE TABLE IF NOT EXISTS db_counters (property_id TEXT PRIMARY KEY, next INTEGER NOT NULL DEFAULT 1)"),
     db.prepare("CREATE TABLE IF NOT EXISTS db_template_runs (template_id TEXT NOT NULL, occurrence INTEGER NOT NULL, row_id TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (template_id, occurrence))"),
+    // #86: 속성을 관계로 바꿀 때 링크로 바꾸지 않은 예전 값(행 셀·템플릿 값). kind = row | template, ref = 행 id 또는 템플릿 id.
+    db.prepare("CREATE TABLE IF NOT EXISTS db_value_backups (id TEXT PRIMARY KEY, database_id TEXT NOT NULL, prop_id TEXT NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL, value TEXT NOT NULL, reason TEXT NOT NULL, created INTEGER NOT NULL)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS db_value_backups_database ON db_value_backups(database_id, prop_id)"),
+    // #86: 템플릿 값을 마지막으로 저장한 사람(kind owner | guest | legacy). 손님은 공유 세션(token_hash)·이메일과 저장할 때 편집할 수
+    // 있던 페이지(roles, {slug: edit|full}). blocked 는 연결 직전 권한 검사가 멈춘 이유(값을 다시 저장할 때까지 그대로).
+    db.prepare("CREATE TABLE IF NOT EXISTS db_template_savers (template_id TEXT PRIMARY KEY, kind TEXT NOT NULL, session TEXT, email TEXT, roles TEXT, saved INTEGER NOT NULL, blocked TEXT, blocked_at INTEGER)"),
   ]);
   // 반복 템플릿(C5): 예전 저장소에도 열을 더한다(이미 있으면 duplicate column 오류를 무시).
   await db.prepare("ALTER TABLE db_templates ADD COLUMN recurrence TEXT").run().catch(() => {});
   // 하위 항목(C12) 같은 DB 단위 설정. 예전 저장소에도 열을 더한다.
   await db.prepare("ALTER TABLE databases ADD COLUMN config TEXT").run().catch(() => {});
+  // acard-storage-cost 4: each original's ETag, so a repeat view is a 304 without reading R2 (supabase/028 on Postgres).
+  await db.prepare("ALTER TABLE media ADD COLUMN etag TEXT").run().catch(() => {});
   await ensureEditorSchema(db);
   for (const schema of ACARD_FEATURES.schema) await schema(db);
 }
@@ -293,6 +301,7 @@ async function importZip(request, db) {
     await db.prepare("INSERT INTO pages (slug, title, parent, ord, kind, updated, source, hash) VALUES (?, ?, ?, ?, ?, ?, 'editor', NULL)")
       .bind(slug, title, parent, ord, page.kind === "db" ? "db" : "note", now).run();
     await saveBlocks(db, slug, normaliseBlocks(page.blocks));
+    await db.prepare("INSERT INTO page_imports (page, kind, created) VALUES (?, 'zip', ?) ON CONFLICT (page) DO NOTHING").bind(slug, now).run();
     if (page.kind === "db") {
       // 노션-db 레인이 도입한 databases/db_properties/db_rows 구조에도 등록해야 읽기 화면의 새 렌더러가 표를 그린다.
       // 기존 database 블록(meta.rows)도 남겨 둔다 — 구버전 렌더러와 마크다운 내보내기가 그걸 본다.
@@ -369,7 +378,10 @@ async function importMarkdown(request, db) {
     const title = baseName.slice(0, 200);
     // The page row and its blocks commit together, so a long file that fails midway leaves no empty page.
     await saveBlocks(db, slug, await guardButtonBlocks(db, [], normaliseBlocks(markdownToBlocks(text, { meta: doc.flagged }))), {
-      before: [db.prepare("INSERT INTO pages (slug, title, parent, ord, kind, updated, source, hash) VALUES (?, ?, NULL, ?, 'note', ?, 'editor', NULL)").bind(slug, title, ord, now)],
+      before: [
+        db.prepare("INSERT INTO pages (slug, title, parent, ord, kind, updated, source, hash) VALUES (?, ?, NULL, ?, 'note', ?, 'editor', NULL)").bind(slug, title, ord, now),
+        db.prepare("INSERT INTO page_imports (page, kind, created) VALUES (?, 'md', ?) ON CONFLICT (page) DO NOTHING").bind(slug, now),
+      ],
     });
     created.push({ slug, title, parent: null, kind: "note", blocks: 1 });
   }
@@ -526,6 +538,10 @@ async function saveBlocks(db, slug, blocks, extra) {
   // Postgres: one round trip for the whole replacement instead of one per statement.
   if (typeof db.script === "function") await db.script(statements);
   else await db.batch(statements);
+  await afterBlockSave(db, slug, blocks);
+}
+
+async function afterBlockSave(db, slug, blocks) {
   if (!ACARD_FEATURES.afterSave.length) return;
   try {
     const page = await db.prepare("SELECT * FROM pages WHERE slug = ?").bind(slug).first();
@@ -536,16 +552,63 @@ async function saveBlocks(db, slug, blocks, extra) {
   } catch (error) { console.error("Feature afterSave failed", error); }
 }
 
+// A snapshot is usable only if its version is still current after the page lock. Retry an agent race,
+// but never retry a replacement past a person's save or an explicit expectedUpdated. The claim guards every write.
+async function saveAgentBlocks(db, slug, blocks, options) {
+  for (;;) {
+    const snapshot = await snapshotPage(db, slug);
+    if (!snapshot) return false;
+    if (options.append) blockLimit(blocks.length, snapshot.blocks.length);
+    const claim = crypto.randomUUID();
+    const guard = "EXISTS (SELECT 1 FROM pages WHERE slug = ? AND hash = ?)";
+    const condition = options.append ? "" : " AND updated <= " + (options.expected === null
+      ? "COALESCE((SELECT MAX(created) FROM agent_activity WHERE page = ?), -1)" : "?");
+    const statements = [
+      db.prepare("UPDATE pages SET updated = updated WHERE slug = ?").bind(slug),
+      db.prepare("UPDATE pages SET updated = MAX(updated + 1, ?), source = 'editor', hash = ? WHERE slug = ? AND updated = ? AND hash IS ? AND NOT EXISTS (SELECT 1 FROM editor_trash WHERE page = ?)" + condition)
+        .bind(Date.now(), claim, slug, snapshot.page.updated, snapshot.page.hash, slug, ...(options.append ? [] : [options.expected === null ? slug : options.expected])),
+      db.prepare("INSERT INTO editor_history (id, page, title, created, snapshot) SELECT ?, ?, ?, ?, ? WHERE " + guard)
+        .bind(claim, slug, snapshot.page.title, Date.now(), JSON.stringify(snapshot), slug, claim),
+    ];
+    if (!options.append) statements.push(db.prepare("DELETE FROM blocks WHERE page = ? AND " + guard).bind(slug, slug, claim));
+    const rows = blocks.map((block, index) => [slug, block.id, index, block.type, block.text, block.checked ? 1 : 0, block.indent, block.meta ? JSON.stringify(block.meta) : null]);
+    statements.push(...multiRowInsert(db, "WITH incoming (page, id, ord, type, text, checked, indent, meta) AS (VALUES %VALUES%) INSERT INTO blocks (page, id, ord, type, text, checked, indent, meta) SELECT page, id, "
+      + (options.append ? "CAST(ord AS BIGINT) - (SELECT MIN(CAST(ord AS BIGINT)) FROM incoming) + COALESCE((SELECT MAX(ord) + 1 FROM blocks WHERE page = ?), 0)" : "CAST(ord AS BIGINT)")
+      + ", type, text, CAST(checked AS BIGINT), CAST(indent AS BIGINT), meta FROM incoming WHERE " + guard, 8, rows, [...(options.append ? [slug] : []), slug, claim]));
+    if (!options.append) statements.push(db.prepare("DELETE FROM links WHERE src = ? AND " + guard).bind(slug, slug, claim));
+    for (const dst of linksOf(blocks)) statements.push(db.prepare("INSERT OR IGNORE INTO links (src, dst) SELECT ?, ? WHERE " + guard).bind(slug, dst, slug, claim));
+    statements.push(db.prepare("INSERT INTO agent_activity (id, page, agent, via, action, created) SELECT ?, ?, ?, ?, ?, updated FROM pages WHERE slug = ? AND hash = ?")
+      .bind(options.activity, slug, options.principal.name, options.principal.via, options.append ? "append" : "update", slug, claim));
+    statements.push(options.append
+      ? db.prepare("UPDATE pages SET hash = NULL WHERE slug = ? AND hash = ?").bind(slug, claim)
+      : db.prepare("UPDATE pages SET title = ?, parent = ?, hash = NULL WHERE slug = ? AND hash = ?").bind(options.title, options.parent, slug, claim));
+    const saved = await db.batch(statements);
+    if (Number(saved[1]?.meta?.changes)) {
+      const current = await readPage(db, slug);
+      if (current) await afterBlockSave(db, slug, current.blocks);
+      return true;
+    }
+    const current = await db.prepare("SELECT updated, hash FROM pages WHERE slug = ? AND NOT EXISTS (SELECT 1 FROM editor_trash WHERE page = ?)").bind(slug, slug).first();
+    if (!current || (current.updated === snapshot.page.updated && current.hash === snapshot.page.hash)) return false;
+    if (!options.append) {
+      const latest = options.expected === null
+        ? (await db.prepare("SELECT MAX(created) AS created FROM agent_activity WHERE page = ?").bind(slug).first())?.created ?? -1
+        : options.expected;
+      if (current.updated > latest) return false;
+    }
+  }
+}
+
 // Multi-row INSERTs: one statement per block made a 849-block page 849 round trips (~140 ms each on Postgres through
 // Hyperdrive, ~2 minutes), so agent writes of long documents timed out. SQLite stores (D1, workspace Durable Objects)
 // take at most 100 bound parameters per statement; Postgres takes 65535.
-function multiRowInsert(db, head, width, rows) {
-  const per = Math.max(1, Math.floor((db.dialect === "pg" ? 8000 : 100) / width));
+function multiRowInsert(db, head, width, rows, tail = []) {
+  const per = Math.max(1, Math.floor(((db.dialect === "pg" ? 8000 : 100) - tail.length) / width));
   const tuple = "(" + Array(width).fill("?").join(", ") + ")";
   const out = [];
   for (let i = 0; i < rows.length; i += per) {
     const chunk = rows.slice(i, i + per);
-    out.push(db.prepare(head.replace("%VALUES%", chunk.map(() => tuple).join(", "))).bind(...chunk.flat()));
+    out.push(db.prepare(head.replace("%VALUES%", chunk.map(() => tuple).join(", "))).bind(...chunk.flat(), ...tail));
   }
   return out;
 }
@@ -645,7 +708,8 @@ function recurringTitle(text, occurrence, tz) {
 
 async function runDueTemplates(db, now) {
   await ensureSchema(db);
-  const due = await db.prepare("SELECT t.id, t.database_id, t.name, t.props, t.blocks, t.recurrence, d.slug AS db_slug FROM db_templates t JOIN databases d ON d.id = t.database_id WHERE t.recurrence IS NOT NULL").all();
+  // #86: 권한 문제로 멈춘 템플릿(db_template_savers.blocked)은 값을 다시 저장할 때까지 돌지 않는다.
+  const due = await db.prepare("SELECT t.id, t.database_id, t.name, t.props, t.blocks, t.recurrence, d.slug AS db_slug FROM db_templates t JOIN databases d ON d.id = t.database_id LEFT JOIN db_template_savers s ON s.template_id = t.id WHERE t.recurrence IS NOT NULL AND s.blocked IS NULL").all();
   const created = [];
   for (const row of due.results ?? []) {
     const rec = normaliseRecurrence(parseJson(row.recurrence, null));
@@ -658,7 +722,8 @@ async function runDueTemplates(db, now) {
     const titleProp = properties.find((prop) => prop.type === "title");
     const props = {};
     properties.forEach((prop) => {
-      const incoming = template.props[prop.id] !== undefined ? template.props[prop.id] : template.props[prop.name];
+      // #86: 템플릿 값은 속성 id 키로만 읽는다(저장할 때 검사한 키). 이름 키는 실행 시점의 이름과 맞추지 않는다.
+      const incoming = template.props[prop.id];
       props[prop.id] = incoming === undefined ? emptyValue(prop) : normaliseCellValue(prop, incoming);
       if (prop.type === "unique_id") props[prop.id] = null;
     });
@@ -670,6 +735,8 @@ async function runDueTemplates(db, now) {
     const blocks = normaliseBlocks(template.blocks.length ? template.blocks : [{ id: "b1", type: "paragraph", text: "", checked: false, indent: 0, meta: null }]);
     const maxRow = await db.prepare("SELECT COALESCE(MAX(ord), 0) AS m FROM db_rows WHERE database_id = ?").bind(database.id).first();
     const advanced = JSON.stringify({ ...rec, next_run: slot.next });
+    // #86: 링크를 만들기 직전, 소유자 권한이 아니라 이 값을 저장한 사람의 권한으로 본다. 안 되면 이 템플릿은 아무것도 쓰지 않고 멈춘다.
+    if (await templateSaverDenied(db, database, properties, row.id, props)) continue;
     const relations = await applyRowProps(db, database, properties, rowId, props, { lenient: true });
     if (relations.error) continue;
     const statements = [
@@ -701,7 +768,7 @@ async function runDueTemplates(db, now) {
 }
 
 async function earliestRecurring(db) {
-  const rows = await db.prepare("SELECT recurrence FROM db_templates WHERE recurrence IS NOT NULL").all();
+  const rows = await db.prepare("SELECT t.recurrence FROM db_templates t LEFT JOIN db_template_savers s ON s.template_id = t.id WHERE t.recurrence IS NOT NULL AND s.blocked IS NULL").all();
   let next = null;
   for (const row of rows.results ?? []) {
     const rec = normaliseRecurrence(parseJson(row.recurrence, null));
@@ -761,8 +828,11 @@ async function rowPageLooks(db, pages) {
 
 async function readRows(db, databaseId, properties, raw) {
   const rowRows = raw || await db.prepare("SELECT r.id, r.page, r.props, r.ord, r.created, r.updated, p.title AS page_title FROM db_rows r LEFT JOIN pages p ON p.slug = r.page WHERE r.database_id = ? ORDER BY r.ord, r.created").bind(databaseId).all();
-  const looks = await rowPageLooks(db, (rowRows.results ?? []).map((row) => row.page).filter(Boolean));
-  return (rowRows.results ?? []).map((row, index) => {
+  // A row without its own page (imported tables) carries only the database's permission, which the caller checked.
+  const all = rowRows.results ?? [];
+  const rows = db && db.acardVisible ? all.filter((row) => row.page === null || db.acardVisible.has(String(row.page))) : all;
+  const looks = await rowPageLooks(db, rows.map((row) => row.page).filter(Boolean));
+  return rows.map((row, index) => {
     const parsed = normaliseRow({ id: row.id, page: row.page, props: parseJson(row.props, {}), ord: row.ord, created: row.created, updated: row.updated }, properties, index);
     const look = (row.page && looks.get(row.page)) || null;
     parsed.icon = "";
@@ -781,11 +851,11 @@ async function readDatabaseById(db, database, depth) {
     readProperties(db, database.id),
     db.prepare("SELECT r.id, r.page, r.props, r.ord, r.created, r.updated, p.title AS page_title FROM db_rows r LEFT JOIN pages p ON p.slug = r.page WHERE r.database_id = ? ORDER BY r.ord, r.created").bind(database.id).all(),
     db.prepare("SELECT id, name, type, config, ord FROM db_views WHERE database_id = ? ORDER BY ord, name").bind(database.id).all(),
-    db.prepare("SELECT id, name, icon, props, blocks, ord, recurrence FROM db_templates WHERE database_id = ? ORDER BY ord, name").bind(database.id).all(),
+    db.prepare("SELECT t.id, t.name, t.icon, t.props, t.blocks, t.ord, t.recurrence, s.blocked FROM db_templates t LEFT JOIN db_template_savers s ON s.template_id = t.id WHERE t.database_id = ? ORDER BY t.ord, t.name").bind(database.id).all(),
   ]);
   const rows = await readRows(db, database.id, properties, rawRows);
   const views = (viewRows.results ?? []).map((row, index) => normaliseView({ id: row.id, name: row.name, type: row.type, config: parseJson(row.config, {}), ord: row.ord }, index));
-  const templates = (templateRows.results ?? []).map((row, index) => normaliseTemplate({
+  const templates = (templateRows.results ?? []).map((row, index) => Object.assign(normaliseTemplate({
     id: row.id,
     name: row.name,
     icon: row.icon,
@@ -793,7 +863,7 @@ async function readDatabaseById(db, database, depth) {
     blocks: parseJson(row.blocks, []),
     ord: row.ord,
     recurrence: parseJson(row.recurrence, null),
-  }, index));
+  }, index), row.blocked ? { blocked: String(row.blocked), notice: "권한 문제로 반복이 멈췄어요" } : { blocked: null }));
   if (!views.length) views.push(normaliseView({ id: "v" + database.id, name: "표", type: "table", ord: 0 }, 0));
   await resolveComputed(db, properties, rows, depth || 0);
   return { database, properties, rows, views, templates };
@@ -813,6 +883,7 @@ const COMPUTED_TYPES = ["formula", "rollup", "created_time", "updated_time"];
 // 롤업 대상 데이터베이스만 읽는다. 관계 속성만 있고 롤업이 쓰지 않는 데이터베이스는 읽지 않는다.
 // 대상 속성이 계산 속성일 때만 한 단계 더 계산한다.
 async function readRollupTarget(db, slug, targetKey, depth) {
+  if (db.acardVisible && !db.acardVisible.has(String(slug))) return null;
   const database = await db.prepare("SELECT id FROM databases WHERE slug = ?").bind(slug).first();
   if (!database) return null;
   const properties = await readProperties(db, database.id);
@@ -891,6 +962,7 @@ async function resolveComputed(db, properties, rows, depth) {
 // 계산한다. 없는 DB면 빈 목록이다.
 async function readRelationRows(db, slug, depth) {
   const out = new Map();
+  if (db.acardVisible && !db.acardVisible.has(String(slug))) return out;
   const database = await db.prepare("SELECT id FROM databases WHERE slug = ?").bind(slug).first();
   if (!database) return out;
   const properties = await readProperties(db, database.id);
@@ -971,9 +1043,9 @@ const hasKey = (object, key) => Object.prototype.hasOwnProperty.call(object, key
 const incomingValue = (props, prop) => (hasKey(props, prop.id) ? props[prop.id] : (hasKey(props, prop.name) ? props[prop.name] : undefined));
 
 // 행 값 바꾸기(PATCH): 기존 값 위에 들어온 값만 덮고 훅을 돌린다. 쓰기는 호출하는 쪽이 한 batch 로 한다.
-async function updatedRowProps(db, rowId, incoming, properties, database) {
-  const existing = await db.prepare("SELECT props FROM db_rows WHERE id = ?").bind(rowId).first();
-  const before = parseJson(existing && existing.props, {});
+async function updatedRowProps(db, rowId, incoming, properties, database, base) {
+  const existing = base ? null : await db.prepare("SELECT props FROM db_rows WHERE id = ?").bind(rowId).first();
+  const before = base ? { ...base } : parseJson(existing && existing.props, {});
   const normalised = { ...before };
   properties.forEach((prop) => {
     const value = incomingValue(incoming, prop);
@@ -1023,7 +1095,7 @@ async function applyRowProps(db, database, properties, rowId, props, options = {
     let ids = Array.isArray(props[pair.prop.id]) ? props[pair.prop.id].map(String) : [];
     if (pair.prop.config.limit === 1) ids = ids.slice(-1);
     if (ids.length) {
-      if (db.acardRoles && ["edit", "full"].indexOf(db.acardRoles.get(pair.target.slug) || "none") < 0) return { error: "상대 데이터베이스를 편집할 권한이 없어요.", status: 401 };
+      if (!canWriteSlug(db, pair.target.slug)) return { error: "상대 데이터베이스를 편집할 권한이 없어요.", status: 401 };
       const found = await db.prepare("SELECT id FROM db_rows WHERE database_id = ? AND id IN (" + ids.map(() => "?").join(", ") + ")").bind(pair.target.id, ...ids).all();
       const live = new Set((found.results ?? []).map((row) => String(row.id)));
       if (options.lenient) ids = ids.filter((id) => live.has(id));
@@ -1035,6 +1107,8 @@ async function applyRowProps(db, database, properties, rowId, props, options = {
         }
       }
     }
+    const denied = await relationChangeDenied(db, pair, rowId, ids);
+    if (denied) return denied;
     props[pair.prop.id] = ids;
     plans.push({ ...pair, ids, tree });
   }
@@ -1075,20 +1149,279 @@ async function applyRowProps(db, database, properties, rowId, props, options = {
   return { locks, statements };
 }
 
-async function deleteRowPage(db, page) {
-  if (!page) return;
-  await db.batch([
-    db.prepare("DELETE FROM blocks WHERE page = ?").bind(page),
-    db.prepare("DELETE FROM links WHERE src = ? OR dst = ?").bind(page, page),
-    db.prepare("DELETE FROM pages WHERE slug = ? AND kind = 'db_row'").bind(page),
-  ]);
+// ---------- #86: 표 쓰기 권한은 여기서만 판정한다 ----------
+// 공유 손님 요청만 db.acardRoles(페이지 slug -> none|read|comment|edit|full)를 갖는다. 소유자·에이전트·예약 실행은 권한 맵이 없어 언제나 된다.
+// 행: 자기 페이지가 있으면 그 페이지의 역할, 없으면(ZIP·마크다운으로 가져온 행) 그 행이 속한 데이터베이스의 역할.
+// 표의 행·속성·관계 값을 바꾸는 모든 경로는 쓰기(batch) 전에 아래 함수로만 판정하고, 하나라도 안 되면 아무것도 쓰지 않는다.
+// tests/share.test.ts 의 전수 확인 테스트가 쓰기 경로 목록과 이 판정 위치를 지킨다.
+const WRITE_ROLES = ["edit", "full"];
+function canWriteSlug(db, slug) {
+  return !db.acardRoles || WRITE_ROLES.includes(db.acardRoles.get(String(slug)) || "none");
+}
+
+// row: { page } (db_rows 의 page 열). databaseSlug: 그 행이 속한 데이터베이스.
+function canWriteRow(db, row, databaseSlug) {
+  return canWriteSlug(db, row.page !== null && row.page !== undefined ? row.page : databaseSlug);
+}
+
+// 새 행 만들기·버튼 대상처럼 데이터베이스 단위로 보는 경로.
+function canEditDatabase(db, slug) {
+  if (db.acardVisible && !db.acardVisible.has(String(slug))) return false;
+  return canWriteSlug(db, slug);
+}
+
+// D1/SQLite 는 문장마다 바인드 값이 100개까지다. 행 id 목록은 이 크기로 나눠 보낸다.
+const ID_CHUNK = 90;
+function idChunks(ids, size = ID_CHUNK) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
+// 이 행들(어느 데이터베이스든)을 모두 편집할 수 있으면 null, 아니면 401 오류 객체.
+async function assertCanWriteRows(db, rowIds, error = "연결된 행을 편집할 권한이 없어요.") {
+  if (!db.acardRoles || !rowIds.length) return null;
+  for (const part of idChunks([...new Set(rowIds.map(String))])) {
+    const rows = (await db.prepare("SELECT r.page, d.slug FROM db_rows r JOIN databases d ON d.id = r.database_id WHERE r.id IN (" + part.map(() => "?").join(", ") + ")").bind(...part).all()).results ?? [];
+    if (rows.some((row) => !canWriteRow(db, row, row.slug))) return { error, status: 401 };
+  }
+  return null;
+}
+
+// 이 데이터베이스의 모든 행을 편집할 수 있으면 null(속성 타입 바꾸기·지우기처럼 모든 행 값을 바꾸는 경로용).
+async function assertCanWriteAllRows(db, databaseId, error = "편집할 수 없는 행이 있어요.") {
+  if (!db.acardRoles) return null;
+  const rows = (await db.prepare("SELECT r.page, d.slug FROM db_rows r JOIN databases d ON d.id = r.database_id WHERE r.database_id = ?").bind(databaseId).all()).results ?? [];
+  return rows.every((row) => canWriteRow(db, row, row.slug)) ? null : { error, status: 401 };
+}
+
+// #86: 양방향 관계 값을 ids 로 바꿀 때 값이 바뀌는 다른 행(새로 잇는 상대 행 + 끊기는 이전 상대 행, 상대 쪽이 연결 하나뿐이면
+// 그 상대 행에서 떨어져 나가는 이쪽 다른 행까지) 모두에 행 편집 권한이 있어야 한다. 없으면 오류 객체, 있으면 null.
+// rowId 가 null 이면 아직 없는 행(템플릿 저장)이다. 권한 맵이 없는 소유자 경로는 검사하지 않는다.
+async function relationChangeDenied(db, pair, rowId, ids) {
+  if (!db.acardRoles) return null;
+  const linked = rowId === null ? { results: [] } : await db.prepare("SELECT dst_row AS id FROM db_relation_links WHERE prop_id = ? AND src_row = ? UNION SELECT src_row AS id FROM db_relation_links WHERE prop_id = ? AND dst_row = ?").bind(pair.prop.id, rowId, pair.pairId, rowId).all();
+  const before = new Set((linked.results ?? []).map((row) => String(row.id)));
+  const keep = new Set(ids);
+  const added = ids.filter((id) => !before.has(id));
+  const changed = [...added, ...[...before].filter((id) => !keep.has(id))];
+  if (!changed.length) return null;
+  if (!canWriteSlug(db, pair.target.slug)) return { error: "상대 데이터베이스를 편집할 권한이 없어요.", status: 401 };
+  if (pair.pairLimit === 1 && added.length) {
+    for (const part of idChunks(added)) {
+      const stolen = await db.prepare("SELECT dst_row AS id FROM db_relation_links WHERE prop_id = ? AND src_row IN (" + part.map(() => "?").join(", ") + ") AND dst_row <> ?").bind(pair.pairId, ...part, rowId === null ? "" : rowId).all();
+      changed.push(...(stolen.results ?? []).map((row) => String(row.id)));
+    }
+  }
+  return await assertCanWriteRows(db, changed);
+}
+
+// ---------- #86: 템플릿 값은 저장한 사람의 권한으로만 링크가 된다 ----------
+// 반복 실행(runDueTemplates)과 템플릿으로 행 만들기는 소유자 권한(권한 맵 없음)으로 돈다. 그래서 링크를 만들기 직전에 그 값을 저장한
+// 사람(db_template_savers)의 권한으로 다시 본다. 손님 권한 = 저장할 때 편집할 수 있던 페이지와 지금 편집할 수 있는 페이지의 교집합.
+// 저장한 사람을 다시 확인할 수 없으면(세션이 끝남·지워짐, 기록을 못 읽음, 공유 규칙이 빠짐·좁아짐) 거부한다: 아무것도 쓰지 않고
+// 이유를 blocked 에 남기며, 값을 다시 저장할 때까지 계속 멈춘다(다른 권한을 빌려 쓰지 않는다).
+// 저장한 사람 기록이 없는 예전 템플릿은, 이 데이터베이스를 편집할 수 있던 손님이 한 번이라도 있었고 양방향 관계 값이 있으면 멈춘다.
+// blocked 값(멈춘 이유): legacy 저장한 사람 기록 없음 | unreadable 기록을 못 읽음 | session 공유 세션이 끝남·지워짐 |
+// database 그 데이터베이스를 편집할 수 없음 | rows 연결된 행을 편집할 수 없음.
+const TEMPLATE_STOPPED = "권한 문제로 멈춘 템플릿이에요. 템플릿을 새로 만들어 주세요.";
+
+function templateSaverStatement(db, templateId) {
+  const roles = {};
+  if (db.acardRoles) for (const [slug, role] of db.acardRoles) if (WRITE_ROLES.includes(role)) roles[slug] = role;
+  const env = db.acardSaver || {};
+  return db.prepare("INSERT INTO db_template_savers (template_id, kind, session, email, roles, saved, blocked, blocked_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL) ON CONFLICT (template_id) DO UPDATE SET kind = excluded.kind, session = excluded.session, email = excluded.email, roles = excluded.roles, saved = excluded.saved, blocked = NULL, blocked_at = NULL")
+    .bind(templateId, db.acardRoles ? "guest" : "owner", db.acardRoles ? env.session || null : null, db.acardRoles ? env.email || null : null, JSON.stringify(roles), Date.now());
+}
+
+// 이 데이터베이스(또는 그 상위 페이지)에 손님 편집 규칙이 한 번이라도 있었는지(지금 꺼졌거나 끝난 규칙, 상속 끊김 위쪽 규칙도 센다).
+async function guestEverEdited(db, slug) {
+  const chain = [];
+  let current = slug;
+  for (let i = 0; current && i < 64 && !chain.includes(current); i += 1) {
+    chain.push(current);
+    const row = await db.prepare("SELECT parent FROM pages WHERE slug = ?").bind(current).first();
+    current = row && row.parent ? String(row.parent) : null;
+  }
+  try {
+    return !!(await db.prepare("SELECT 1 AS x FROM share_rules WHERE page IN (" + chain.map(() => "?").join(", ") + ") AND role IN ('edit', 'full') AND principal NOT LIKE 'agent:%' AND principal <> 'publish' LIMIT 1").bind(...chain).first());
+  } catch {
+    return true;
+  }
+}
+
+// null 이면 이 값으로 링크를 만들어도 된다. 아니면 멈춘 이유(그리고 blocked 를 남긴다).
+async function templateSaverDenied(db, database, properties, templateId, props) {
+  const saver = await db.prepare("SELECT kind, session, email, roles, blocked FROM db_template_savers WHERE template_id = ?").bind(templateId).first();
+  const reason = saver && saver.blocked ? String(saver.blocked) : await templateSaverReason(db, database, properties, saver, props);
+  if (!reason) return null;
+  if (!saver || !saver.blocked) {
+    console.warn("acard template stopped", templateId, reason);
+    await db.prepare("INSERT INTO db_template_savers (template_id, kind, saved, blocked, blocked_at) VALUES (?, 'legacy', 0, ?, ?) ON CONFLICT (template_id) DO UPDATE SET blocked = excluded.blocked, blocked_at = excluded.blocked_at")
+      .bind(templateId, reason, Date.now()).run();
+  }
+  return reason;
+}
+
+async function templateSaverReason(db, database, properties, saver, props) {
+  const pairs = await relationPairs(db, properties);
+  const linked = pairs.map((pair) => {
+    let ids = Array.isArray(props[pair.prop.id]) ? props[pair.prop.id].map(String) : [];
+    if (pair.prop.config.limit === 1) ids = ids.slice(-1);
+    return { pair, ids };
+  }).filter((entry) => entry.ids.length);
+  if (!saver || saver.kind === "legacy") return linked.length && await guestEverEdited(db, database.slug) ? "legacy" : null;
+  if (saver.kind === "owner") return null;
+  let saved = null;
+  try { saved = saver.kind === "guest" ? JSON.parse(String(saver.roles)) : null; } catch { saved = null; }
+  if (!saved || typeof saved !== "object" || Array.isArray(saved) || !saver.session || !saver.email) return "unreadable";
+  const roleMap = ACARD_FEATURES.services.guestRoles ? await ACARD_FEATURES.services.guestRoles(db, String(saver.session), String(saver.email)) : null;
+  if (!roleMap) return "session";
+  const roles = new Map();
+  for (const [slug, role] of Object.entries(saved)) {
+    const now = roleMap.get(slug) || "none";
+    const narrower = WRITE_ROLES.indexOf(now) < 0 ? "none" : WRITE_ROLES.indexOf(String(role)) < WRITE_ROLES.indexOf(now) ? String(role) : now;
+    if (WRITE_ROLES.includes(narrower)) roles.set(slug, narrower);
+  }
+  const as = { prepare: (sql) => db.prepare(sql), batch: (list) => db.batch(list), dialect: db.dialect, acardKey: db.acardKey, acardRoles: roles };
+  if (!canWriteSlug(as, database.slug)) return "database";
+  for (const { pair, ids } of linked) {
+    if (await relationChangeDenied(as, pair, null, ids)) return "rows";
+  }
+  return null;
+}
+
+// 템플릿 값의 저장 형태(#86): 키는 속성 id 만, 관계 값은 연결할 행 id 목록(limit 1 이면 마지막 하나)이다. 템플릿 POST·PATCH 가
+// 저장 전에 이 형태로 바꾸고, 권한 검사(templateRelationsDenied)와 실행(runDueTemplates, 템플릿으로 행 만들기)은 저장된 이 값만
+// 읽는다. 그래서 저장 뒤 속성 이름이나 limit 이 바뀌어도 검사한 값과 나중에 쓰는 값이 같다.
+// 요청 값(strict)은 맞는 속성이 없는 키나 연결할 수 없는 관계 값("a,b", {id}, 숫자, true, 없는 행)이면 400 이다. 이미 저장된
+// 값(lenient, 예전 템플릿)은 그런 키·값을 버린다.
+async function canonicalTemplateProps(db, database, raw, options = {}) {
+  const values = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const properties = await readProperties(db, database.id);
+  const byId = new Map(properties.map((prop) => [prop.id, prop]));
+  const byName = new Map(properties.map((prop) => [prop.name, prop]));
+  const props = {};
+  for (const key of Object.keys(values)) {
+    // #86 N5: 이름 키는 그 이름의 속성이 하나일 때만 id 로 바꾼다. 둘 이상이면 어느 쪽인지 모르므로 거부한다.
+    if (!byId.has(key) && properties.filter((entry) => entry.name === key).length > 1) {
+      if (options.lenient) continue;
+      return { error: "이름이 같은 속성이 여럿이에요. 속성 id 로 보내 주세요.", status: 400 };
+    }
+    const prop = byId.get(key) || byName.get(key);
+    if (!prop) {
+      if (options.lenient) continue;
+      return { error: "없는 속성이에요.", status: 400 };
+    }
+    // 같은 속성을 id 와 이름으로 둘 다 주면 id 키가 이긴다(행 만들기와 같은 규칙).
+    if (!byId.has(key) && values[prop.id] !== undefined) continue;
+    const value = values[key];
+    if (value === undefined || prop.type === "unique_id") continue;
+    if (prop.type !== "relation") { props[prop.id] = value; continue; }
+    const list = value === null || value === "" ? [] : Array.isArray(value) ? value : [value];
+    if (list.some((entry) => typeof entry !== "string")) {
+      if (!options.lenient) return { error: "없는 행과는 연결할 수 없어요.", status: 400 };
+    }
+    let ids = normaliseCellValue(prop, list.filter((entry) => typeof entry === "string"));
+    if (prop.config.limit === 1) ids = ids.slice(-1);
+    const target = ids.length ? await readDatabaseBySlug(db, prop.config.database) : null;
+    if (ids.length && !target) {
+      if (!options.lenient) return { error: "없는 행과는 연결할 수 없어요.", status: 400 };
+      ids = [];
+    }
+    if (ids.length) {
+      const live = new Set();
+      for (const part of idChunks(ids)) {
+        const found = await db.prepare("SELECT id FROM db_rows WHERE database_id = ? AND id IN (" + part.map(() => "?").join(", ") + ")").bind(target.id, ...part).all();
+        (found.results ?? []).forEach((row) => live.add(String(row.id)));
+      }
+      if (ids.some((id) => !live.has(id))) {
+        if (!options.lenient) return { error: "없는 행과는 연결할 수 없어요.", status: 400 };
+        ids = ids.filter((id) => live.has(id));
+      }
+    }
+    props[prop.id] = ids;
+  }
+  return { props };
+}
+
+// #86 B10: 예전 빌드가 저장한 템플릿을 지금 저장 형태로 바꾸는 한 번짜리 이전(/__templates/migrate). 반복이 켜진 템플릿부터
+// canonicalTemplateProps(lenient)로 정리하고, 바뀐 템플릿은 원래 props 를 db_value_backups(kind template, reason migrate)에 남긴다.
+// 전후로 legacyTemplateCounts 를 센다: i 관계 속성 id 키 값이 문자열, ii limit 1 관계인데 id 가 2개 이상,
+// iii 관계 값 id 가 그 관계가 가리키는 데이터베이스의 행이 아님. 이전 뒤에는 셋 다 0 이어야 한다. 다시 돌리면 바뀌는 것이 없다.
+async function legacyTemplateCounts(db) {
+  const found = { i: new Set(), ii: new Set(), iii: new Set() };
+  const templates = (await db.prepare("SELECT id, database_id, props FROM db_templates").all()).results ?? [];
+  const propsOf = new Map();
+  for (const template of templates) {
+    if (!propsOf.has(template.database_id)) propsOf.set(template.database_id, await readProperties(db, template.database_id));
+    const values = parseJson(template.props, {});
+    for (const prop of propsOf.get(template.database_id).filter((entry) => entry.type === "relation")) {
+      const value = values && typeof values === "object" ? values[prop.id] : undefined;
+      if (value === undefined || value === null) continue;
+      if (typeof value === "string") found.i.add(template.id);
+      if (prop.config.limit === 1 && Array.isArray(value) && value.length >= 2) found.ii.add(template.id);
+      const ids = (Array.isArray(value) ? value : [value]).map(String).filter(Boolean);
+      if (!ids.length) continue;
+      const target = await readDatabaseBySlug(db, prop.config.database);
+      if (!target) { found.iii.add(template.id); continue; }
+      for (const part of idChunks(ids)) {
+        const live = (await db.prepare("SELECT COUNT(*) AS n FROM db_rows WHERE database_id = ? AND id IN (" + part.map(() => "?").join(", ") + ")").bind(target.id, ...part).first());
+        if (Number(live && live.n) !== new Set(part).size) found.iii.add(template.id);
+      }
+    }
+  }
+  return { i: found.i.size, ii: found.ii.size, iii: found.iii.size };
+}
+
+async function migrateTemplates(db) {
+  const before = await legacyTemplateCounts(db);
+  const templates = (await db.prepare("SELECT t.id, t.props, t.recurrence, d.id AS database_id, d.slug FROM db_templates t JOIN databases d ON d.id = t.database_id").all()).results ?? [];
+  templates.sort((a, b) => (a.recurrence ? 0 : 1) - (b.recurrence ? 0 : 1));
+  const changed = [];
+  for (const template of templates) {
+    const original = parseJson(template.props, {});
+    const canonical = await canonicalTemplateProps(db, { id: template.database_id, slug: template.slug }, original, { lenient: true });
+    if (JSON.stringify(canonical.props) === JSON.stringify(original)) continue;
+    await db.batch([
+      db.prepare("INSERT INTO db_value_backups (id, database_id, prop_id, kind, ref, value, reason, created) VALUES (?, ?, '', 'template', ?, ?, 'migrate', ?)")
+        .bind(dbId("k") + changed.length, template.database_id, template.id, String(template.props ?? "null"), Date.now()),
+      db.prepare("UPDATE db_templates SET props = ? WHERE id = ?").bind(JSON.stringify(canonical.props), template.id),
+    ]);
+    changed.push(String(template.id));
+  }
+  return { before, after: await legacyTemplateCounts(db), changed, backup_table: "db_value_backups" };
+}
+
+// 템플릿의 양방향 관계 값은 나중에 만드는 행(반복 생성은 소유자 권한으로 돈다)이 그 상대 행에 연결을 더한다(#86):
+// 저장하는 사람이 그 상대 행을 편집할 수 있을 때만 저장한다. values 는 canonicalTemplateProps 를 거친 저장될 값이고,
+// 자르지 않고 저장될 id 전부를 본다.
+async function templateRelationsDenied(db, database, values) {
+  if (!db.acardRoles) return null;
+  for (const pair of await relationPairs(db, await readProperties(db, database.id))) {
+    const raw = values ? values[pair.prop.id] : undefined;
+    const ids = Array.isArray(raw) ? raw.map(String) : [];
+    if (!ids.length) continue;
+    const denied = await relationChangeDenied(db, pair, null, ids);
+    if (denied) return denied;
+  }
+  return null;
 }
 
 // 행(들) 지우기: 행·행 페이지·엣지를 지우고 상대 쪽 캐시를 다시 만드는 것까지 한 batch.
 async function deleteRowsWithRelations(db, database, rowIds) {
   if (!rowIds.length) return;
   const marks = rowIds.map(() => "?").join(", ");
-  const pages = ((await db.prepare("SELECT page FROM db_rows WHERE database_id = ? AND id IN (" + marks + ") AND page IS NOT NULL").bind(database.id, ...rowIds).all()).results ?? []).map((row) => String(row.page));
+  const rows = (await db.prepare("SELECT page FROM db_rows WHERE database_id = ? AND id IN (" + marks + ")").bind(database.id, ...rowIds).all()).results ?? [];
+  if (rows.some((row) => !canWriteRow(db, row, database.slug))) return { error: "이 행을 편집할 권한이 없어요.", status: 401 };
+  if (db.acardRoles) {
+    // 지우는 행과 양방향으로 이어진 상대 행(다른 데이터베이스의 페이지 없는 행 포함)은 관계 값이 바뀐다(#86): 그 행들도 편집할 수 있어야 지운다.
+    const linked = await db.prepare("SELECT dst_row AS id FROM db_relation_links WHERE src_row IN (" + marks + ") UNION SELECT src_row AS id FROM db_relation_links WHERE dst_row IN (" + marks + ")").bind(...rowIds, ...rowIds).all();
+    const gone = new Set(rowIds.map(String));
+    const denied = await assertCanWriteRows(db, (linked.results ?? []).map((row) => String(row.id)).filter((id) => !gone.has(id)));
+    if (denied) return denied;
+  }
+  const pages = rows.filter((row) => row.page !== null).map((row) => String(row.page));
   const relations = await rowDeleteRelationStatements(db, database, rowIds);
   const pageMarks = pages.map(() => "?").join(", ");
   await db.batch([
@@ -1112,12 +1445,16 @@ async function rowDeleteRelationStatements(db, database, rowIds) {
     locks.push(db.prepare("INSERT OR IGNORE INTO db_relation_locks (pair_key, version) VALUES (?, 0)").bind(key));
     locks.push(db.prepare("UPDATE db_relation_locks SET version = version + 1 WHERE pair_key = ?").bind(key));
   });
-  const marks = rowIds.map(() => "?").join(", ");
-  const statements = [db.prepare("DELETE FROM db_relation_links WHERE src_row IN (" + marks + ") OR dst_row IN (" + marks + ")").bind(...rowIds, ...rowIds)];
-  const likes = rowIds.map(() => "props LIKE ?").join(" OR ");
-  for (const pair of pairs) {
-    statements.push(relationCacheStatement(db, pair.pairId, "database_id = ? AND (" + likes + ")", [pair.target.id, ...rowIds.map(likeId)]));
-    if (pair.target.id === database.id) statements.push(relationCacheStatement(db, pair.prop.id, "database_id = ? AND (" + likes + ")", [database.id, ...rowIds.map(likeId)]));
+  // 행이 많으면(데이터베이스 지우기) 바인드 값 한도 안에서 나눠 지우고, 나눈 묶음마다 그 행을 들고 있던 캐시를 다시 만든다.
+  const statements = [];
+  for (const part of idChunks(rowIds, 45)) {
+    const marks = part.map(() => "?").join(", ");
+    statements.push(db.prepare("DELETE FROM db_relation_links WHERE src_row IN (" + marks + ") OR dst_row IN (" + marks + ")").bind(...part, ...part));
+    const likes = part.map(() => "props LIKE ?").join(" OR ");
+    for (const pair of pairs) {
+      statements.push(relationCacheStatement(db, pair.pairId, "database_id = ? AND (" + likes + ")", [pair.target.id, ...part.map(likeId)]));
+      if (pair.target.id === database.id) statements.push(relationCacheStatement(db, pair.prop.id, "database_id = ? AND (" + likes + ")", [database.id, ...part.map(likeId)]));
+    }
   }
   return { locks, statements };
 }
@@ -1148,12 +1485,6 @@ async function ensureUniqueIds(db, databaseId, propId, all) {
     props[propId] = start + index;
     return db.prepare("UPDATE db_rows SET props = ? WHERE id = ?").bind(JSON.stringify(props), row.id);
   }));
-}
-
-async function syncRowPageTitle(db, rowId, title) {
-  const row = await db.prepare("SELECT page FROM db_rows WHERE id = ?").bind(rowId).first();
-  if (!row || !row.page) return;
-  await db.prepare("UPDATE pages SET title = ?, updated = ? WHERE slug = ?").bind(String(title || "제목 없음").slice(0, 200), Date.now(), row.page).run();
 }
 
 async function createDatabase(db, input) {
@@ -1198,11 +1529,55 @@ async function readDatabaseBySlug(db, slug) {
   return slug ? await db.prepare("SELECT id, slug, title FROM databases WHERE slug = ?").bind(String(slug)).first() : null;
 }
 
+// #86: 관계가 아닌 속성을 관계로 바꿀 때, 그 속성에 남아 있던 행 셀·템플릿 값은 링크로 바꾸지 않는다. 그 값은 관계로 검사된 적이
+// 없고(누가 넣었는지도 모른다) 바꾸면 소유자 권한으로 비공개 행과 연결될 수 있다. 값을 db_value_backups 에 남기고 비우는 문장과
+// 남긴 수를 돌려준다. 문장은 타입을 바꾸는 batch 에 같이 넣어, 타입만 바뀌고 값이 남는 순간이 없게 한다.
+// 템플릿은 id 키와 예전 이름 키(현재 이름) 둘 다 본다.
+// reason "delete"(#86 B11): 속성을 지울 때도 같은 값을 옮기고 행에서는 키를 지운다. 남겨 두면 같은 id 로 관계 속성을 다시 만들 때
+// 그 값이 검사 없이 링크가 된다.
+async function relationConversionStatements(db, database, current, reason = "to_relation") {
+  const filled = (value) => value !== undefined && value !== null && value !== "" && value !== false && !(Array.isArray(value) && !value.length);
+  const now = Date.now();
+  const statements = [];
+  let count = 0;
+  const keep = (kind, ref, value) => {
+    count += 1;
+    statements.push(db.prepare("INSERT INTO db_value_backups (id, database_id, prop_id, kind, ref, value, reason, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(dbId("k") + count, database.id, current.id, kind, String(ref), JSON.stringify(value), reason, now));
+  };
+  const rows = (await db.prepare("SELECT id, props FROM db_rows WHERE database_id = ?").bind(database.id).all()).results ?? [];
+  for (const row of rows) {
+    const props = parseJson(row.props, {});
+    if (!filled(props[current.id])) continue;
+    keep("row", row.id, props[current.id]);
+    if (reason === "delete") delete props[current.id];
+    else props[current.id] = [];
+    statements.push(db.prepare("UPDATE db_rows SET props = ?, updated = ? WHERE id = ?").bind(JSON.stringify(props), now, row.id));
+  }
+  const templates = (await db.prepare("SELECT id, props FROM db_templates WHERE database_id = ?").bind(database.id).all()).results ?? [];
+  for (const template of templates) {
+    const props = parseJson(template.props, {});
+    const keys = [current.id, current.name].filter((key) => Object.prototype.hasOwnProperty.call(props, key));
+    if (!keys.length) continue;
+    const kept = {};
+    keys.forEach((key) => { if (filled(props[key])) kept[key] = props[key]; delete props[key]; });
+    if (Object.keys(kept).length) keep("template", template.id, kept[current.id] !== undefined && Object.keys(kept).length === 1 ? kept[current.id] : kept);
+    statements.push(db.prepare("UPDATE db_templates SET props = ? WHERE id = ?").bind(JSON.stringify(props), template.id));
+  }
+  return { statements, count };
+}
+
 // 양방향 켜기: 상대 DB 에 짝 속성을 만들고, 이쪽 행의 기존 연결로 엣지를 채우고, 양쪽 캐시를 다시 만든다. 한 batch.
+// options.before: 같은 batch 맨 앞에 넣을 문장(관계로 바꾸며 예전 값을 비우는 문장). options.fresh: 관계가 아니던 속성이라
+// 기존 값으로 엣지를 만들지 않는다.
 async function enableRelationPair(db, database, current, next, options) {
   const target = await readDatabaseBySlug(db, next.config.database);
   if (!target) return { error: "연결할 데이터베이스를 찾지 못했어요.", status: 400 };
-  if (db.acardRoles && ["edit", "full"].indexOf(db.acardRoles.get(target.slug) || "none") < 0) return { error: "상대 데이터베이스를 편집할 권한이 없어요.", status: 401 };
+  if (!canWriteSlug(db, target.slug)) return { error: "상대 데이터베이스를 편집할 권한이 없어요.", status: 401 };
+  // 짝 속성은 상대 DB 의 모든 행 값을, 채우는 엣지는 이쪽 행 값을 다시 쓴다(#86): 두 DB 의 모든 행을 편집할 수 있어야 한다.
+  const message = "편집할 수 없는 행이 있어서 양방향으로 바꿀 수 없어요.";
+  const denied = await assertCanWriteAllRows(db, database.id, message) || await assertCanWriteAllRows(db, target.id, message);
+  if (denied) return denied;
   const targetProps = await readProperties(db, target.id);
   const pairId = scopedId(target.id, dbId("p"));
   const pairName = String(options.pairName || "").trim().slice(0, 120) || database.title || "관계";
@@ -1215,7 +1590,7 @@ async function enableRelationPair(db, database, current, next, options) {
   const sourceRows = (await db.prepare("SELECT id, props, ord FROM db_rows WHERE database_id = ? ORDER BY ord, created").bind(database.id).all()).results ?? [];
   const targetIds = new Set(((await db.prepare("SELECT id FROM db_rows WHERE database_id = ?").bind(target.id).all()).results ?? []).map((row) => String(row.id)));
   const edges = new Map();
-  sourceRows.forEach((row, rowIndex) => {
+  if (!options.fresh) sourceRows.forEach((row, rowIndex) => {
     const ids = parseJson(row.props, {})[current.id];
     (Array.isArray(ids) ? ids : []).map(String).filter((id) => targetIds.has(id)).forEach((dst, index) => {
       edges.set(current.id + "\n" + row.id + "\n" + dst, [current.id, String(row.id), dst, index]);
@@ -1223,6 +1598,7 @@ async function enableRelationPair(db, database, current, next, options) {
     });
   });
   const statements = [
+    ...(options.before || []),
     db.prepare("INSERT OR IGNORE INTO db_relation_locks (pair_key, version) VALUES (?, 0)").bind(relationPairKey(current.id, pairId)),
     db.prepare("UPDATE db_relation_locks SET version = version + 1 WHERE pair_key = ?").bind(relationPairKey(current.id, pairId)),
     db.prepare("UPDATE db_properties SET name = ?, type = ?, config = ?, ord = ?, width = ?, hidden = ? WHERE id = ?")
@@ -1240,12 +1616,15 @@ async function enableRelationPair(db, database, current, next, options) {
 
 // 양방향 끄기: 엣지·잠금 줄을 지우고, dropPair 면 짝 속성도 지운다. 아니면 짝은 단방향으로 남는다(값은 캐시 그대로).
 async function disableRelationPairStatements(db, current, dropPair) {
-  const pairId = current.config.pair;
+  // #86: 짝은 상대 DB 에 있고 이 속성을 되가리키는 속성일 때만 짝이다. 아니면 이 속성의 엣지만 지운다.
+  const target = await readDatabaseBySlug(db, current.config.database);
+  const candidate = current.config.pair ? await db.prepare("SELECT id, config, database_id FROM db_properties WHERE id = ?").bind(String(current.config.pair)).first() : null;
+  const pairRow = candidate && target && String(candidate.database_id) === String(target.id) && String(parseJson(candidate.config, {}).pair || "") === String(current.id) ? candidate : null;
+  const pairId = pairRow ? String(pairRow.id) : "";
   const statements = [
-    db.prepare("DELETE FROM db_relation_links WHERE prop_id IN (?, ?)").bind(current.id, pairId),
-    db.prepare("DELETE FROM db_relation_locks WHERE pair_key = ?").bind(relationPairKey(current.id, pairId)),
+    pairRow ? db.prepare("DELETE FROM db_relation_links WHERE prop_id IN (?, ?)").bind(current.id, pairId) : db.prepare("DELETE FROM db_relation_links WHERE prop_id = ?").bind(current.id),
+    db.prepare("DELETE FROM db_relation_locks WHERE pair_key = ?").bind(relationPairKey(current.id, String(current.config.pair || ""))),
   ];
-  const pairRow = await db.prepare("SELECT id, config FROM db_properties WHERE id = ?").bind(pairId).first();
   if (pairRow && dropPair) statements.push(db.prepare("DELETE FROM db_properties WHERE id = ?").bind(pairId));
   else if (pairRow) {
     const config = Object.assign({}, parseJson(pairRow.config, {}), { synced: false, pair: "" });
@@ -1312,6 +1691,9 @@ async function switchSubitems(db, database, on) {
   const properties = await readProperties(db, database.id);
   const current = config.subitems && properties.find((prop) => prop.id === config.subitems.parent);
   if (current && properties.some((prop) => prop.id === config.subitems.children)) return { config };
+  // #86: 켜기는 이 DB 의 모든 행 값을 다시 쓴다. 속성을 넣기 전에 본다.
+  const denied = await assertCanWriteAllRows(db, database.id, "편집할 수 없는 행이 있어서 양방향으로 바꿀 수 없어요.");
+  if (denied) return denied;
   const parentId = scopedId(database.id, dbId("p"));
   const ord = (properties.length ? Math.max(...properties.map((prop) => prop.ord)) : 0) + 10;
   const parent = normaliseProperty({ id: parentId, name: "상위 항목", type: "relation", config: { database: database.slug, synced: false, limit: 1 }, ord }, properties.length);
@@ -1335,6 +1717,8 @@ async function saveProperties(db, databaseId, list) {
   normalised.forEach((prop) => {
     const config = Object.assign({}, prop.config);
     if (prop.type === "rollup" && idMap.has(config.relation_property)) config.relation_property = idMap.get(config.relation_property);
+    // #86: 짝(pair)은 서버가 enableRelationPair 로만 만든다. 받은 목록의 pair 를 믿으면 남의 속성을 짝이라 우겨 지울 수 있다.
+    if (prop.type === "relation") Object.assign(config, { synced: false, pair: "" });
     statements.push(db.prepare("INSERT INTO db_properties (id, database_id, name, type, config, ord, width, hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .bind(idMap.get(prop.id), databaseId, prop.name, prop.type, JSON.stringify(config), prop.ord, prop.width, prop.hidden ? 1 : 0));
   });
@@ -1357,26 +1741,6 @@ async function syncPageTitleToRow(db, slug, title) {
     }
   }
   await db.prepare("UPDATE databases SET title = ?, updated = ? WHERE slug = ?").bind(clean || "제목 없음", Date.now(), slug).run();
-}
-
-async function createRowPage(db, database, title, blocks) {
-  let slug = slugify(title || "행");
-  const taken = await db.prepare("SELECT slug FROM pages WHERE slug = ?").bind(slug).first();
-  if (taken) slug = slug + "-" + Math.random().toString(36).slice(2, 6);
-  const now = Date.now();
-  // Two rows with the same title created at the same moment can both find the slug free; the loser retries with a suffix.
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await db.prepare("INSERT INTO pages (slug, title, parent, ord, kind, updated, source, hash) VALUES (?, ?, ?, ?, 'db_row', ?, 'editor', NULL)")
-        .bind(slug, String(title || "제목 없음").slice(0, 200), database.slug, now % 100000, now).run();
-      break;
-    } catch (error) {
-      if (attempt >= 3 || !/unique|duplicate/i.test(String(error && error.message))) throw error;
-      slug = slugify(title || "행") + "-" + Math.random().toString(36).slice(2, 8);
-    }
-  }
-  await saveBlocks(db, slug, normaliseBlocks(blocks && blocks.length ? blocks : [{ id: "b1", type: "paragraph", text: "", checked: false, indent: 0, meta: null }]));
-  return slug;
 }
 
 async function readRowPage(db, databaseId, rowId) {
@@ -1612,6 +1976,7 @@ async function syncDbSeed(db, env, request) {
       const template = normaliseTemplate(Object.assign({}, raw, { id: scopedId(databaseId, raw && raw.id ? raw.id : "t" + index), props: remapKeys(raw && raw.props, propMap) }), index);
       statements.push(db.prepare("INSERT OR IGNORE INTO db_templates (id, database_id, name, icon, props, blocks, ord) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(template.id, databaseId, template.name, template.icon, JSON.stringify(template.props), JSON.stringify(template.blocks), (index + 1) * 10));
+      statements.push(templateSaverStatement(db, template.id));
     });
     result.imported += 1;
   }
@@ -1714,7 +2079,9 @@ function pageShell(page, blocks, pages, extras, settings = {}) {
   const extra = extras || {};
   const ctx = { page: page, pages: pages ?? [] };
   const tagRow = page.ws === "guest" || page.slug === "index" ? "" : '<div class="fd-headtags" id="fd-headtags"></div>';
-  const heading = "<h1>" + escapeHtml(page.title) + "</h1>" + tagRow + bylineHtml(page);
+  const report = isReportPage(settings);
+  // Report style: the date line is the eyebrow above the title, like the reference page.
+  const heading = report ? bylineHtml(page) + "<h1>" + escapeHtml(page.title) + "</h1>" + tagRow : "<h1>" + escapeHtml(page.title) + "</h1>" + tagRow + bylineHtml(page);
   let top = heading;
   let body;
   if (extra.dbHtml) {
@@ -1735,7 +2102,7 @@ function pageShell(page, blocks, pages, extras, settings = {}) {
     if (side) top = '<div class="page-top"><div class="page-top-main">' + heading + (split[0].length ? '<div class="blocks">' + renderBlocks(split[0], ctx) + "</div>" : "") + "</div>" + side + "</div>";
     body = '<div class="blocks">' + renderBlocks(side ? split[1] : blocks, ctx) + "</div>";
   }
-  const mainClass = [settings.width === "full" ? "full-width" : settings.width === "normal" ? "width-normal" : "", page.kind === "db" ? "wide" : ""].filter(Boolean).join(" ");
+  const mainClass = [settings.width === "full" ? "full-width" : settings.width === "normal" ? "width-normal" : "", page.kind === "db" ? "wide" : "", report ? "rp" : ""].filter(Boolean).join(" ");
   return [
     "<!doctype html>",
     '<html lang="ko">',
@@ -1756,6 +2123,7 @@ function pageShell(page, blocks, pages, extras, settings = {}) {
     '<link rel="stylesheet" href="/editor.css">',
     '<link rel="stylesheet" href="/db.css">',
     '<link rel="stylesheet" href="/acard-shell.css"><link rel="stylesheet" href="/acard-page.css"><link rel="stylesheet" href="/acard-body.css"><link rel="stylesheet" href="/acard-table.css"><link rel="stylesheet" href="/acard-mobile.css">',
+    report ? '<link rel="stylesheet" href="/tokens-report.css"><style>' + REPORT_CSS + "</style>" : "",
     //__READER_FEATURE_CSS__
     "</head>",
     '<body class="reader"' + (page.readOnly ? ' data-readonly="1"' : "") + ">",
@@ -2034,17 +2402,37 @@ async function workspaceMediaBytes(db) {
   return Number(row && row.n) || 0;
 }
 
-async function mailOwnerAboutStorage(env, used, stopped) {
-  if (!env.RESEND_API_KEY || !env.OWNER_ALERT_EMAIL) return;
+// The owner mail at 8 GB and at the 9.5 GB stop. `test` (the admin console's storage-alert test, acardHost.storageAlertTest)
+// sends the same mail with "[테스트]" in front of the subject. Returns Resend's answer ({ id } when it was accepted).
+export function storageAlertMail(env, used, stopped, test = false) {
   const gb = (used / 1e9).toFixed(2);
   const text = stopped
     ? "Acard 파일 저장 공간이 " + gb + "GB 로 무료 한도(10GB) 직전이라 새 업로드를 막았어요. 늘리려면 R2 요금(GB당 월 $0.015)을 감안해 GLOBAL_MEDIA_CAP 을 올려 주세요."
     : "Acard 파일 저장 공간이 " + gb + "GB 예요. R2 무료 한도는 10GB 이고, 9.5GB 에서 새 업로드를 막아요.";
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
-    body: JSON.stringify({ from: env.MAIL_FROM || "Acard <beta@send.notes.example.com>", to: [env.OWNER_ALERT_EMAIL], subject: stopped ? "[Acard] 파일 저장 공간 업로드 중지" : "[Acard] 파일 저장 공간 8GB 넘음", text }),
-  }).catch((error) => console.error("acard storage alert mail failed", String(error)));
+  const subject = stopped ? "[Acard] 파일 저장 공간 업로드 중지" : "[Acard] 파일 저장 공간 8GB 넘음";
+  return {
+    from: env.MAIL_FROM || "Acard <beta@send.notes.example.com>",
+    to: [env.OWNER_ALERT_EMAIL],
+    subject: test ? "[테스트] " + subject : subject,
+    text: test ? "이 메일은 관리자 콘솔에서 보낸 테스트예요. 실제 사용량은 " + gb + "GB 이고, 아래는 실제 경고에 가는 문구예요.\n\n" + text : text,
+  };
+}
+
+async function mailOwnerAboutStorage(env, used, stopped, test = false) {
+  if (!env.RESEND_API_KEY || !env.OWNER_ALERT_EMAIL) return { ok: false, error: "RESEND_API_KEY 또는 OWNER_ALERT_EMAIL 이 없어요." };
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify(storageAlertMail(env, used, stopped, test)),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) console.error("acard storage alert mail refused", response.status, JSON.stringify(body));
+    return { ok: response.ok, status: response.status, id: body && body.id ? String(body.id) : null };
+  } catch (error) {
+    console.error("acard storage alert mail failed", String(error));
+    return { ok: false, error: String(error) };
+  }
 }
 
 // Every write of a media original goes through here: the member workspace quota first, then the global ledger, which
@@ -2063,6 +2451,40 @@ async function reserveMedia(env, db, bytes) {
   if (result.used >= GLOBAL_MEDIA_ALERT && result.alerted < 1 && await ledger.mediaMarkAlerted(1)) await mailOwnerAboutStorage(env, result.used, false);
 }
 
+// New png/jpeg originals (POST /api/upload and every agent image) are stored as WebP through the acard-image Worker
+// (Images binding): long side at most COMPRESS_MAX, quality COMPRESS_QUALITY (small UI text stays readable), and only when
+// the WebP is smaller. Animated images, gif/webp/svg/avif, video and files stored before this change are never touched.
+// Each compression is one unique Images transformation; COMPRESS_MONTHLY (counted in the global:media Durable Object)
+// keeps uploads well inside the 5,000 free transformations a month. MEDIA_COMPRESS = "on" in wrangler.toml turns it on.
+const COMPRESS_MAX = 2560;
+const COMPRESS_QUALITY = 85;
+const COMPRESS_MONTHLY = 3000;
+const COMPRESS_TYPES = new Set(["image/png", "image/jpeg"]);
+
+export function webpName(name) {
+  return String(name).replace(/\.(?:png|jpe?g)$/i, "") + (/\.(?:png|jpe?g)$/i.test(String(name)) ? ".webp" : "");
+}
+
+async function compressUpload(env, bytes, mime) {
+  if (env.MEDIA_COMPRESS !== "on" || !env.IMAGE_RESIZER || !COMPRESS_TYPES.has(mime) || sniffImage(bytes) !== mime) return null;
+  const before = imageDimensions(bytes);
+  if (!before.width || !before.height || before.animated) return null;
+  const ledger = mediaLedger(env);
+  if (ledger && typeof ledger.compressSlot === "function" && !(await ledger.compressSlot(COMPRESS_MONTHLY).catch(() => false))) return null;
+  try {
+    const response = await env.IMAGE_RESIZER.fetch("https://acard-image/compress?max=" + COMPRESS_MAX + "&q=" + COMPRESS_QUALITY, { method: "POST", body: bytes });
+    if (!response.ok) throw new Error("compress " + response.status);
+    const out = await response.arrayBuffer();
+    const size = imageDimensions(out);
+    if (sniffImage(out) !== "image/webp" || !size.width || !size.height || size.width > COMPRESS_MAX || size.height > COMPRESS_MAX) throw new Error("invalid compress output");
+    if (out.byteLength >= bytes.byteLength) return null;
+    return { bytes: out, mime: "image/webp", dimensions: size };
+  } catch (error) {
+    console.error("acard upload compression skipped", String(error));
+    return null;
+  }
+}
+
 async function releaseMedia(env, bytes) {
   const ledger = mediaLedger(env);
   if (!ledger || !(bytes > 0) || typeof ledger.mediaUsage !== "function") return;
@@ -2074,16 +2496,20 @@ async function storeAgentImage(env, db, page, name, declared, bytes, source) {
   if (!store) throw new AgentError("미디어 저장소가 연결되지 않았어요.", 503);
   if (!bytes || !bytes.byteLength) throw new AgentError("올릴 파일이 없어요.");
   if (bytes.byteLength > MEDIA_MAX_BYTES) throw new AgentError("파일이 너무 커요. 최대 4MB 까지 올릴 수 있어요.", 413);
-  const mime = sniffImage(bytes) || (isSvg(bytes) ? "image/svg+xml" : null);
+  let mime = sniffImage(bytes) || (isSvg(bytes) ? "image/svg+xml" : null);
   if (!mime || !AGENT_IMAGE_MIMES.has(mime) || (declared && baseMime(declared) !== mime)) throw new AgentError("png, jpeg, webp, gif, svg 이미지만 올릴 수 있어요.", 415);
   if (mime === "image/svg+xml") bytes = new TextEncoder().encode(ACARD_FEATURES.services.sanitizeSvg(new TextDecoder().decode(bytes))).buffer;
   const id = mediaId();
-  const clean = sanitizeName(name || "image");
-  const dimensions = imageDimensions(bytes);
+  let clean = sanitizeName(name || "image");
+  let dimensions = imageDimensions(bytes);
+  const originalSize = bytes.byteLength;
+  const compressed = await compressUpload(env, bytes, mime);
+  if (compressed) { bytes = compressed.bytes; mime = compressed.mime; dimensions = compressed.dimensions; clean = webpName(clean); }
   await reserveMedia(env, db, bytes.byteLength);
-  await store.put("media/" + id, bytes, { metadata: { mime, name: clean, size: bytes.byteLength, ...dimensions, ...(source ? { source: String(source).slice(0, 500) } : {}) } });
-  await db.prepare("INSERT INTO media (id, page, name, mime, bytes, created) VALUES (?, ?, ?, ?, ?, ?)").bind(id, page || null, clean, mime, bytes.byteLength, Date.now()).run();
-  return { ok: true, id, url: "/media/" + id, mime, name: clean, size: bytes.byteLength, width: dimensions.width, height: dimensions.height, markdown: "![" + clean.replace(/[\]\n]/g, " ") + "](/media/" + id + ")" };
+  const etag = await mediaEtag(bytes);
+  await store.put("media/" + id, bytes, { metadata: { mime, name: clean, size: bytes.byteLength, etag, ...dimensions, ...(compressed ? { originalSize } : {}), ...(source ? { source: String(source).slice(0, 500) } : {}) } });
+  await db.prepare("INSERT INTO media (id, page, name, mime, bytes, created, etag) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, page || null, clean, mime, bytes.byteLength, Date.now(), etag).run();
+  return { ok: true, id, url: "/media/" + id, mime, name: clean, size: bytes.byteLength, ...(compressed ? { originalSize } : {}), width: dimensions.width, height: dimensions.height, markdown: "![" + clean.replace(/[\]\n]/g, " ") + "](/media/" + id + ")" };
 }
 
 // Agent video files (#33): the user's machine extracts keyframes; the file itself is kept only when the agent sends it
@@ -2100,8 +2526,9 @@ async function storeAgentVideo(env, db, page, name, bytes) {
   const id = mediaId();
   const clean = sanitizeName(name || "video");
   await reserveMedia(env, db, bytes.byteLength);
-  await store.put("media/" + id, bytes, { metadata: { mime, name: clean, size: bytes.byteLength } });
-  await db.prepare("INSERT INTO media (id, page, name, mime, bytes, created) VALUES (?, ?, ?, ?, ?, ?)").bind(id, page || null, clean, mime, bytes.byteLength, Date.now()).run();
+  const etag = await mediaEtag(bytes);
+  await store.put("media/" + id, bytes, { metadata: { mime, name: clean, size: bytes.byteLength, etag } });
+  await db.prepare("INSERT INTO media (id, page, name, mime, bytes, created, etag) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, page || null, clean, mime, bytes.byteLength, Date.now(), etag).run();
   return { ok: true, id, url: "/media/" + id, mime, name: clean, size: bytes.byteLength };
 }
 
@@ -2133,8 +2560,9 @@ async function uploadLookImage(request, env, db, kind) {
   const id = mediaId();
   try { await reserveMedia(env, db, bytes.byteLength); }
   catch (error) { if (error instanceof AgentError) return json({ error: error.message }, error.status); throw error; }
-  await store.put("media/" + id, bytes, { metadata: { mime, name, size: bytes.byteLength, ...dimensions } });
-  await db.prepare("INSERT INTO media (id, page, name, mime, bytes, created) VALUES (?, ?, ?, ?, ?, ?)").bind(id, page, name, mime, bytes.byteLength, Date.now()).run();
+  const etag = await mediaEtag(bytes);
+  await store.put("media/" + id, bytes, { metadata: { mime, name, size: bytes.byteLength, etag, ...dimensions } });
+  await db.prepare("INSERT INTO media (id, page, name, mime, bytes, created, etag) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, page, name, mime, bytes.byteLength, Date.now(), etag).run();
   return json({ ok: true, id, url: "/media/" + id, mime, name, size: bytes.byteLength, width: dimensions.width, height: dimensions.height });
 }
 
@@ -2152,39 +2580,75 @@ async function uploadMedia(request, env, db) {
   const file = form ? form.get("file") : null;
   if (!file || typeof file === "string" || !file.size) return json({ error: "올릴 파일이 없어요." }, 400);
   if (file.size > MEDIA_MAX_BYTES) return json({ error: "파일이 너무 커요. 최대 4MB 까지 올릴 수 있어요." }, 413);
-  const mime = baseMime(file.type);
+  let mime = baseMime(file.type);
   if (!isAllowedMime(mime)) return json({ error: "이미지, 영상, 소리, PDF, 텍스트 파일만 올릴 수 있어요." }, 415);
   const id = mediaId();
-  const name = sanitizeName(file.name);
+  let name = sanitizeName(file.name);
   const page = form.get("page") ? String(form.get("page")).slice(0, 120) : null;
   let bytes = await file.arrayBuffer();
   if (mime === "image/svg+xml") bytes = new TextEncoder().encode(ACARD_FEATURES.services.sanitizeSvg(new TextDecoder().decode(bytes))).buffer;
-  const dimensions = imageDimensions(bytes);
+  let dimensions = imageDimensions(bytes);
+  const originalSize = bytes.byteLength;
+  const compressed = await compressUpload(env, bytes, mime);
+  if (compressed) { bytes = compressed.bytes; mime = compressed.mime; dimensions = compressed.dimensions; name = webpName(name); }
   try { await reserveMedia(env, db, bytes.byteLength); }
   catch (error) { if (error instanceof AgentError) return json({ error: error.message }, error.status); throw error; }
-  await store.put("media/" + id, bytes, { metadata: { mime, name, size: bytes.byteLength, ...dimensions } });
-  await db.prepare("INSERT INTO media (id, page, name, mime, bytes, created) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(id, page, name, mime, bytes.byteLength, Date.now()).run();
-  return json({ ok: true, id, url: "/media/" + id, mime, name, size: bytes.byteLength, width: dimensions.width, height: dimensions.height });
+  const etag = await mediaEtag(bytes);
+  await store.put("media/" + id, bytes, { metadata: { mime, name, size: bytes.byteLength, etag, ...dimensions, ...(compressed ? { originalSize } : {}) } });
+  await db.prepare("INSERT INTO media (id, page, name, mime, bytes, created, etag) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(id, page, name, mime, bytes.byteLength, Date.now(), etag).run();
+  return json({ ok: true, id, url: "/media/" + id, mime, name, size: bytes.byteLength, ...(compressed ? { originalSize } : {}), width: dimensions.width, height: dimensions.height });
 }
 
-async function readMedia(env, id) {
+export async function mediaEtag(bytes) {
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return '"' + Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("") + '"';
+}
+
+function etagMatches(request, etag) {
+  return Boolean(etag && request?.headers.get("if-none-match")?.split(",").some(tag => tag.trim() === "*" || tag.trim().replace(/^W\//, "") === etag));
+}
+
+const MEDIA_HEADERS = { "x-content-type-options": "nosniff", "x-robots-tag": "noindex, nofollow", "content-security-policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox" };
+
+// The trash check and the stored ETag (media.etag, written at upload or on the first full read) come from one row, before
+// any storage read: the access checks run on every request exactly as before, then a matching If-None-Match is a 304
+// without reading R2.
+async function mediaRow(env, id) {
+  const db = env[DB_BINDING];
+  if (!db) return null;
+  await ensureSchema(db);
+  return await db.prepare("SELECT m.etag AS etag, m.mime AS mime, m.name AS name, t.page AS trashed FROM media m LEFT JOIN editor_trash t ON t.page = m.page WHERE m.id = ? LIMIT 1").bind(id).first();
+}
+
+async function readMedia(env, id, row) {
   const store = env[MEDIA_BINDING];
   if (!store) return json({ error: "미디어 저장소가 연결되지 않았어요." }, 503);
   if (!MEDIA_ID.test(id)) return json({ error: "없는 파일이에요." }, 404);
-  const db = env[DB_BINDING];
-  if (db) await ensureSchema(db);
-  if (db && await db.prepare("SELECT 1 AS t FROM media m JOIN editor_trash t ON t.page = m.page WHERE m.id = ?").bind(id).first()) return json({ error: "휴지통에 있는 페이지의 파일이에요." }, 404);
+  if (row === undefined) row = await mediaRow(env, id);
+  if (row && row.trashed) return json({ error: "휴지통에 있는 페이지의 파일이에요." }, 404);
   const found = await store.getWithMetadata("media/" + id, { type: "arrayBuffer", cacheTtl: 86400 });
   if (!found || found.value === null) return json({ error: "없는 파일이에요." }, 404);
   return found;
 }
 
 async function serveMedia(env, id, request) {
-  let found = await readMedia(env, id);
+  const store = env[MEDIA_BINDING];
+  const row = store && MEDIA_ID.test(id) ? await mediaRow(env, id) : null;
+  const width = request ? Number(new URL(request.url).searchParams.get("w")) : 0;
+  const variantKey = [400, 800, 1600].includes(width) ? "media/" + id + "@w" + width : null;
+  if (row && !row.trashed && request?.method !== "HEAD") {
+    if (!variantKey && etagMatches(request, row.etag)) {
+      return new Response(null, { status: 304, headers: { "cache-control": "private, no-cache", etag: row.etag, ...MEDIA_HEADERS } });
+    }
+    // A resized copy already in KV answers without the original; its ETag is its own bytes' hash, as before.
+    const cached = variantKey && (env.IMAGES || env.IMAGES_SVC) ? await store.getWithMetadata(variantKey, { type: "arrayBuffer", cacheTtl: 86400 }) : null;
+    if (cached?.value) return mediaResponse(id, cached, request, await mediaEtag(cached.value));
+  }
+  let found = await readMedia(env, id, row);
   if (found instanceof Response) return found;
   let meta = found.metadata ?? {};
-  const width = request ? Number(new URL(request.url).searchParams.get("w")) : 0;
+  let etag = null;
   const dimensions = imageDimensions(found.value);
   if ([400, 800, 1600].includes(width) && ["image/png", "image/jpeg", "image/webp"].includes(meta.mime) && dimensions.width && !dimensions.animated && (env.IMAGES || env.IMAGES_SVC)) {
     const key = "media/" + id + "@w" + width;
@@ -2200,26 +2664,32 @@ async function serveMedia(env, id, request) {
         const value = await response.arrayBuffer();
         const size = imageDimensions(value);
         if (!size.width || !size.height || size.width > target || sniffImage(value) !== "image/webp") throw new Error("Invalid Images output");
-        found = { value, metadata: { ...meta, mime: "image/webp", width: size.width, height: size.height, size: value.byteLength, animated: false } };
+        const { etag: _originalEtag, ...variantMeta } = meta;
+        found = { value, metadata: { ...variantMeta, mime: "image/webp", width: size.width, height: size.height, size: value.byteLength, animated: false } };
         await env[MEDIA_BINDING].put(key, value, { metadata: found.metadata });
       } catch (error) { console.error("acard media variant unavailable", String(error)); }
     }
     meta = found.metadata ?? {};
+  } else {
+    etag = row && row.etag ? row.etag : await mediaEtag(found.value);
+    // Files stored before ETags were saved get theirs on the first full read, once.
+    if (row && !row.etag) await env[DB_BINDING].prepare("UPDATE media SET etag = ? WHERE id = ? AND etag IS NULL").bind(etag, id).run().catch((error) => console.error("acard media etag backfill failed", String(error)));
   }
+  return mediaResponse(id, found, request, etag || await mediaEtag(found.value));
+}
+
+function mediaResponse(id, found, request, etag) {
+  const meta = found.metadata ?? {};
   const mime = meta.mime || "application/octet-stream";
-  const hash = await crypto.subtle.digest("SHA-256", found.value);
-  const etag = '"' + Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("") + '"';
   const headers = {
       "content-type": mime,
       "cache-control": "private, no-cache",
       "etag": etag,
       "content-disposition": pickDisposition(mime, meta.name || id),
-      "x-content-type-options": "nosniff",
-      "x-robots-tag": "noindex, nofollow",
-      "content-security-policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+      ...MEDIA_HEADERS,
       "x-acard-store": meta.store === "r2" ? "r2" : "kv",
   };
-  const matches = request?.headers.get("if-none-match")?.split(",").some(tag => tag.trim() === "*" || tag.trim().replace(/^W\//, "") === etag);
+  const matches = etagMatches(request, etag);
   return new Response(matches || request?.method === "HEAD" ? null : found.value, { status: matches ? 304 : 200, headers });
 }
 
@@ -2308,6 +2778,8 @@ function printShell(page, blocks) {
     ".toggle{margin:6px 0}",
     ".toggle summary{font-weight:600}",
     "hr{border:0;border-top:1px solid #ccc;margin:18px 0}",
+    // Evidence labels keep their colors on paper (no tokens on this page).
+    ".ev{--fs-11:8pt;--radius-pill:999px;--space-2:6px;--font-mono:ui-monospace,Consolas,monospace;--rp-measured-bg:#edf3ec;--rp-measured-fg:#346538;--rp-claimed-bg:#fbf3db;--rp-claimed-fg:#956400;--rp-estimated-bg:#e1f3fe;--rp-estimated-fg:#1f6c9f;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
     ".backlinks{margin-top:26px;padding-top:10px;border-top:1px solid #ddd;font-size:9.5pt;color:#666}",
     ".bar{position:sticky;top:0;display:flex;gap:10px;align-items:center;justify-content:flex-end;padding:8px 12px;background:#fff;border-bottom:1px solid #eee}",
     ".bar a,.bar button{font:inherit;font-size:10pt;color:#333;background:#f4f4f4;border:1px solid #ddd;border-radius:999px;padding:5px 12px;cursor:pointer;text-decoration:none}",
@@ -2434,6 +2906,8 @@ export default {
         return await handleApi(request, env, db, url);
       } catch (error) {
         if (error instanceof AgentError) return json({ error: error.message }, error.status);
+        // A path segment with a well-formed but non-UTF-8 escape (/api/page/%E0%A4%A) is the caller's input, not a fault.
+        if (error instanceof URIError) return json({ error: "주소를 읽지 못했어요." }, 400);
         return serverError(error);
       }
     }
@@ -2445,8 +2919,10 @@ export default {
 
     const printMatch = /^\/print\/(.+?)\/?$/.exec(url.pathname);
     if (printMatch && db) {
+      let slug;
+      try { slug = decodeURIComponent(printMatch[1]); }
+      catch { return json({ error: "bad_path" }, 400); }
       await ensureSchema(db);
-      const slug = decodeURIComponent(printMatch[1]);
       const found = await readPage(db, slug);
       if (!found) return new Response("없는 페이지예요.", { status: 404, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } });
       return new Response(printShell(found.page, found.blocks), {
@@ -2504,7 +2980,7 @@ export default {
           stage("blocks");
           if (found) {
             if (isMember(env)) found.page.ws = "member";
-            if (isGuest(env)) Object.assign(found.page, { ws: "guest", guest: env.ACARD_GUEST_EMAIL, guestWs: env.ACARD_WORKSPACE && env.ACARD_WORKSPACE !== "owner" ? env.ACARD_WORKSPACE : "o", readOnly: !!db.acardRoles && ["edit", "full"].indexOf(db.acardRoles.get(slug) || "none") < 0 });
+            if (isGuest(env)) Object.assign(found.page, { ws: "guest", guest: env.ACARD_GUEST_EMAIL, guestWs: env.ACARD_WORKSPACE && env.ACARD_WORKSPACE !== "owner" ? env.ACARD_WORKSPACE : "o", readOnly: !canWriteSlug(db, slug) });
             const [extras, agent, tree, folderHtml] = await Promise.all([
               pageExtras(db, found.page, found.blocks, url.searchParams.get("view")), latestAgentAuthor(db, found.page), readTree(db),
               ACARD_FEATURES.services.folderView && found.page.kind === "note" && slug !== "index" && url.searchParams.get("as") !== "article"
@@ -2586,7 +3062,7 @@ async function latestAgentAuthor(db, page) {
 
 function agentHelpers(env) {
   return {
-    json, slugify, resolveSlug, readTree, readPage, normaliseBlocks, saveBlocks, captureEditorVersion, syncPageTitleToRow,
+    json, slugify, resolveSlug, readTree, readPage, normaliseBlocks, saveBlocks, saveAgentBlocks, captureEditorVersion, syncPageTitleToRow,
     markdownToBlocks, blocksToMarkdown, readDatabase, dbRowRequest, services: ACARD_FEATURES.services, guardAgentButtons,
     ingestImages: (db, page, blocks) => ingestImages(env, db, page, blocks),
   };
@@ -2604,76 +3080,127 @@ async function rowProperties(db, database) {
 }
 
 // 행 만들기(행 POST 와 버튼 create_row 가 같이 쓴다): 템플릿 값, ID 번호, 규칙, 사람 검사, 양방향 관계, 행 페이지.
-async function createRow(db, env, database, body) {
+// prepare 는 읽기와 검사만 한다(권한 검사는 applyRowProps -> relationChangeDenied). build 는 검사가 모두 끝난 뒤 ID 번호를 받고
+// 행·행 페이지·관계 문장을 돌려준다. 쓰기는 호출하는 쪽이 한 batch 로 한다(#86: 권한·검사가 실패하면 아무것도 쓰이지 않는다.
+// ID 번호 카운터만은 검사를 모두 통과한 뒤 batch 전에 올리므로, batch 가 실패하면 번호 하나가 비어 남을 수 있다).
+async function prepareCreateRow(db, env, database, body) {
   const props = body.props && typeof body.props === "object" ? body.props : {};
   let template = null;
   if (body.template) {
     const found = await db.prepare("SELECT id, name, icon, props, blocks FROM db_templates WHERE id = ? AND database_id = ?").bind(String(body.template), database.id).first();
-    if (found) template = { props: parseJson(found.props, {}), blocks: parseJson(found.blocks, []), name: found.name };
+    if (found) template = { id: String(found.id), props: parseJson(found.props, {}), blocks: parseJson(found.blocks, []), name: found.name };
   }
-  const merged = Object.assign({}, template ? template.props : {}, props);
   const properties = await rowProperties(db, database);
+  // #86: 템플릿 값은 속성 id 키로만 쓴다(runDueTemplates 와 같다). 요청 body.props 는 이름 키도 된다.
+  const templateProps = {};
+  if (template) for (const prop of properties) if (template.props[prop.id] !== undefined) templateProps[prop.id] = template.props[prop.id];
+  const merged = Object.assign({}, templateProps, props);
   if (!validBoardProgress(database, properties, merged)) return { error: "진행률은 0부터 100까지의 숫자로 입력해 주세요.", status: 400 };
   const titleProp = properties.find((prop) => prop.type === "title");
   const maxRow = await db.prepare("SELECT COALESCE(MAX(ord), 0) AS m FROM db_rows WHERE database_id = ?").bind(database.id).first();
-  const now = Date.now();
   const id = scopedId(database.id, dbId("r"));
   const normalised = {};
   properties.forEach((prop) => {
     const incoming = merged[prop.id] !== undefined ? merged[prop.id] : merged[prop.name];
     normalised[prop.id] = incoming === undefined ? emptyValue(prop) : normaliseCellValue(prop, incoming);
   });
-  for (const prop of properties) if (prop.type === "unique_id") normalised[prop.id] = await nextUniqueId(db, database.id, prop.id);
+  for (const prop of properties) if (prop.type === "unique_id") normalised[prop.id] = null;
+  if (template) {
+    // #86: 템플릿에서 온 관계 값은 그 템플릿을 저장한 사람 권한으로 본다(runDueTemplates 와 같은 판정).
+    const fromTemplate = {};
+    for (const prop of properties) if (templateProps[prop.id] !== undefined && props[prop.id] === undefined && props[prop.name] === undefined) fromTemplate[prop.id] = normalised[prop.id];
+    if (await templateSaverDenied(db, database, properties, template.id, fromTemplate)) return { error: TEMPLATE_STOPPED, status: 403 };
+  }
   for (const hook of ACARD_FEATURES.beforeRowWrite) await hook({ db, database, properties, before: null, props: normalised });
   const personError = await personGuard(db, env, database, properties, null, normalised);
   if (personError) return { error: personError, status: 400 };
   const relations = await applyRowProps(db, database, properties, id, normalised, { lenient: !!template });
   if (relations.error) return { error: relations.error, status: relations.status };
-  const title = titleProp ? String(normalised[titleProp.id] || "") : "";
-  const pageSlug = await createRowPage(db, database, title || "새 행", template ? template.blocks : []);
-  try {
-    await db.batch([
-      ...relations.locks,
-      db.prepare("INSERT INTO db_rows (id, database_id, page, props, ord, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .bind(id, database.id, pageSlug, JSON.stringify(normalised), Number(maxRow && maxRow.m ? maxRow.m : 0) + 10, now, now),
-      ...relations.statements,
-    ]);
-  } catch (error) {
-    await deleteRowPage(db, pageSlug);
-    if (isCycleError(error)) return { error: CYCLE_ERROR, status: 400 };
-    throw error;
-  }
-  const saved = await db.prepare("SELECT props FROM db_rows WHERE id = ?").bind(id).first();
-  return { row: { id, page: pageSlug, ord: Number(maxRow && maxRow.m ? maxRow.m : 0) + 10, props: parseJson(saved && saved.props, normalised), created: now, updated: now } };
+  const title = (titleProp ? String(normalised[titleProp.id] || "") : "") || "새 행";
+  const baseOrd = Number(maxRow && maxRow.m ? maxRow.m : 0) + 10;
+  // offset: 같은 batch 에서 같은 DB 에 만드는 앞선 행 수. taken: 같은 batch 에서 이미 고른 페이지 주소.
+  // ID 번호는 한 번만 받는다: 같은 순간 같은 페이지 주소를 골라 batch 를 다시 만들 때도 번호를 새로 쓰지 않는다.
+  let numbered = false;
+  const build = async (offset = 0, taken = new Set()) => {
+    if (!numbered) for (const prop of properties) if (prop.type === "unique_id") normalised[prop.id] = await nextUniqueId(db, database.id, prop.id);
+    numbered = true;
+    let slug = slugify(title);
+    if (taken.has(slug) || await db.prepare("SELECT slug FROM pages WHERE slug = ?").bind(slug).first()) slug = slugify(title) + "-" + Math.random().toString(36).slice(2, 8);
+    taken.add(slug);
+    const now = Date.now();
+    const ord = baseOrd + offset * 10;
+    const blocks = normaliseBlocks(template && template.blocks.length ? template.blocks : [{ id: "b1", type: "paragraph", text: "", checked: false, indent: 0, meta: null }]);
+    const row = { id, page: slug, ord, props: normalised, created: now, updated: now };
+    return {
+      row, slug, blocks,
+      statements: [
+        ...relations.locks,
+        db.prepare("INSERT INTO pages (slug, title, parent, ord, kind, updated, source, hash) VALUES (?, ?, ?, ?, 'db_row', ?, 'editor', NULL)").bind(slug, title.slice(0, 200), database.slug, now % 100000, now),
+        ...blockStatements(db, slug, blocks),
+        db.prepare("INSERT INTO db_rows (id, database_id, page, props, ord, created, updated) VALUES (?, ?, ?, ?, ?, ?, ?)").bind(id, database.id, slug, JSON.stringify(normalised), ord, now, now),
+        ...relations.statements,
+      ],
+    };
+  };
+  return { build };
 }
 
-// 행 값 바꾸기(행 PATCH 와 버튼 update_row/update_related 가 같이 쓴다): 소속 확인, 보드 진행률, 사람 검사, 관계 동기화, 제목 동기화.
-async function patchRow(db, env, database, rowId, incoming) {
+// 한 batch 로 쓰고, 순환 가드는 400 으로, 같은 순간 같은 페이지 주소를 고른 경쟁은 다시 준비해서(최대 3번) 푼다.
+async function commitRowWrites(db, prepareAll) {
+  for (let attempt = 0; ; attempt += 1) {
+    const ready = await prepareAll();
+    if (ready.error) return ready;
+    try {
+      if (ready.statements.length) await db.batch(ready.statements);
+      return ready;
+    } catch (error) {
+      if (isCycleError(error)) return { error: CYCLE_ERROR, status: 400 };
+      if (attempt >= 2 || !/unique|duplicate/i.test(String(error && error.message))) throw error;
+    }
+  }
+}
+
+async function createRow(db, env, database, body) {
+  const prepared = await prepareCreateRow(db, env, database, body);
+  if (prepared.error) return prepared;
+  const done = await commitRowWrites(db, () => prepared.build());
+  if (done.error) return { error: done.error, status: done.status };
+  await afterBlockSave(db, done.slug, done.blocks);
+  const saved = await db.prepare("SELECT props FROM db_rows WHERE id = ?").bind(done.row.id).first();
+  return { row: { ...done.row, props: parseJson(saved && saved.props, done.row.props) } };
+}
+
+// 행 값 바꾸기(행 PATCH 와 버튼 update_row/update_related 가 같이 쓴다): 소속 확인, 행 쓰기 권한, 보드 진행률, 사람 검사,
+// 관계 동기화(상대 행 권한 포함), 제목 동기화. 읽기와 검사만 하고 문장을 돌려준다. 쓰기는 호출하는 쪽이 한 batch 로 한다.
+// chain: 같은 행에 앞 단계가 있으면 그 결과({ props, touched })에서 이어 간다(규칙은 단계마다 돌고, 쓰는 것은 마지막 상태 하나).
+async function preparePatchRow(db, env, database, rowId, incoming, chain = null) {
   const row = await db.prepare("SELECT id, page, props FROM db_rows WHERE id = ? AND database_id = ?").bind(rowId, database.id).first();
   if (!row) return { error: "없는 행이에요.", status: 404 };
-  if (!incoming) return { ok: true };
+  if (!canWriteRow(db, row, database.slug)) return { error: "이 행을 편집할 권한이 없어요.", status: 401 };
+  if (!incoming) return { statements: [] };
   const properties = await rowProperties(db, database);
   if (!validBoardProgress(database, properties, incoming)) return { error: "진행률은 0부터 100까지의 숫자로 입력해 주세요.", status: 400 };
-  const { before, props: merged } = await updatedRowProps(db, rowId, incoming, properties, database);
+  const { before, props: merged } = await updatedRowProps(db, rowId, incoming, properties, database, chain ? chain.props : null);
   const personError = await personGuard(db, env, database, properties, before, merged);
   if (personError) return { error: personError, status: 400 };
-  const touched = new Set(properties.filter((prop) => incomingValue(incoming, prop) !== undefined).map((prop) => prop.id));
+  const touched = new Set([...(chain ? chain.touched : []), ...properties.filter((prop) => incomingValue(incoming, prop) !== undefined).map((prop) => prop.id)]);
   const relations = await applyRowProps(db, database, properties, rowId, merged, { touched });
   if (relations.error) return { error: relations.error, status: relations.status };
-  try {
-    await db.batch([
-      ...relations.locks,
-      db.prepare("UPDATE db_rows SET props = ?, updated = ? WHERE id = ?").bind(JSON.stringify(merged), Date.now(), rowId),
-      ...relations.statements,
-    ]);
-  } catch (error) {
-    if (isCycleError(error)) return { error: CYCLE_ERROR, status: 400 };
-    throw error;
-  }
+  const now = Date.now();
+  const statements = [
+    ...relations.locks,
+    db.prepare("UPDATE db_rows SET props = ?, updated = ? WHERE id = ?").bind(JSON.stringify(merged), now, rowId),
+    ...relations.statements,
+  ];
   const titleProp = properties.find((prop) => prop.type === "title");
-  const touchesTitle = titleProp && (Object.prototype.hasOwnProperty.call(incoming, titleProp.id) || Object.prototype.hasOwnProperty.call(incoming, titleProp.name) || merged[titleProp.id] !== parseJson(row.props, {})[titleProp.id]);
-  if (touchesTitle) await syncRowPageTitle(db, rowId, merged[titleProp.id]);
-  return { ok: true };
+  const touchesTitle = titleProp && (hasKey(incoming, titleProp.id) || hasKey(incoming, titleProp.name) || merged[titleProp.id] !== parseJson(row.props, {})[titleProp.id]);
+  if (touchesTitle && row.page) statements.push(db.prepare("UPDATE pages SET title = ?, updated = ? WHERE slug = ?").bind(String(merged[titleProp.id] || "제목 없음").slice(0, 200), now, row.page));
+  return { statements, props: merged, touched };
+}
+
+async function patchRow(db, env, database, rowId, incoming) {
+  const done = await commitRowWrites(db, () => preparePatchRow(db, env, database, rowId, incoming));
+  return done.error ? { error: done.error, status: done.status } : { ok: true };
 }
 
 // ---------- 동작형 버튼(notion-parity C3 블록, C4 속성)의 공용 실행기 ----------
@@ -2714,11 +3241,6 @@ function normaliseButtonActions(input) {
     }
   }
   return out;
-}
-
-function canEditDatabase(db, slug) {
-  if (db.acardVisible && !db.acardVisible.has(String(slug))) return false;
-  return !db.acardRoles || ["edit", "full"].indexOf(db.acardRoles.get(String(slug)) || "none") >= 0;
 }
 
 // 값 해석: 고정값 그대로, {relative:"today"} 오늘 날짜, {relative:"now"} 지금 날짜+시각, {ref:"row"} 누른 행 id(관계 칸).
@@ -2782,7 +3304,10 @@ async function databaseBySlug(db, slug) {
 }
 
 // ctx: { database, row } - 버튼 속성이면 그 행의 DB 와 행 id, 버튼 블록이면 둘 다 없다.
-// 권한: 실행 전에 동작마다 대상 DB(관계는 상대 DB 까지) 편집 권한을 모두 본다. 하나라도 없으면 아무것도 쓰지 않고 403.
+// 권한(#86): 1) 동작마다 대상 DB(관계는 상대 DB 까지) 편집 권한을 본다(없으면 403). 2) 모든 단계를 쓰기 전에 준비한다 -
+// 같은 행에 대한 update_row/update_related 값은 단계 순서대로 합치고(뒤 단계가 이긴다), 행마다 preparePatchRow/prepareCreateRow
+// 가 그 행과 그 행이 설정하는 관계 값이 바꿀 상대 행(끊기는 행 포함)의 쓰기 권한을 본다(없으면 401). 3) 하나라도 실패하면
+// 아무것도 쓰지 않고, 모두 통과하면 모든 단계를 한 batch 로 쓴다. 그래서 일부 단계만 저장되는 일이 없다.
 async function runActions(db, env, ctx, input) {
   if (!Array.isArray(input) || input.length > BUTTON_ACTION_MAX) return { error: "버튼 동작은 10개까지예요.", status: 400 };
   const actions = normaliseButtonActions(input);
@@ -2799,6 +3324,8 @@ async function runActions(db, env, ctx, input) {
     }
     if (!ctx.database || !ctx.row) return { error: "이 동작은 데이터베이스 행의 버튼에서만 쓸 수 있어요.", status: 400 };
     if (!canEditDatabase(db, ctx.database.slug)) return { error: "이 데이터베이스를 편집할 권한이 없어요.", status: 403 };
+    const rowDenied = await assertCanWriteRows(db, [ctx.row], "이 행을 편집할 권한이 없어요.");
+    if (rowDenied) return rowDenied;
     if (action.type === "update_row") { plan.push({ action, database: ctx.database }); continue; }
     const properties = await rowProperties(db, ctx.database);
     const relation = properties.find((prop) => prop.id === action.relation && prop.type === "relation");
@@ -2809,35 +3336,75 @@ async function runActions(db, env, ctx, input) {
     const current = await db.prepare("SELECT props FROM db_rows WHERE id = ? AND database_id = ?").bind(ctx.row, ctx.database.id).first();
     if (!current) return { error: "없는 행이에요.", status: 404 };
     const ids = normaliseCellValue(relation, parseJson(current.props, {})[relation.id]);
+    const linkedDenied = await assertCanWriteRows(db, ids);
+    if (linkedDenied) return linkedDenied;
     plan.push({ action, database: target, rows: ids });
   }
   const total = plan.reduce((sum, step) => sum + (step.action.type === "update_related" ? step.rows.length : step.action.type === "update_row" || step.action.type === "create_row" ? 1 : 0), 0);
   if (total > BUTTON_ROWS_MAX) return { error: "버튼 한 번으로는 500행까지 바꿀 수 있어요.", status: 400 };
   const now = Date.now();
-  const result = { created: [], updated: 0, open: null };
-  for (let index = 0; index < plan.length; index += 1) {
-    const { action, database, rows } = plan[index];
-    const fail = (made) => ({ ...result, error: made.error, status: made.status, step: index });
-    if (action.type === "create_row") {
-      const made = await createRow(db, env, database, { template: action.template, props: resolveButtonValues(action.values, ctx, now) });
-      if (made.error) return fail(made);
-      result.created.push({ slug: database.slug, row: made.row.id, page: made.row.page });
-    } else if (action.type === "update_row") {
-      const made = await patchRow(db, env, database, ctx.row, resolveButtonValues(action.values, ctx, now));
-      if (made.error) return fail(made);
-      result.updated += 1;
-    } else if (action.type === "update_related") {
-      for (const rowId of rows) {
-        const made = await patchRow(db, env, database, rowId, resolveButtonValues(action.values, ctx, now));
-        if (made.error && made.status !== 404) return fail(made);
-        if (!made.error) result.updated += 1;
+  const empty = { created: [], updated: 0, open: null };
+  let counted = null;
+  const done = await commitRowWrites(db, async () => {
+    // 행마다 단계를 순서대로 모은다. 단계마다 앞 단계 결과에서 이어 준비하므로(규칙·사람 검사·관계 권한은 단계마다 본다)
+    // 예전처럼 단계별로 저장했을 때와 같은 최종 상태가 되고, 쓰는 것은 그 최종 상태 하나다.
+    const patches = new Map();
+    const creates = [];
+    let updated = 0;
+    for (let index = 0; index < plan.length; index += 1) {
+      const { action, database, rows } = plan[index];
+      if (action.type === "create_row") { creates.push({ index, database, action }); continue; }
+      if (action.type !== "update_row" && action.type !== "update_related") continue;
+      const values = resolveButtonValues(action.values, ctx, now);
+      for (const rowId of action.type === "update_row" ? [ctx.row] : rows) {
+        const key = database.id + "\n" + rowId;
+        if (!patches.has(key)) patches.set(key, { database, rowId, steps: [] });
+        patches.get(key).steps.push({ index, type: action.type, values });
       }
-    } else if (action.type === "open") {
-      if (action.target === "url") result.open = action.url;
-      else {
-        const last = result.created[result.created.length - 1];
-        if (last && last.page) result.open = "/" + encodeURIComponent(last.page) + "/";
+    }
+    const statements = [];
+    for (const patch of patches.values()) {
+      let chain = null, prepared = null, skipped = false;
+      for (const step of patch.steps) {
+        prepared = await preparePatchRow(db, env, patch.database, patch.rowId, step.values, chain);
+        // update_related 의 지워진 상대 행은 건너뛴다(예전과 같다). 이 행 자체가 없으면 실패다.
+        if (prepared.status === 404 && !patch.steps.some((entry) => entry.type === "update_row")) { skipped = true; break; }
+        if (prepared.error) return { ...prepared, step: step.index };
+        chain = { props: prepared.props, touched: prepared.touched };
       }
+      if (skipped) continue;
+      statements.push(...prepared.statements);
+      updated += patch.steps.length;
+    }
+    const built = [];
+    for (const create of creates) {
+      const prepared = await prepareCreateRow(db, env, create.database, { template: create.action.template, props: resolveButtonValues(create.action.values, ctx, now) });
+      if (prepared.error) return { ...prepared, step: create.index };
+      built.push({ create, prepared });
+    }
+    // 여기까지 모든 검사를 통과했다. 이제 ID 번호를 받고 문장을 만든다.
+    const offsets = new Map(), taken = new Set(), created = [];
+    for (const { create, prepared } of built) {
+      const offset = offsets.get(create.database.id) || 0;
+      offsets.set(create.database.id, offset + 1);
+      const made = await prepared.build(offset, taken);
+      statements.push(...made.statements);
+      created.push({ slug: create.database.slug, row: made.row.id, page: made.slug, blocks: made.blocks });
+    }
+    counted = { created, updated };
+    return { statements };
+  });
+  if (done.error) return { ...empty, error: done.error, status: done.status, ...(done.step !== undefined ? { step: done.step } : {}) };
+  for (const made of counted.created) await afterBlockSave(db, made.page, made.blocks);
+  const result = { created: counted.created.map(({ slug, row, page }) => ({ slug, row, page })), updated: counted.updated, open: null };
+  let createdSoFar = 0;
+  for (const { action } of plan) {
+    if (action.type === "create_row") createdSoFar += 1;
+    if (action.type !== "open") continue;
+    if (action.target === "url") result.open = action.url;
+    else {
+      const last = result.created[createdSoFar - 1];
+      if (last && last.page) result.open = "/" + encodeURIComponent(last.page) + "/";
     }
   }
   return result;
@@ -2942,6 +3509,11 @@ export const acardHost = {
     const db = await this.prepare(env);
     return await runDueTemplates(db, Number.isFinite(now) ? now : Date.now());
   },
+  // /__templates/migrate (gate/agent-entry.ts, #86 B10): this workspace's stored templates to the checked shape.
+  async templateMigrate(env) {
+    const db = await this.prepare(env);
+    return await migrateTemplates(db);
+  },
   async agentStep(env, session) {
     const db = await this.prepare(env);
     if (!ACARD_FEATURES.services.agentStep) return { status: 404, done: true };
@@ -2969,14 +3541,81 @@ export const acardHost = {
   isAgentError(error) {
     return error instanceof AgentError;
   },
+  // Admin console test of the storage mail (gate/admin.ts POST /storage-alert-test): the real mail with "[테스트]" in the
+  // subject and today's usage from the global ledger, sent once to OWNER_ALERT_EMAIL. The ledger and its alert flags are
+  // only read, so the real 8 GB / 9.5 GB mails still go out when those are reached.
+  async storageAlertTest(env) {
+    const ledger = mediaLedger(env);
+    const used = ledger && typeof ledger.mediaUsage === "function" ? Number((await ledger.mediaUsage(0, Infinity)).used) || 0 : 0;
+    return { used, to: env.OWNER_ALERT_EMAIL || null, ...(await mailOwnerAboutStorage(env, used, false, true)) };
+  },
   challenge: (message, next, status) => challenge(message, next, status),
   escapeHtml: (text) => escapeHtml(text),
 };
 
+// Plan the whole trash group before writing: owned row pages follow their database even if moved out of its tree.
+// The editor commits these statements together with every page tombstone/content deletion; KV cleanup follows commit.
+async function permanentDeletePlan(db, slug) {
+  const pages = new Set([slug]), databases = new Map();
+  for (const member of pages) {
+    if (ACARD_FEATURES.services.trashGroup) {
+      for (const child of await ACARD_FEATURES.services.trashGroup(db, member)) pages.add(child);
+    }
+    const database = await readDatabaseBySlug(db, member);
+    if (!database) continue;
+    databases.set(database.id, database);
+    const rows = await db.prepare("SELECT page FROM db_rows WHERE database_id = ? AND page IS NOT NULL").bind(database.id).all();
+    for (const row of rows.results ?? []) pages.add(String(row.page));
+  }
+  const locks = [], statements = [], media = [];
+  for (const database of databases.values()) {
+    const rowIds = ((await db.prepare("SELECT id FROM db_rows WHERE database_id = ?").bind(database.id).all()).results ?? []).map((row) => String(row.id));
+    const relations = await rowDeleteRelationStatements(db, database, rowIds);
+    locks.push(...relations.locks);
+    statements.push(...relations.statements);
+    for (const prop of twoWayRelations(await readProperties(db, database.id))) {
+      statements.push(...await disableRelationPairStatements(db, prop, false));
+    }
+    statements.push(
+      db.prepare("DELETE FROM db_relation_links WHERE prop_id IN (SELECT id FROM db_properties WHERE database_id = ?) OR src_row IN (SELECT id FROM db_rows WHERE database_id = ?) OR dst_row IN (SELECT id FROM db_rows WHERE database_id = ?)").bind(database.id, database.id, database.id),
+      db.prepare("DELETE FROM db_counters WHERE property_id IN (SELECT id FROM db_properties WHERE database_id = ?)").bind(database.id),
+      db.prepare("DELETE FROM db_template_runs WHERE template_id IN (SELECT id FROM db_templates WHERE database_id = ?) OR row_id IN (SELECT id FROM db_rows WHERE database_id = ?)").bind(database.id, database.id),
+      db.prepare("DELETE FROM db_template_savers WHERE template_id IN (SELECT id FROM db_templates WHERE database_id = ?)").bind(database.id),
+      ...["db_rows", "db_properties", "db_views", "db_templates", "db_rules", "db_forms", "db_value_backups"].map((table) => db.prepare("DELETE FROM " + table + " WHERE database_id = ?").bind(database.id)),
+      db.prepare("DELETE FROM databases WHERE id = ?").bind(database.id),
+    );
+  }
+  for (const member of pages) {
+    // A row page can also be permanently deleted on its own, without deleting the rest of its database.
+    const rows = await db.prepare("SELECT id, database_id FROM db_rows WHERE page = ?").bind(member).all();
+    for (const row of rows.results ?? []) {
+      if (databases.has(row.database_id)) continue;
+      const relations = await rowDeleteRelationStatements(db, { id: row.database_id }, [String(row.id)]);
+      locks.push(...relations.locks);
+      statements.push(...relations.statements,
+        db.prepare("DELETE FROM db_relation_links WHERE src_row = ? OR dst_row = ?").bind(row.id, row.id),
+        db.prepare("DELETE FROM db_template_runs WHERE row_id = ?").bind(row.id),
+        db.prepare("DELETE FROM db_rows WHERE id = ?").bind(row.id));
+    }
+    media.push(...((await db.prepare("SELECT id, bytes FROM media WHERE page = ?").bind(member).all()).results ?? []));
+    statements.push(
+      db.prepare("DELETE FROM share_invites WHERE rule IN (SELECT id FROM share_rules WHERE page = ? AND principal != 'publish')").bind(member),
+      db.prepare("DELETE FROM share_rules WHERE page = ? AND principal != 'publish'").bind(member),
+      db.prepare("UPDATE share_rules SET revoked = ? WHERE page = ? AND principal = 'publish' AND revoked IS NULL").bind(Date.now(), member),
+      db.prepare("DELETE FROM share_requests WHERE page = ?").bind(member),
+      db.prepare("DELETE FROM share_pages WHERE page = ?").bind(member),
+      db.prepare("DELETE FROM media WHERE page = ?").bind(member),
+    );
+  }
+  return { pages: [...pages], statements: [...locks, ...statements], media, databases: databases.size };
+}
+
 async function handleApi(request, env, db, url, dispatchFeatures = true) {
   const path = url.pathname.slice(API.length) || "/";
   const method = request.method.toUpperCase();
-  if (dispatchFeatures && ACARD_FEATURES.api.length) {
+  const permanent = method === "DELETE" && /^\/page\/([^/]+)\/permanent\/?$/.exec(path);
+  // Permanent sharing cleanup belongs to the deletion batch, not the feature hook's pre-delete write.
+  if (dispatchFeatures && !permanent && ACARD_FEATURES.api.length) {
     const ctx = featureContext(request, env, db, url);
     for (const hook of ACARD_FEATURES.api) {
       const response = await hook(ctx);
@@ -2996,22 +3635,13 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
     }
     return json({ ok: true, deleted });
   }
-  const permanent = method === "DELETE" && /^\/page\/([^/]+)\/permanent\/?$/.exec(path);
-  // #13: a folder trashed with its contents takes them along when it is deleted for good.
-  let group = [];
-  if (permanent && ACARD_FEATURES.services.trashGroup) { try { group = await ACARD_FEATURES.services.trashGroup(db, resolveSlug(decodeURIComponent(permanent[1]))); } catch {} }
-  const lifecycle = await handleEditorApi(request, db, url, { json, readPage, saveBlocks, normaliseBlocks, slugify });
+  let cleanup;
+  const lifecycle = await handleEditorApi(request, db, url, { json, readPage, saveBlocks, normaliseBlocks, slugify,
+    permanentDeletePlan: async (db, slug) => (cleanup = await permanentDeletePlan(db, slug)) });
   if (lifecycle && permanent && lifecycle.ok && env[MEDIA_BINDING]) {
-    let slug = null;
-    try { slug = resolveSlug(decodeURIComponent(permanent[1])); } catch {}
-    const rows = slug ? await db.prepare("SELECT id, bytes FROM media WHERE page = ?").bind(slug).all() : { results: [] };
-    for (const row of rows.results ?? []) await env[MEDIA_BINDING].delete("media/" + row.id).then(() => releaseMedia(env, Number(row.bytes))).catch(() => {});
-    if (slug) await db.prepare("DELETE FROM media WHERE page = ?").bind(slug).run();
+    for (const row of cleanup.media) await env[MEDIA_BINDING].delete("media/" + row.id).then(() => releaseMedia(env, Number(row.bytes))).catch(() => {});
   }
-  if (lifecycle && permanent && lifecycle.ok) for (const member of group) {
-    const target = new URL(API + "/page/" + encodeURIComponent(member) + "/permanent", url);
-    await handleApi(new Request(target, { method: "DELETE" }), env, db, target, dispatchFeatures);
-  }
+  if (lifecycle && permanent && lifecycle.ok && cleanup.databases) await armRecurring(env, db);
   if (lifecycle) return lifecycle;
 
   if (path === "/sync" && method === "POST") {
@@ -3309,6 +3939,17 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
 
     if (method === "DELETE" && path === "/db/" + dbMatch[1]) {
       const allRows = ((await db.prepare("SELECT id FROM db_rows WHERE database_id = ?").bind(database.id).all()).results ?? []).map((row) => String(row.id));
+      // #86: 편집할 수 없는 행(이 DB 의 비공개 행, 양방향으로 이어진 다른 DB 의 행)이 있으면 데이터베이스를 지우지 않는다.
+      if (db.acardRoles && allRows.length) {
+        const message = "편집할 수 없는 행이 있어서 데이터베이스를 지울 수 없어요.";
+        const linked = [];
+        for (const part of idChunks(allRows, 45)) {
+          const marks = part.map(() => "?").join(", ");
+          linked.push(...((await db.prepare("SELECT dst_row AS id FROM db_relation_links WHERE src_row IN (" + marks + ") UNION SELECT src_row AS id FROM db_relation_links WHERE dst_row IN (" + marks + ")").bind(...part, ...part).all()).results ?? []).map((row) => String(row.id)));
+        }
+        const denied = await assertCanWriteAllRows(db, database.id, message) || await assertCanWriteRows(db, linked, message);
+        if (denied) return json({ error: denied.error }, denied.status);
+      }
       const relations = await rowDeleteRelationStatements(db, database, allRows);
       const ownPairs = await relationPairs(db, await readProperties(db, database.id));
       await db.batch([
@@ -3324,7 +3965,9 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
         db.prepare("DELETE FROM db_counters WHERE property_id IN (SELECT id FROM db_properties WHERE database_id = ?)").bind(database.id),
         db.prepare("DELETE FROM db_properties WHERE database_id = ?").bind(database.id),
         db.prepare("DELETE FROM db_views WHERE database_id = ?").bind(database.id),
+        db.prepare("DELETE FROM db_template_savers WHERE template_id IN (SELECT id FROM db_templates WHERE database_id = ?)").bind(database.id),
         db.prepare("DELETE FROM db_templates WHERE database_id = ?").bind(database.id),
+        db.prepare("DELETE FROM db_value_backups WHERE database_id = ?").bind(database.id),
         db.prepare("DELETE FROM databases WHERE id = ?").bind(database.id),
       ]);
       await armRecurring(env, db);
@@ -3353,10 +3996,23 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
           if (!allowed) return json({ error: "버튼 동작을 저장할 수 없어요. 대상 데이터베이스를 편집할 권한을 확인해 주세요." }, 403);
           prop.config.actions = allowed;
         }
+        const numberDenied = prop.type === "unique_id" ? await assertCanWriteAllRows(db, database.id, "편집할 수 없는 행이 있어서 번호를 붙일 수 없어요.") : null;
+        if (numberDenied) return json({ error: numberDenied.error }, numberDenied.status);
         prop.ord = Number.isFinite(body.ord) ? Math.trunc(body.ord) : (properties.length ? Math.max(...properties.map((entry) => entry.ord)) + 10 : 10);
         if (await db.prepare("SELECT 1 AS x FROM db_properties WHERE id = ?").bind(prop.id).first()) prop.id = scopedId(database.id, dbId("p"));
+        // #86 B11: 행이나 템플릿에 이 id 의 값이 아직 남아 있으면(예전 빌드에서 지운 속성) 그 값을 이어받지 않게 새 id 를 쓴다.
+        const leftover = '%"' + prop.id + '":%';
+        if (await db.prepare("SELECT 1 AS x FROM db_rows WHERE database_id = ? AND props LIKE ? UNION ALL SELECT 1 AS x FROM db_templates WHERE database_id = ? AND props LIKE ?").bind(database.id, leftover, database.id, leftover).first()) prop.id = scopedId(database.id, dbId("p"));
         if (prop.type === "relation") prop.config = Object.assign({}, prop.config, { pair: "" });
-        if (prop.type === "relation" && prop.config.synced && !(await readDatabaseBySlug(db, prop.config.database))) return json({ error: "연결할 데이터베이스를 찾지 못했어요." }, 400);
+        if (prop.type === "relation" && prop.config.synced) {
+          const pairTarget = await readDatabaseBySlug(db, prop.config.database);
+          if (!pairTarget) return json({ error: "연결할 데이터베이스를 찾지 못했어요." }, 400);
+          // #86: 양방향 속성은 두 DB 의 모든 행 값을 다시 쓴다. 속성을 넣기 전에 본다(enableRelationPair 도 다시 본다).
+          if (!canWriteSlug(db, pairTarget.slug)) return json({ error: "상대 데이터베이스를 편집할 권한이 없어요." }, 401);
+          const message = "편집할 수 없는 행이 있어서 양방향으로 바꿀 수 없어요.";
+          const pairDenied = await assertCanWriteAllRows(db, database.id, message) || await assertCanWriteAllRows(db, pairTarget.id, message);
+          if (pairDenied) return json({ error: pairDenied.error }, pairDenied.status);
+        }
         await db.prepare("INSERT INTO db_properties (id, database_id, name, type, config, ord, width, hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
           .bind(prop.id, database.id, prop.name, prop.type, JSON.stringify(prop.config), prop.ord, prop.width, prop.hidden ? 1 : 0).run();
         if (prop.type === "unique_id") await ensureUniqueIds(db, database.id, prop.id, false);
@@ -3390,6 +4046,8 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
           next.config.actions = allowed;
         }
         const wasSynced = current.type === "relation" && current.config.synced && !!current.config.pair;
+        // #86: 관계가 아니던 값은 링크로 바꾸지 않고 따로 남긴다(relationConversionStatements). unlinked = 그렇게 남긴 값 수.
+        const conversion = next.type === "relation" && current.type !== "relation" ? await relationConversionStatements(db, database, current) : { statements: [], count: 0 };
         if (next.type === "relation") {
           // pair 는 서버가 정한다: 켜 둔 동안은 지금 짝을 유지하고, 꺼져 있으면 비운다.
           next.config = Object.assign({}, next.config, { pair: wasSynced ? current.config.pair : "" });
@@ -3397,15 +4055,26 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
             return json({ error: "양방향 관계는 연결 데이터베이스를 바꿀 수 없어요. 상대 DB 표시를 끄고 바꿔 주세요." }, 400);
           }
           if (!wasSynced && next.config.synced) {
-            const enabled = await enableRelationPair(db, database, current, next, { pairName: body.pairName, pairLimit: body.pairLimit });
+            const enabled = await enableRelationPair(db, database, current, next, { pairName: body.pairName, pairLimit: body.pairLimit, before: conversion.statements, fresh: current.type !== "relation" });
             if (enabled.error) return json({ error: enabled.error }, enabled.status);
-            return json({ property: enabled.property, pair: enabled.pair });
+            return json({ property: enabled.property, pair: enabled.pair, unlinked: conversion.count });
           }
         }
         const turnsOff = wasSynced && (next.type !== "relation" || !next.config.synced);
+        // #86: 양방향 끄기는 상대 DB 의 짝 속성을 바꾸고, 타입 바꾸기는 이 DB 의 모든 행을 다시 쓴다.
+        if (turnsOff && !canEditDatabase(db, current.config.database)) return json({ error: "상대 데이터베이스를 편집할 권한이 없어요." }, 401);
+        // #86: dropPair 는 상대 DB 의 짝 속성을 지워 그 DB 모든 행에서 값이 사라진다.
+        if (turnsOff && body.dropPair === true) {
+          const pairDb = await readDatabaseBySlug(db, current.config.database);
+          const dropDenied = pairDb ? await assertCanWriteAllRows(db, pairDb.id, "편집할 수 없는 행이 있어서 속성을 지울 수 없어요.") : null;
+          if (dropDenied) return json({ error: dropDenied.error }, dropDenied.status);
+        }
+        const typeDenied = next.type !== current.type ? await assertCanWriteAllRows(db, database.id, "편집할 수 없는 행이 있어서 속성 타입을 바꿀 수 없어요.") : null;
+        if (typeDenied) return json({ error: typeDenied.error }, typeDenied.status);
         if (turnsOff && next.type === "relation") next.config = Object.assign({}, next.config, { synced: false, pair: "" });
         await db.batch([
           ...(turnsOff ? await disableRelationPairStatements(db, current, body.dropPair === true) : []),
+          ...conversion.statements,
           db.prepare("UPDATE db_properties SET name = ?, type = ?, config = ?, ord = ?, width = ?, hidden = ? WHERE id = ?")
             .bind(next.name, next.type, JSON.stringify(next.config), next.ord, next.width, next.hidden ? 1 : 0, current.id),
         ]);
@@ -3424,16 +4093,23 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
             await ensureUniqueIds(db, database.id, current.id, true);
           }
         }
-        return json({ property: next });
+        return json(next.type === "relation" && current.type !== "relation" ? { property: next, unlinked: conversion.count } : { property: next });
       }
 
       if (target && method === "DELETE") {
         if (properties.length <= 1) return json({ error: "마지막 속성은 지울 수 없어요." }, 400);
         const removing = properties.find((entry) => entry.id === target);
-        const pairStatements = removing && removing.type === "relation" && removing.config.synced && removing.config.pair
-          ? await disableRelationPairStatements(db, removing, false) : [];
+        const pairedRemoval = removing && removing.type === "relation" && removing.config.synced && removing.config.pair;
+        if (pairedRemoval && !canEditDatabase(db, removing.config.database)) return json({ error: "상대 데이터베이스를 편집할 권한이 없어요." }, 401);
+        // #86: 속성을 지우면 모든 행에서 그 값이 사라진다(양방향이면 상대 DB 행의 연결도).
+        const removeDenied = removing ? await assertCanWriteAllRows(db, database.id, "편집할 수 없는 행이 있어서 속성을 지울 수 없어요.") : null;
+        if (removeDenied) return json({ error: removeDenied.error }, removeDenied.status);
+        const pairStatements = pairedRemoval ? await disableRelationPairStatements(db, removing, false) : [];
+        // #86 B11: 지운 속성의 행 셀·템플릿 값은 db_value_backups 로 옮기고 비운다(같은 id 로 다시 만들어도 값이 따라오지 않는다).
+        const leftovers = removing ? await relationConversionStatements(db, database, removing, "delete") : { statements: [] };
         await db.batch([
           ...pairStatements,
+          ...leftovers.statements,
           db.prepare("DELETE FROM db_counters WHERE property_id IN (SELECT id FROM db_properties WHERE id = ? AND database_id = ?)").bind(target, database.id),
           db.prepare("DELETE FROM db_properties WHERE id = ? AND database_id = ?").bind(target, database.id),
         ]);
@@ -3463,7 +4139,8 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
       }
 
       if (target && method === "DELETE") {
-        await deleteRowsWithRelations(db, database, [target]);
+        const deleted = await deleteRowsWithRelations(db, database, [target]);
+        if (deleted?.error) return json({ error: deleted.error }, deleted.status);
         return json({ ok: true });
       }
       return json({ error: "없는 API예요." }, 404);
@@ -3505,12 +4182,21 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
     if (kind === "templates") {
       if (!target && method === "POST") {
         const template = normaliseTemplate(Object.assign({}, body, { id: scopedId(database.id, typeof body.id === "string" && body.id ? body.id : dbId("t")) }), 0);
+        const canonical = await canonicalTemplateProps(db, database, template.props);
+        if (canonical.error) return json({ error: canonical.error }, canonical.status);
+        template.props = canonical.props;
+        const templateDenied = await templateRelationsDenied(db, database, template.props);
+        if (templateDenied) return json({ error: templateDenied.error }, templateDenied.status);
         if (await db.prepare("SELECT 1 AS x FROM db_templates WHERE id = ?").bind(template.id).first()) template.id = scopedId(database.id, dbId("t"));
         const maxRow = await db.prepare("SELECT COALESCE(MAX(ord), 0) AS m FROM db_templates WHERE database_id = ?").bind(database.id).first();
         template.ord = Number(maxRow && maxRow.m ? maxRow.m : 0) + 10;
-        await db.prepare("INSERT INTO db_templates (id, database_id, name, icon, props, blocks, ord) VALUES (?, ?, ?, ?, ?, ?, ?)")
-          .bind(template.id, database.id, template.name, template.icon, JSON.stringify(template.props), JSON.stringify(template.blocks), template.ord).run();
-        return json({ template });
+        await db.batch([
+          db.prepare("INSERT INTO db_templates (id, database_id, name, icon, props, blocks, ord) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            .bind(template.id, database.id, template.name, template.icon, JSON.stringify(template.props), JSON.stringify(template.blocks), template.ord),
+          // #86: 이 값을 검사받은 사람이 저장한 사람이다(나중에 링크를 만들 때 이 사람 권한으로 다시 본다).
+          templateSaverStatement(db, template.id),
+        ]);
+        return json({ template: Object.assign(template, { blocked: null }) });
       }
       if (target && method === "PATCH") {
         const current = await db.prepare("SELECT id, name, icon, props, blocks, ord, recurrence FROM db_templates WHERE id = ? AND database_id = ?").bind(target, database.id).first();
@@ -3533,13 +4219,31 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
           ord: current.ord,
           recurrence,
         }, 0);
-        await db.prepare("UPDATE db_templates SET name = ?, icon = ?, props = ?, blocks = ?, recurrence = ? WHERE id = ?")
-          .bind(next.name, next.icon, JSON.stringify(next.props), JSON.stringify(next.blocks), next.recurrence ? JSON.stringify(next.recurrence) : null, current.id).run();
+        // #86: 반복이 있는 템플릿은 나중에 소유자 권한(runDueTemplates)으로 이 값을 쓴다. 저장될 템플릿에 반복이 있으면
+        // 무엇을 바꾸든(반복만 켜도) 저장될 값 그대로 지금 이 요청의 권한으로 본다.
+        // 새 값(body.props)은 엄격하게, 이미 저장된 값(예전 이름 키 템플릿 포함)은 맞는 속성·행만 남겨 같은 형태로 바꾼다.
+        const canonical = await canonicalTemplateProps(db, database, next.props, { lenient: !(body.props && typeof body.props === "object") });
+        if (canonical.error) return json({ error: canonical.error }, canonical.status);
+        next.props = canonical.props;
+        const wrote = !!(body.props && typeof body.props === "object");
+        const templateDenied = wrote || next.recurrence ? await templateRelationsDenied(db, database, next.props) : null;
+        if (templateDenied) return json({ error: templateDenied.error }, templateDenied.status);
+        // #86: 값을 쓴 요청만 저장한 사람이 된다. 반복만 바꾸면 저장한 사람은 그대로이고 멈춤만 풀려, 다음 실행 때 그 사람 권한으로
+        // 다시 본다(여전히 안 되면 다시 멈춘다). 그래서 소유자가 반복을 켜도 손님이 넣은 값이 소유자 권한을 얻지 않는다.
+        await db.batch([
+          db.prepare("UPDATE db_templates SET name = ?, icon = ?, props = ?, blocks = ?, recurrence = ? WHERE id = ?")
+            .bind(next.name, next.icon, JSON.stringify(next.props), JSON.stringify(next.blocks), next.recurrence ? JSON.stringify(next.recurrence) : null, current.id),
+          wrote ? templateSaverStatement(db, current.id) : db.prepare("UPDATE db_template_savers SET blocked = NULL, blocked_at = NULL WHERE template_id = ?").bind(current.id),
+        ]);
         await armRecurring(env, db);
-        return json({ template: next });
+        const saver = await db.prepare("SELECT blocked FROM db_template_savers WHERE template_id = ?").bind(current.id).first();
+        return json({ template: Object.assign(next, { blocked: saver && saver.blocked ? String(saver.blocked) : null }) });
       }
       if (target && method === "DELETE") {
-        await db.prepare("DELETE FROM db_templates WHERE id = ? AND database_id = ?").bind(target, database.id).run();
+        await db.batch([
+          db.prepare("DELETE FROM db_template_savers WHERE template_id IN (SELECT id FROM db_templates WHERE id = ? AND database_id = ?)").bind(target, database.id),
+          db.prepare("DELETE FROM db_templates WHERE id = ? AND database_id = ?").bind(target, database.id),
+        ]);
         await armRecurring(env, db);
         return json({ ok: true });
       }

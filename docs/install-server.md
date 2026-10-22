@@ -1,6 +1,6 @@
 # Server install
 
-This guide sets up one OpenNotion server on a machine inside your network (office LAN, home lab, VPN).
+This guide sets up one Acard server on a machine inside your network (office LAN, home lab, VPN).
 Everyone else connects to it with a browser or the desktop app (see [install-client.md](install-client.md)).
 
 The server is a single Bun process that stores everything in SQLite files in one data folder.
@@ -34,8 +34,8 @@ Open a new terminal afterwards and check `bun --version`.
 ## 2. Get the code and build it
 
 ```sh
-git clone https://github.com/Hakubisual/open-notion.git
-cd open-notion
+git clone https://github.com/Hakubisual/open-notion-acard.git
+cd open-notion-acard
 bun install
 bun run build
 ```
@@ -72,7 +72,7 @@ hostname -I
 
 ## 4. First start
 
-Windows (PowerShell), from the `open-notion` folder:
+Windows (PowerShell), from the `open-notion-acard` folder:
 
 ```powershell
 $env:ACARD_DATA_DIR = "$PWD\data"
@@ -113,7 +113,7 @@ Cloudflare/Postgres deployment, not by the LAN server.
 Windows (PowerShell as Administrator):
 
 ```powershell
-New-NetFirewallRule -DisplayName "OpenNotion" -Direction Inbound -Protocol TCP -LocalPort 47811 -Action Allow -Profile Domain,Private
+New-NetFirewallRule -DisplayName "Acard Local" -Direction Inbound -Protocol TCP -LocalPort 47811 -Action Allow -Profile Domain,Private
 ```
 
 Linux:
@@ -123,7 +123,7 @@ sudo ufw allow 47811/tcp            # Ubuntu / Debian with ufw
 sudo firewall-cmd --add-port=47811/tcp --permanent && sudo firewall-cmd --reload   # Fedora / RHEL
 ```
 
-Keep the port closed on public networks. OpenNotion is meant to sit inside your LAN or VPN.
+Keep the port closed on public networks. Acard Local is meant to sit inside your LAN or VPN.
 
 ## 6. Run it as a service
 
@@ -132,37 +132,37 @@ Keep the port closed on public networks. OpenNotion is meant to sit inside your 
 [NSSM](https://nssm.cc) wraps any program as a Windows service. Download it, then in an Administrator PowerShell:
 
 ```powershell
-$dir = "C:\open-notion"                     # where you cloned the repo
+$dir = "C:\open-notion-acard"                     # where you cloned the repo
 $bun = (Get-Command bun).Source
-nssm install OpenNotion $bun "local/main.ts"
-nssm set OpenNotion AppDirectory $dir
-nssm set OpenNotion AppEnvironmentExtra `
+nssm install AcardLocal $bun "local/main.ts"
+nssm set AcardLocal AppDirectory $dir
+nssm set AcardLocal AppEnvironmentExtra `
   "ACARD_DATA_DIR=$dir\data" "ACARD_APP_DIR=$dir\dist" "ACARD_PORT=47811" `
   "ACARD_HOST=0.0.0.0" "ACARD_PASSWORD=change-me-to-a-long-passphrase" "ACARD_ALLOWED_HOSTS=192.168.0.10" "ACARD_LANG=en"
-nssm set OpenNotion AppStdout "$dir\data\server.log"
-nssm set OpenNotion AppStderr "$dir\data\server.log"
-nssm set OpenNotion Start SERVICE_AUTO_START
-nssm start OpenNotion
+nssm set AcardLocal AppStdout "$dir\data\server.log"
+nssm set AcardLocal AppStderr "$dir\data\server.log"
+nssm set AcardLocal Start SERVICE_AUTO_START
+nssm start AcardLocal
 ```
 
-`nssm status OpenNotion` should print `SERVICE_RUNNING`. Stop or restart with `nssm stop OpenNotion` / `nssm restart OpenNotion`.
+`nssm status AcardLocal` should print `SERVICE_RUNNING`. Stop or restart with `nssm stop AcardLocal` / `nssm restart AcardLocal`.
 
 ### Linux (systemd)
 
 Create a user and copy the app:
 
 ```sh
-sudo useradd --system --home /opt/open-notion --shell /usr/sbin/nologin opennotion
-sudo git clone https://github.com/Hakubisual/open-notion.git /opt/open-notion
-cd /opt/open-notion && sudo bun install && sudo bun run build
-sudo mkdir -p /var/lib/open-notion && sudo chown -R opennotion: /opt/open-notion /var/lib/open-notion
+sudo useradd --system --home /opt/acard-local --shell /usr/sbin/nologin acard
+sudo git clone https://github.com/Hakubisual/open-notion-acard.git /opt/acard-local
+cd /opt/acard-local && sudo bun install && sudo bun run build
+sudo mkdir -p /var/lib/acard-local && sudo chown -R acard: /opt/acard-local /var/lib/acard-local
 ```
 
-Put the settings in `/etc/open-notion.env` (readable by root only, `chmod 600`):
+Put the settings in `/etc/acard-local.env` (readable by root only, `chmod 600`):
 
 ```sh
-ACARD_DATA_DIR=/var/lib/open-notion
-ACARD_APP_DIR=/opt/open-notion/dist
+ACARD_DATA_DIR=/var/lib/acard-local
+ACARD_APP_DIR=/opt/acard-local/dist
 ACARD_PORT=47811
 ACARD_HOST=0.0.0.0
 ACARD_PASSWORD=change-me-to-a-long-passphrase
@@ -170,18 +170,18 @@ ACARD_ALLOWED_HOSTS=192.168.0.10,notes.lan
 ACARD_LANG=en
 ```
 
-`/etc/systemd/system/open-notion.service`:
+`/etc/systemd/system/acard-local.service`:
 
 ```ini
 [Unit]
-Description=OpenNotion server
+Description=Acard Local server
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=opennotion
-WorkingDirectory=/opt/open-notion
-EnvironmentFile=/etc/open-notion.env
+User=acard
+WorkingDirectory=/opt/acard-local
+EnvironmentFile=/etc/acard-local.env
 ExecStart=/usr/local/bin/bun local/main.ts
 Restart=on-failure
 
@@ -193,8 +193,8 @@ Adjust `ExecStart` to the output of `which bun`. Then:
 
 ```sh
 sudo systemctl daemon-reload
-sudo systemctl enable --now open-notion
-systemctl status open-notion
+sudo systemctl enable --now acard-local
+systemctl status acard-local
 ```
 
 ## 7. Backups
@@ -213,13 +213,17 @@ To restore, stop the server, put the files back into the data folder and start i
 ## 8. Updating
 
 ```sh
-cd open-notion
+cd open-notion-acard
 git pull
 bun install
 bun run build
 ```
 
-Then restart the service (`nssm restart OpenNotion` or `sudo systemctl restart open-notion`). Back up first.
+Then restart the service (`nssm restart AcardLocal` or `sudo systemctl restart acard-local`). Back up first.
+
+Installed v0.1 under the previous name? Keep your folders, service and data as they are: only the project name changed.
+`git pull` follows GitHub's redirect to the new repository, the `ACARD_*` settings and the data folder are the same,
+and an existing service keeps the name you gave it (use that name in the restart command above).
 
 ## 9. HTTPS (optional)
 

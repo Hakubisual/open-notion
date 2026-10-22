@@ -22,7 +22,7 @@
   dialog.className = "shd";
   dialog.setAttribute("aria-label", "공유");
   document.body.appendChild(dialog);
-  var slug = "", state = null, me = null, tab = "share", sent = [], help = false, advanced = false;
+  var slug = "", state = null, me = null, tab = "share", sent = [], help = false, advanced = false, publishing = false;
 
   function api(path, method, body) {
     return fetch("/api/page/" + encodeURIComponent(slug) + "/access" + (path || ""), { method: method || "GET", headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined, credentials: "same-origin" })
@@ -32,11 +32,26 @@
   function act(promise, done) { return promise.then(function (value) { return load().then(function () { if (done) say(done); return value; }); }).catch(function (error) { say(error.message, true); }); }
   function copy(text, label) {
     var finish = function () { say(label || "링크를 복사했어요."); };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(finish, function () { say("복사하지 못했어요. 주소를 직접 복사해 주세요: " + text, true); });
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(finish, function () { say("복사하지 못했어요. 주소를 직접 복사해 주세요: " + text, true); });
     else say("주소를 직접 복사해 주세요: " + text);
   }
   function abs(path) { return new URL(path, location.origin).href; }
   function pageUrl() { return abs("/" + (slug === "index" ? "" : encodeURIComponent(slug) + "/")); }
+  function publishCopy() {
+    if (publishing || state.role !== "full") return;
+    publishing = true;
+    render();
+    var published = state.publish && state.publish.url ? Promise.resolve(state.publish) : api("/publish", "POST");
+    published.then(function (pub) {
+      state.publish = Object.assign({}, state.publish, { url: pub.url });
+      render();
+      return copy(abs(pub.url), "링크를 복사했어요. " + abs(pub.url));
+    }).catch(function (error) { say(error.message, true); }).finally(function () {
+      publishing = false;
+      var button = dialog.querySelector("[data-publish-copy]");
+      if (button) button.disabled = false;
+    });
+  }
 
   function personRow(p) {
     var name = p.email.split("@")[0];
@@ -70,7 +85,7 @@
     }
     html += '<p class="shd-label">일반 사용 권한</p><div class="shd-general"><span class="shd-tile' + (link ? " on" : "") + '">' + ico(link ? "globe" : "lock") + '</span><select data-general aria-label="일반 사용 권한"' + (link && link.inherited ? " disabled" : "") + '><option value="invited"' + (link ? "" : " selected") + '>초대받은 사용자만</option><option value="link"' + (link ? " selected" : "") + ">링크가 있는 모든 사용자</option></select>" +
       (onLink ? '<select class="shd-level" data-link-role aria-label="링크 권한">' + options(LINK_ROLES, link.role) + "</select>" : link ? '<span class="shd-static shd-level">' + roleName(link.role) + "</span>" : "") + "</div>" +
-      '<p class="shd-note">' + (link ? (link.inherited ? "상위 페이지에서 상속한 링크예요. 바꾸려면 상위 페이지에서 바꿔 주세요." : "링크가 있으면 누구나 읽을 수 있어요. 댓글·편집은 이메일을 확인한 사람만 할 수 있어요.") + (link.expires ? " " + day(link.expires) + "에 만료돼요." : "") : "초대받은 사람만 이 페이지를 열 수 있어요.") + "</p>";
+      '<p class="shd-note">' + (link ? (link.inherited ? "상위 페이지에서 상속한 링크예요. 바꾸려면 상위 페이지에서 바꿔 주세요." : link.role === "read" ? "링크가 있으면 누구나 읽을 수 있어요." : link.role === "edit" ? "링크가 있으면 누구나 읽을 수 있어요. 받는 사람은 이메일로 받은 코드를 확인한 뒤 편집할 수 있어요(회원가입 필요 없음)." : "링크가 있으면 누구나 읽을 수 있어요. 받는 사람은 이메일로 받은 코드를 확인한 뒤 댓글을 달 수 있어요(회원가입 필요 없음).") + (link.expires ? " " + day(link.expires) + "에 만료돼요." : "") : "초대받은 사람만 이 페이지를 열 수 있어요.") + "</p>";
     if (state.parent) {
       html += '<div class="shd-inherit"><span>' + (state.inherit ? "상위 페이지에서 상속: 상위 페이지를 공유받은 사람도 이 페이지를 볼 수 있어요." : "이 페이지만의 권한을 쓰고 있어요. 상위 페이지의 공유는 적용되지 않아요.") + '</span><button type="button" class="shd-ghost" data-inherit="' + (state.inherit ? "off" : "on") + '">' + (state.inherit ? "상속 끊기" : "상속 복원") + "</button></div>";
     }
@@ -80,6 +95,7 @@
       "<li>하위 페이지도 같은 권한을 상속해요. 사이드바와 검색에는 볼 수 있는 페이지만 보여요.</li></ul></details>";
     html += '<div class="shd-foot"><button type="button" class="shd-plain" data-adv aria-expanded="' + advanced + '">' + ico("gear") + '고급</button><button type="button" class="shd-ghost" data-copy-link>' + ico("link") + "링크 복사</button></div>";
     if (advanced) html += advancedHtml(onLink);
+    html += '<div class="shd-foot"><button type="button" class="shd-primary" data-publish-copy' + (publishing ? " disabled" : "") + '>' + (state.publish && state.publish.url ? "게시 링크 복사" : "웹에 게시하고 링크 복사") + '</button></div>';
     return html;
   }
 
@@ -111,7 +127,7 @@
 
   function render() {
     var helpHtml = help ? '<div class="shd-helptext"><p>이메일로 초대하면 그 사람은 받은 링크와 6자리 코드로 이 페이지와 하위 페이지만 열 수 있어요.</p><p>권한은 상위 페이지에서 하위 페이지로 상속돼요. 둘 이상이면 가장 넓은 권한을 따라요.</p><p>게시하면 웹에서 누구나 읽을 수 있는 공개 페이지가 생겨요.</p></div>' : "";
-    dialog.innerHTML = '<div class="shd-tabs" role="tablist"><button type="button" role="tab" class="shd-tab" data-tab="share" aria-selected="' + (tab === "share") + '">공유</button><button type="button" role="tab" class="shd-tab" data-tab="publish" aria-selected="' + (tab === "publish") + '">게시</button>' +
+    dialog.innerHTML = '<div class="shd-tabs" role="tablist"><button type="button" role="tab" class="shd-tab" data-tab="share" aria-selected="' + (tab === "share") + '">공유</button>' + (state && state.role === "full" ? '<button type="button" role="tab" class="shd-tab" data-tab="publish" aria-selected="' + (tab === "publish") + '">게시</button>' : "") +
       '<button type="button" class="shd-help" data-help aria-expanded="' + help + '">' + ico("help") + "공유 기능 사용법</button></div>" +
       '<div class="shd-body">' + helpHtml + (state ? (tab === "share" ? shareTab() : publishTab()) : "<p>불러오는 중…</p>") + '<p class="shd-status" role="status" aria-live="polite"></p></div>';
   }
@@ -133,6 +149,7 @@
     else if (t.hasAttribute("data-copy-link")) copy(state.link ? abs(state.link.url) : pageUrl(), state.link ? "링크가 있는 모든 사용자용 주소를 복사했어요." : "페이지 주소를 복사했어요. 초대받은 사람만 열 수 있어요.");
     else if (t.hasAttribute("data-copy-page")) copy(pageUrl());
     else if (t.hasAttribute("data-copy-publish")) copy(abs(state.publish.url), "게시 주소를 복사했어요.");
+    else if (t.hasAttribute("data-publish-copy")) publishCopy();
     else if (t.dataset.copyInvite) { var s = sent[Number(t.dataset.copyInvite)]; copy(abs(s.url) + "\n코드: " + s.code, "초대 링크와 코드를 복사했어요."); }
     else if (t.dataset.inherit) act(api("/settings", "PUT", { inherit: t.dataset.inherit === "on" }), t.dataset.inherit === "on" ? "상위 페이지 권한을 다시 상속해요." : "이 페이지만의 권한을 써요.");
     else if (t.dataset.request) act(api("/requests/" + t.dataset.request, "POST", { decision: t.dataset.decision }).then(function (data) { if (data.invite) sent = [data.invite]; }), t.dataset.decision === "approve" ? "요청을 승인했어요." : "요청을 거절했어요.");

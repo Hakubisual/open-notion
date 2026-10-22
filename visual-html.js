@@ -101,7 +101,7 @@ function nodeShape(n, x, y, w, h, fill) {
   }
 }
 function arrowDefs(id) {
-  return '<defs><marker id="' + id + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="' + VIS_STROKE + '"/></marker></defs>';
+  return '<defs><marker id="' + esc(id) + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="' + VIS_STROKE + '"/></marker></defs>';
 }
 function wrapLines(text, size, max) {
   const lines = [];
@@ -184,7 +184,7 @@ function flowchartSvg(graph, title, uid, dirOverride) {
       }
     } else { const p = exit(a, b), q = exit(b, a); d = "M" + num(p[0]) + " " + num(p[1]) + " L" + num(q[0]) + " " + num(q[1]); mid = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]; }
     const text = e.text ? clip(e.text, 30) : "", tw = text ? textWidth(text, 12) + 10 : 0;
-    return '<path class="acv-edge" style="--i:' + i + '" d="' + d + '" fill="none" stroke="' + VIS_STROKE + '" stroke-width="' + (e.thick ? 3 : 1.5) + '"' + (e.dashed ? ' stroke-dasharray="5 4"' : "") + (e.arrow ? ' marker-end="url(#' + uid + ')"' : "") + "/>" +
+    return '<path class="acv-edge" style="--i:' + i + '" d="' + d + '" fill="none" stroke="' + VIS_STROKE + '" stroke-width="' + (e.thick ? 3 : 1.5) + '"' + (e.dashed ? ' stroke-dasharray="5 4"' : "") + (e.arrow ? ' marker-end="url(#' + esc(uid) + ')"' : "") + "/>" +
       (text ? '<rect x="' + num(mid[0] - tw / 2) + '" y="' + num(mid[1] - 10) + '" width="' + num(tw) + '" height="20" rx="4" fill="#fff" fill-opacity=".92"/>' + label(mid[0], mid[1], text, 12, ' style="fill:#333"') : "");
   }).join("");
   const nodeSvg = nodes.map((n, i) => '<g class="acv-node" style="--i:' + i + '">' + nodeShape(n, n.x, n.y, n.w, n.h, VIS_COLORS[i % VIS_COLORS.length]) + multiLabel(n.x, n.y, n.lines, 14, ' style="fill:#1f1d2b"') + "</g>").join("");
@@ -223,7 +223,7 @@ function sequenceSvg(lines, title, uid) {
     }
     const x1 = cx(s.from), x2 = cx(s.to);
     const d = s.from === s.to ? "M" + num(x1) + " " + num(y - 8) + " h 36 v 16 h -34" : "M" + num(x1) + " " + num(y + 6) + " H" + num(x2 + (x2 > x1 ? -2 : 2));
-    out += '<path class="acv-edge" style="--i:' + k + '" d="' + d + '" fill="none" stroke="' + VIS_STROKE + '" stroke-width="1.5"' + (s.dashed ? ' stroke-dasharray="5 4"' : "") + ' marker-end="url(#' + uid + ')"/>' + label(s.from === s.to ? x1 + 40 : (x1 + x2) / 2, y - 8, clip(s.text, 40), 12, s.from === s.to ? ' text-anchor="start"' : "");
+    out += '<path class="acv-edge" style="--i:' + k + '" d="' + d + '" fill="none" stroke="' + VIS_STROKE + '" stroke-width="1.5"' + (s.dashed ? ' stroke-dasharray="5 4"' : "") + ' marker-end="url(#' + esc(uid) + ')"/>' + label(s.from === s.to ? x1 + 40 : (x1 + x2) / 2, y - 8, clip(s.text, 40), 12, s.from === s.to ? ' text-anchor="start"' : "");
   });
   return out + "</svg>";
 }
@@ -369,7 +369,7 @@ export function diagramSvg(source, title, uid) {
   const lines = String(source || "").replace(/\r\n?/g, "\n").split("\n").filter((l) => !/^\s*%%/.test(l));
   const first = lines.findIndex((l) => l.trim());
   if (first < 0) return null;
-  const header = lines[first].trim(), rest = lines.slice(first + 1), id = "acv-m" + (uid || "0");
+  const header = lines[first].trim(), rest = lines.slice(first + 1), id = "acv-m" + String(uid || "0").replace(/[^A-Za-z0-9_-]/g, "_");
   try {
     if (/^(flowchart|graph)\b/i.test(header)) {
       const graph = parseFlowchart(rest, header);

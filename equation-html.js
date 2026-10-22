@@ -29,6 +29,9 @@ const SYM = {
   ",": "\u2009", ";": "\u2005", ":": "\u2005", "!": "",
 };
 
+// Upright function names (\ln, \sin ...), written as text like \operatorname.
+const FUNCS = new Set(["ln", "log", "exp", "sin", "cos", "tan", "min", "max", "lim", "det"]);
+
 const BLACKBOARD = { R: "ℝ", N: "ℕ", Z: "ℤ", Q: "ℚ", C: "ℂ", P: "ℙ", H: "ℍ", E: "𝔼", F: "𝔽" };
 
 const BIG_DELIM = { "(": "(", "[": "[", "{": "{", "|": "|", "<": "⟨", ".": "" };
@@ -116,6 +119,7 @@ function parseCommand(src, state, name) {
   if (name === "underline") return '<span class="mund">' + renderLatex(readGroup(src, state)) + "</span>";
   if (name === "begin" || name === "end") { readGroup(src, state); return ""; }
   if (name === "\\") return "<br>";
+  if (FUNCS.has(name)) return '<span class="mtext">' + name + "</span>";
   if (GREEK[name]) return escapeLatex(GREEK[name]);
   if (SYM[name]) return escapeLatex(SYM[name]);
   if (!name) return "";

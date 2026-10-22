@@ -21,7 +21,7 @@
 <a class="skip" href="#doc">본문으로</a>
 <header class="topbar">
   <button class="icon" id="menu" aria-label="메뉴" aria-expanded="false"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="18" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/></svg></button>
-  <a class="brand" href="/"><svg class="wordmark" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="OpenNotion" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+  <a class="brand" href="/"><svg class="wordmark" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
   <span class="save-state on" id="save-state">불러오는 중…</span>
   <div class="grow"></div>
   <div class="menuwrap">
@@ -53,6 +53,7 @@
     <div class="docbar">
       <input id="title" class="title-input" aria-label="페이지 제목" placeholder="불러오는 중…" aria-busy="true" readonly>
       <script>/[?&]create\b/.test(location.search)&&function(t){t.placeholder="제목 없음";t.removeAttribute("aria-busy");t.readOnly=!1;t.focus()}(document.getElementById("title"))</script>
+      <script>document.getElementById("title").addEventListener("keydown",function(e){if(!window.AcardTitleKeys&&!this.readOnly&&e.key==="Enter"&&!e.isComposing&&e.keyCode!==229){e.preventDefault();this.dataset.enterPending="1"}})</script>
       <span class="meta" id="meta"></span>
     </div>
     <button type="button" class="mini" id="ask-notes-btn" aria-haspopup="dialog" disabled>노트에 묻기</button>

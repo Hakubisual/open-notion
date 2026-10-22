@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { PGlite } from "@electric-sql/pglite";
 import { readFileSync } from "node:fs";
 import { captureEditorVersion, ensureEditorSchema, handleEditorApi, readEditorPageMeta } from "../editor-pages.js";
+import { pgD1 } from "../gate/pg-d1";
 
 // Execute real SQL, including D1's transactional batch semantics.
 function d1(sqlite) {
   return {
     prepare(sql) {
       return {
+        sql,
         args: [],
         bind(...args) { return { ...this, args }; },
         async first() { return sqlite.query(sql).get(...this.args); },
@@ -80,6 +83,50 @@ describe("editor page lifecycle", () => {
     expect(snapshot.blocks[0].extra).toBe("block-extension");
     expect(snapshot.links[0].extra).toBe("link-extension");
   });
+
+  test.each([
+    ["SQLite", false], ["SQLite", true], ["Postgres", false], ["Postgres", true],
+  ])("concurrent settings patches preserve both fields and return fresh rows on %s (existing: %s)", async (dialect, existing) => {
+    const lite = dialect === "Postgres" ? new PGlite() : null;
+    try {
+      if (lite) {
+        await lite.exec(readFileSync(new URL("../migrations/supabase/001-acard-schema.sql", import.meta.url), "utf8").replace(/REVOKE[^;]*;/g, ""));
+        const query = (connection) => async (sql, params) => {
+          const result = await connection.query(sql, params);
+          return { rows: result.rows, count: result.affectedRows ?? result.rows.length };
+        };
+        db = pgD1({ query: query(lite), transaction: (fn) => lite.transaction((tx) => fn(query(tx))) });
+        await db.prepare("INSERT INTO pages (slug, title, updated) VALUES ('alpha', 'Alpha', 1)").run();
+      }
+      if (existing) await api("page/alpha/settings", "PUT", { cover: "g2", favorite: true });
+      const before = (await api("page/alpha/settings")).body.settings;
+      const batch = db.batch.bind(db);
+      let arrived = 0, finished = 0;
+      const ready = Promise.withResolvers();
+      const written = Promise.withResolvers();
+      db.batch = async (statements) => {
+        // Hold both writes until both requests have captured their old settings, then
+        // finish both transactions before either response reads the current row.
+        if (statements[0]?.sql.startsWith("CREATE")) return batch(statements);
+        if (++arrived === 2) ready.resolve();
+        await ready.promise;
+        const result = await batch(statements);
+        if (++finished === 2) written.resolve();
+        await written.promise;
+        return result;
+      };
+      const results = await Promise.all([
+        api("page/alpha/settings", "PUT", { icon: "star" }),
+        api("page/alpha/settings", "PUT", { width: "full" }),
+      ]);
+      expect(results.map((result) => result.status)).toEqual([200, 200]);
+      const expected = { ...before, icon: "star", width: "full" };
+      expect((await api("page/alpha/settings")).body.settings).toEqual(expected);
+      expect(results.map((result) => result.body.settings)).toEqual([expected, expected]);
+      const history = await db.prepare("SELECT snapshot FROM editor_history WHERE page = 'alpha'").all();
+      expect(history.results.map((row) => JSON.parse(row.snapshot).settings).filter((settings) => JSON.stringify(settings) === JSON.stringify(before))).toHaveLength(2);
+    } finally { await lite?.close(); }
+  }, 20000);
 
   test.each([
     { cover: "javascript:alert(1)" }, { cover: "data:image/svg+xml,hi" }, { cover: "//evil.test/a" },

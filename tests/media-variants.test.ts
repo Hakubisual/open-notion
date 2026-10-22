@@ -202,7 +202,7 @@ describe("authorized media delivery", () => {
     for (const path of [uploaded.url, uploaded.url + "?w=400", "/api/media/" + uploaded.id + "/meta"]) expect((await h.request(path, { headers: { "if-none-match": original.headers.get("etag")! } })).status).toBe(404);
     h.sqlite.query("DELETE FROM editor_trash").run();
     const prepare = h.env.DB.prepare.bind(h.env.DB);
-    h.env.DB.prepare = (sql: string) => sql.includes("FROM media m JOIN editor_trash") ? { bind: () => ({ first: async () => { throw new Error("database unavailable"); } }) } : prepare(sql);
+    h.env.DB.prepare = (sql: string) => sql.includes("FROM media m LEFT JOIN editor_trash") ? { bind: () => ({ first: async () => { throw new Error("database unavailable"); } }) } : prepare(sql);
     await expect(h.request(uploaded.url)).rejects.toThrow("database unavailable");
     h.sqlite.close();
   });

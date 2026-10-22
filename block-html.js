@@ -3,24 +3,44 @@ import { visualBlockHtml } from "./visual-html.js";
 import { partBlockHtml, partSuggestLine } from "./part-html.js";
 import { renderComponentBlock, fallbackCardHtml, componentCss } from "./component-registry.js";
 import "./components/index.js";
+import "./assets/editor-model.js";
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
 function blockInline(block) {
-  if (block.meta && Array.isArray(block.meta.richText) && globalThis.EditorModel) return globalThis.EditorModel.richHtml(block.meta.richText, block.text);
+  if (block.meta && Array.isArray(block.meta.richText) && globalThis.EditorModel) return evidenceTags(globalThis.EditorModel.richHtml(block.meta.richText, block.text));
   return inline(block.text);
 }
 
+// Evidence labels (research report style): the text [MEASURED], [CLAIMED] or [ESTIMATED] draws as a colored tag. The stored
+// text and markdown keep the bracket word, so exports, agents and an older build show it as plain text. Runs on escaped HTML.
+const EVIDENCE = /\[(MEASURED|CLAIMED|ESTIMATED)\]/g;
+export function evidenceTags(html) {
+  return String(html).replace(EVIDENCE, (_, kind) => '<span class="ev ev-' + kind.toLowerCase() + '">' + kind + "</span>");
+}
+// Tag look on every page (the tag can appear anywhere); report pages restyle the rest. Inline with the first tag of a page.
+export const EVIDENCE_CSS = ".ev{display:inline-block;font-family:var(--font-mono);font-size:var(--fs-11);font-weight:500;letter-spacing:.06em;border-radius:var(--radius-pill);padding:0 var(--space-2);vertical-align:1px;white-space:nowrap;line-height:1.7}" +
+  ".ev-measured{background:var(--rp-measured-bg,var(--color-success-bg));color:var(--rp-measured-fg,var(--color-success-fg))}.ev-claimed{background:var(--rp-claimed-bg,var(--color-warning-bg));color:var(--rp-claimed-fg,var(--color-warning-fg))}.ev-estimated{background:var(--rp-estimated-bg,var(--color-info-bg));color:var(--rp-estimated-fg,var(--color-info-fg))}";
+
 export function inline(text) {
-  return escapeHtml(text)
-    .replace(/\[\[([^\]\s]+)\]\]/g, (_m, slug) => '<a href="/' + escapeHtml(slug) + '/">' + escapeHtml(slug) + "</a>")
-    .replace(/\[([^\]]+)\]\((\/[^)\s]+)\)/g, (_m, label, href) => '<a href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>")
-    .replace(/\[([^\]]+)\]\((#[^)\s]+)\)/g, (_m, label, href) => '<a href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_m, label, href) => '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener">' + escapeHtml(label) + "</a>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>");
+  const source = String(text);
+  // Tokenize before escaping: destinations and code are opaque, never input to emphasis replacements.
+  const tokens = /`(?<code>[^`]+)`|\[\[(?<slug>[^\]\s]+)\]\]|\[(?<label>[^\]]+)\]\((?<href>(?:\/|#|https?:)[^)\s]+)\)|(?<url>https?:\/\/[^\s<>]+)|\*\*(?<bold>[^*]+)\*\*|(?<![\p{L}\p{N}_*])\*(?!\s)(?<star>[^*\n]*?[^\s*])\*(?![\p{L}\p{N}_*])|(?<![\p{L}\p{N}_])_(?!\s)(?<under>[^_\n]*?[^\s_])_(?![\p{L}\p{N}_])/gu;
+  let html = "", offset = 0;
+  for (const match of source.matchAll(tokens)) {
+    html += escapeHtml(source.slice(offset, match.index));
+    const { code, slug, label, href, url, bold, star, under } = match.groups;
+    if (code !== undefined) html += "<code>" + escapeHtml(code) + "</code>";
+    else if (slug !== undefined) html += '<a href="/' + escapeHtml(slug) + '/">' + escapeHtml(slug) + "</a>";
+    else if (href !== undefined) html += globalThis.EditorModel.safeHref(href) ? '<a href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener"' : "") + ">" + inline(label) + "</a>" : inline(label);
+    else if (url !== undefined) html += escapeHtml(url);
+    else if (bold !== undefined) html += "<strong>" + inline(bold) + "</strong>";
+    else html += "<em>" + inline(star ?? under) + "</em>";
+    offset = match.index + match[0].length;
+  }
+  return evidenceTags(html + escapeHtml(source.slice(offset)));
 }
 
 function legacyDatabaseHtml(block, ctx) {
@@ -89,6 +109,31 @@ const BLOCK_COLOR_STYLE = "<style>" + BLOCK_COLOR_CSS + "</style>";
 // Heading 4 (notion-parity C16) rides inline the same way: the reader first-screen CSS had no bytes left.
 export const HEADING4_CSS = "article h5,.blocks h5{font-size:var(--fs-15);font-weight:650;line-height:1.45;margin:20px 0 4px}.blocks .tocblock .lvl5{padding-left:54px}";
 const HEADING4_STYLE = "<style>" + HEADING4_CSS + "</style>";
+// Research report page style (owner 2026-10-22, reference: a paper-like report page). A page whose setting font is "report"
+// gets these rules inline (reader, shared link, print), scoped to .rp so no other page changes. Built from blocks every page
+// already has: the date line above the title is the byline, the first paragraph is the lede, a quote is the original question,
+// a stat-row is the tile grid, every equation block is numbered (1)(2)..., a captioned figure is numbered 그림 1, 2 ...
+// Colors come from tokens.css --rp-* (light + dark).
+const RP = ".rp";
+export const REPORT_CSS = [
+  RP + "{--bg:var(--rp-bg);--surface:var(--rp-surface);--fg:var(--rp-ink);--fg-dim:var(--rp-ink2);--line:var(--rp-rule);--accent:var(--rp-accent);--content-width:980px;background:var(--rp-bg);color:var(--rp-ink);font-family:var(--rp-sans);counter-reset:rp-eq rp-fig}",
+  "body:has(" + RP + "){background:var(--rp-bg)}",
+  RP + " :is(h1,.sv-title,.title-input){font-family:var(--rp-serif);font-weight:500;font-size:clamp(var(--fs-32),5vw,var(--fs-56));line-height:1.15;letter-spacing:-.02em}",
+  RP + " .blocks :is(h2,h3,h4){font-family:var(--rp-serif);font-weight:500;letter-spacing:-.015em}" + RP + " .blocks>h2{font-size:var(--fs-32)}" + RP + " .blocks>h3{font-size:var(--fs-28);line-height:1.2;margin:var(--space-16) 0 var(--space-4)}" + RP + " .blocks>h4{font-size:var(--fs-21)}",
+  RP + " .blocks a{color:var(--rp-accent)}" + RP + " .blocks p{line-height:1.7}",
+  RP + " .byline," + RP + " .sv-meta{font-family:var(--font-mono);font-size:var(--fs-12);letter-spacing:.08em;text-transform:uppercase;color:var(--rp-accent)}",
+  RP + " .blocks>p:first-of-type{font-family:var(--font-mono);font-size:var(--fs-12);letter-spacing:.08em;text-transform:uppercase;color:var(--rp-accent);margin-bottom:var(--space-2)}" + RP + " .blocks>p:nth-of-type(2){font-size:var(--fs-19);color:var(--rp-ink2)}",
+  RP + " .blocks blockquote{font-family:var(--font-mono);font-size:var(--fs-13);background:var(--rp-surface);border:1px solid var(--rp-rule);border-radius:var(--rp-radius);padding:var(--space-3) var(--space-4);color:var(--rp-ink2);font-style:normal}",
+  RP + " .blocks blockquote+span+p,"+ RP + " .blocks blockquote+p{color:var(--rp-muted);font-size:var(--fs-13)}",
+  RP + " .ui-statrow-item{background:var(--rp-surface);border-color:var(--rp-rule);border-radius:var(--radius-sm);box-shadow:none}" + RP + " .ui-statrow-label{font-family:var(--font-mono);font-size:var(--fs-11);letter-spacing:.06em;text-transform:uppercase;color:var(--rp-muted)}" + RP + " .ui-statrow-value{font-family:var(--rp-serif);font-weight:500;font-size:var(--fs-28)}" + RP + " .ui-statrow-note{color:var(--rp-ink2);font-size:var(--fs-13)}",
+  RP + " .mathblock{position:relative;counter-increment:rp-eq;background:none;padding:var(--space-2) 3.2em;margin:var(--space-2) 0}" + RP + " .mathblock::after{content:'(' counter(rp-eq) ')';position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:var(--fs-13);color:var(--rp-muted);font-style:normal;font-variant-numeric:tabular-nums}",
+  RP + " figure.acv-fig{background:var(--rp-surface)!important;border:1px solid var(--rp-rule)!important;border-radius:var(--radius-sm)!important}" + RP + " figure:has(figcaption){counter-increment:rp-fig}" + RP + " figure figcaption{text-align:left;opacity:1!important;color:var(--rp-ink2);font-size:var(--fs-13)}" + RP + " figure figcaption::before{content:'\\ADF8\\B9BC  ' counter(rp-fig) '. ';color:var(--rp-ink)}",
+  RP + " .stable{background:var(--rp-surface);border-color:var(--rp-rule)}" + RP + " .stable :is(th,td){background:transparent;border-color:var(--rp-rule)}" + RP + " .stable th{font-size:var(--fs-12);letter-spacing:.04em;font-weight:600;color:var(--rp-ink2)}",
+  RP + " .blocks hr{border:0;border-top:1px solid var(--rp-rule2);margin:var(--space-16) 0 var(--space-5)}" + RP + " .blocks hr~p{color:var(--rp-muted);font-size:var(--fs-13)}",
+  RP + " .callout{background:var(--rp-surface);border:1px solid var(--rp-rule)}",
+  "@media (max-width:720px){" + RP + " .blocks>h3{font-size:var(--fs-24)}}@media (max-width:500px){" + RP + " .mathblock{padding-inline:2.4em}}",
+].join("");
+export const isReportPage = (settings) => Boolean(settings && settings.font === "report");
 // Toggle headings (notion-parity C7): the heading sits beside the toggle arrow inside its summary.
 export const TOGGLE_HEADING_CSS = ".blocks details.toggle.heading>summary{display:flex;align-items:center;gap:2px;font-weight:inherit}.blocks details.toggle.heading>summary>:is(h2,h3,h4,h5){margin:0;display:inline}";
 // A TOC link (or any #hash) to a heading inside a closed toggle heading opens the toggles around it, then scrolls there.
@@ -143,6 +188,7 @@ const AGENT_MEDIA_STYLE = "<style>.blocks .imgby{display:inline-flex;align-items
 function figureHtml(block, inRow) {
   const meta = block.meta || {};
   const src = String(meta.src || "");
+  if (!globalThis.EditorModel.safeHref(src)) return "<p>" + escapeHtml(src) + "</p>";
   const width = Number.isFinite(meta.width) ? Math.min(100, Math.max(10, meta.width)) : 100;
   const alt = block.text || "이미지";
   const time = typeof meta.time === "string" && /^\d{1,2}(?::\d{2}){1,2}$/.test(meta.time) ? meta.time : "";
@@ -302,6 +348,7 @@ export function renderBlocks(blocks, ctx, headingContext) {
       case "video": {
         const url = String((block.meta && block.meta.url) || "");
         if (!url) break;
+        if (!globalThis.EditorModel.safeHref(url)) { out.push("<p>" + escapeHtml(url) + "</p>"); break; }
         const yt = /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([\w-]{6,})/.exec(url);
         const vm = /^(?:https?:\/\/)?(?:www\.)?vimeo\.com\/(\d+)/.exec(url);
         if (yt) out.push('<div class="media16"><iframe src="https://www.youtube-nocookie.com/embed/' + yt[1] + '" title="영상" loading="lazy" allowfullscreen></iframe></div>');
@@ -312,25 +359,30 @@ export function renderBlocks(blocks, ctx, headingContext) {
       case "audio": {
         const url = String((block.meta && block.meta.url) || "");
         if (!url) break;
+        if (!globalThis.EditorModel.safeHref(url)) { out.push("<p>" + escapeHtml(url) + "</p>"); break; }
         out.push('<audio controls preload="metadata" src="' + escapeHtml(url) + '"></audio>');
         break;
       }
       case "embed": {
         const url = String((block.meta && block.meta.url) || "");
         if (!url) break;
-        const mode = embedMode(url);
+        const mode = globalThis.EditorModel.safeHref(url) ? embedMode(url) : null;
         const height = embedHeight(block.meta.height);
         // A fixed height replaces the 16:9 padding box; the frame already fills the box (position:absolute; inset:0).
         const box = '<div class="media16 embed"' + (height ? ' style="padding-top:0;height:' + height + 'px"' : "") + ">";
         if (mode === "trusted") out.push(box + '<iframe src="' + escapeHtml(url) + '" loading="lazy" allowfullscreen referrerpolicy="no-referrer"></iframe></div>');
         else if (mode === "sandboxed") out.push(box + '<iframe src="' + escapeHtml(url) + '" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" loading="lazy" referrerpolicy="no-referrer"></iframe></div>');
-        else out.push('<div class="callout note">여기에 넣을 수 없는 주소예요. <a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(url) + "</a></div>");
+        else {
+          const fallback = '<div class="callout note">여기에 넣을 수 없는 주소예요. <a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(url) + "</a></div>";
+          out.push(globalThis.EditorModel.safeHref(url) ? fallback : fallback.replace(/<a [^>]*>|<\/a>/g, ""));
+        }
         break;
       }
       case "bookmark": {
         const meta = block.meta || {};
         const url = String(meta.url || "");
         if (!url) break;
+        if (!globalThis.EditorModel.safeHref(url)) { out.push("<p>" + escapeHtml(url) + "</p>"); break; }
         let site = "";
         try { site = new URL(url).hostname.replace(/^www\./, ""); } catch {}
         const title = String(meta.title || site || url);
@@ -344,6 +396,7 @@ export function renderBlocks(blocks, ctx, headingContext) {
         const meta = block.meta || {};
         const url = String(meta.url || "");
         if (!url) break;
+        if (!globalThis.EditorModel.safeHref(url)) { out.push("<p>" + escapeHtml(url) + "</p>"); break; }
         const name = block.text || String(meta.name || "파일");
         out.push('<a class="filecard" href="' + escapeHtml(url) + '" download><span class="fico" aria-hidden="true">📄</span><span class="fname">' + escapeHtml(name) + '</span><span class="fdl">받기 ↓</span></a>');
         break;
@@ -451,6 +504,7 @@ export function renderBlocks(blocks, ctx, headingContext) {
         }
         const url = String(meta.url || "");
         if (!url) break;
+        if (!globalThis.EditorModel.safeHref(url)) { out.push("<p>" + escapeHtml(block.text || url) + "</p>"); break; }
         out.push('<p class="btnrow"><a class="btn" href="' + escapeHtml(url) + '">' + (block.text ? inline(block.text) : "이동") + "</a></p>");
         break;
       }
@@ -497,6 +551,7 @@ export function renderBlocks(blocks, ctx, headingContext) {
     if (ctx) ctx.bodyImageLoaded = true;
     return before + 'loading="eager" fetchpriority="high"';
   });
+  if (!headingContext && !(ctx && ctx.evidenceCss) && html.includes('<span class="ev ev-')) { if (ctx) ctx.evidenceCss = true; html = "<style>" + EVIDENCE_CSS + "</style>" + html; }
   return html;
 }
 
@@ -625,6 +680,17 @@ export function parseTags(value) {
 }
 
 const TAG_ICONS = { "공개": "globe", "비공개": "globe", "표": "table" };
+// ref-1: the first topic tag is the page's category (accent pill); status tags (공개, 표) and later tags stay neutral.
+function tagTone(tags, i) {
+  return i === tags.findIndex((t) => !TAG_ICONS[t]) ? "accent" : "neutral";
+}
+
+// issue 110: "나" takes 내가, and a Korean name ending in a final consonant takes 이 (민준이 씀); everything else keeps 가.
+function wroteBy(name) {
+  if (name === "나") return "내가 씀";
+  const last = name.charCodeAt(name.length - 1) - 0xac00;
+  return name + (last >= 0 && last < 11172 && last % 28 ? "이 씀" : "가 씀");
+}
 
 export function bylineHtml(page) {
   page = Object.assign({}, ownerPageMeta(page), page);
@@ -634,9 +700,9 @@ export function bylineHtml(page) {
   const tags = parseTags(page.tags);
   if (page.kind === "db" && !tags.includes("표")) tags.push("표");
   return '<p class="byline"><span class="who"><span class="avatars">' + people.map(avatarHtml).join("") + "</span>" +
-    escapeHtml(agent) + "가 씀</span>" +
+    escapeHtml(wroteBy(agent)) + "</span>" +
     '<span class="when">' + ico("clock") + "<span><time>" + escapeHtml(whenText(page.updated)) + "</time>에 수정됨</span></span>" +
-    tags.map((t) => '<span class="chip">' + ico(TAG_ICONS[t] || "tag") + escapeHtml(t) + "</span>").join("") + "</p>";
+    (tags.length ? '<span class="pills">' + tags.map((t, i, all) => '<span class="chip t-' + tagTone(all, i) + '">' + ico(TAG_ICONS[t] || "tag") + escapeHtml(t) + "</span>").join("") + "</span>" : "") + "</p>";
 }
 
 const OVERVIEW = [
@@ -671,11 +737,10 @@ export function overviewHtml(blocks) {
 }
 
 export function thumbBarHtml(slug) {
-  const editHref = "/edit/" + encodeURIComponent(slug || "index") + "/";
   return '<nav class="thumbbar" aria-label="빠른 이동">' +
     '<a href="/"' + (slug === "index" ? ' class="on" aria-current="page"' : "") + '><span class="ti" aria-hidden="true">⌂</span>홈</a>' +
     '<button type="button" data-open="palette"><span class="ti" aria-hidden="true">⌕</span>검색</button>' +
-    '<a href="' + editHref + '"><span class="ti" aria-hidden="true">✎</span>고치기</a>' +
+    '<button type="button" data-new-page><span class="ti" aria-hidden="true">+</span>새 페이지</button>' +
     '<button type="button" data-open="pages"><span class="ti" aria-hidden="true">☰</span>페이지</button></nav>';
 }
 
@@ -699,7 +764,7 @@ export function navTree(pages, current) {
 }
 
 
-const WORDMARK_SVG = "<svg class=\"wordmark\" viewBox=\"-1.00 -15.63 171.36 109.63\" role=\"img\" aria-label=\"Acard\" focusable=\"false\"><use href=\"/wordmark-symbol.svg#w\"/></svg>";
+const WORDMARK_SVG = "<svg class=\"wordmark\" viewBox=\"0 0 416.7 100\" role=\"img\" aria-label=\"Acard\" focusable=\"false\"><use href=\"/wordmark-symbol.svg#w\"/></svg>";
 // The logo mark doubles as the "A" of "Acard"; other site names keep the mark + text.
 export function brandMarkHtml(siteName, size) {
   const name = siteName || "Acard";
@@ -707,17 +772,27 @@ export function brandMarkHtml(siteName, size) {
   return '<img src="/logo-small.svg" alt="" width="' + size + '" height="' + size + '">' + escapeHtml(name);
 }
 export function sideNavHtml(pages, current, siteName) {
-  const name = escapeHtml(siteName || "OpenNotion");
-  // Home = the wordmark. 모든 페이지 / 최근 / 휴지통 / 정리 제안 live in the ⋯ menu (owner: no nav list at the top).
+  const name = escapeHtml(siteName || "Acard");
+  // ds10 issue 101: an icon nav list under search (ref-1); the ⋯ menu keeps its items so existing shortcuts and QA still find them.
+  // One-path icons with stroke set in CSS (.side-nav svg) keep the reader first screen inside its byte budget.
+  const navIco = (d) => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>';
+  const navItem = (act, d, label) => '<button type="button" data-act="' + act + '">' + navIco(d) + label + "</button>";
+  const nav = '<div class="side-nav">' +
+    '<a href="/"' + (current === "index" ? ' class="on" aria-current="page"' : "") + ">" + navIco("M4 10.5 12 4l8 6.5V20h-5v-6H9v6H4z") + "홈</a>" +
+    navItem("all", "M14 3H6v18h12V7zm0 0v4h4M9 12h6m-6 4h6", "모든 페이지") +
+    navItem("recent", "M12 7v5l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0", "최근 편집됨") +
+    navItem("favorites", "m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z", "즐겨찾기") +
+    navItem("trash", "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13m-8 4v5m4-5v5", "휴지통") + "</div>";
   return '<div class="side-brand"><a class="brand" href="/" aria-label="홈">' + brandMarkHtml(siteName, 26) + "</a>" +
     '<div class="side-tools"><button type="button" class="icon" id="side-more" aria-label="더 보기" title="더 보기" aria-haspopup="menu" aria-expanded="false" aria-controls="side-menu">' + ico("ellipsis") + "</button>" +
     '<ul class="side-menu" id="side-menu" role="menu" hidden>' +
     '<li><button type="button" role="menuitem" data-act="all">모든 페이지</button></li>' +
     '<li><button type="button" role="menuitem" data-act="recent">최근 편집됨</button></li>' +
+    '<li><a role="menuitem" href="/import">노션에서 가져오기</a></li>' +
     '<li><button type="button" role="menuitem" data-act="trash">휴지통</button></li>' +
     '<li><button type="button" role="menuitem" data-act="suggest">✦ 정리 제안</button></li></ul>' +
     '<button class="icon" id="collapse" aria-label="사이드바 접기" aria-expanded="true" title="사이드바 접기">' + ico("layout-panel-left") + "</button></div></div>" +
-    '<button type="button" class="side-search" id="palette-open" aria-label="빠른 검색">' + ico("search") + '<span>검색하기</span><kbd class="kbd">Ctrl K</kbd></button>' +
+    '<button type="button" class="side-search" id="palette-open" aria-label="빠른 검색">' + ico("search") + '<span>검색하기</span><kbd class="kbd">Ctrl K</kbd></button>' + nav +
     '<div class="side-ws"><div class="side-ws-head"><span>작업 공간</span><button type="button" class="icon side-add" data-act="new" aria-label="새 페이지" title="새 페이지">' + ico("plus") + "</button></div>" +
     '<div class="side-root open"><div class="row"><button type="button" class="tw" aria-label="접기">' + ico("chevron-down") + '</button><a href="/"><img src="/logo-16.svg" alt="" width="18" height="18">' + name + "</a></div>" +
     navTree(pages, current) + "</div>" +

@@ -137,7 +137,8 @@ test("attach_images uploads local paths and the image the user pasted (from the 
     await client.close();
     rmSync(dir, { recursive: true, force: true });
   }
-});
+// Spawns the CLI and runs ffmpeg for keyframes: 3.4-5.0 s on the Windows build host, so bun's 5 s default flakes.
+}, 20000);
 
 test("without ffmpeg attach_video sends a clear note instead of frames", async () => {
   const { extractFrames } = await import("../src/local-images.js");

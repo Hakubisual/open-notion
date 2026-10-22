@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Hakubisual/open-notion-acard/security/advisories/new
+    about: Report security problems privately, not as a public issue.
+  - name: Hosted Acard
+    url: https://acard.dev
+    about: Questions about the hosted Acard service.

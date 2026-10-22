@@ -1,10 +1,29 @@
-// OpenNotion desktop client. Shows connect.html until a server address is saved, then loads that server in the window.
+// Acard Local desktop client. Shows connect.html until a server address is saved, then loads that server in the window.
 // The window only navigates inside the saved server; other links open in the system browser.
 const { app, BrowserWindow, Menu, shell, ipcMain } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const TITLE = "Acard Local";
 const configFile = () => path.join(app.getPath("userData"), "server.json");
+
+// Up to v0.1 this app had another name and kept its settings, sign-in cookie and storage in %APPDATA%/<old name>
+// (Electron's userData follows productName). On the first start of Acard Local, copy that folder over so people stay
+// connected and signed in. Runs before app.ready, when Chromium has not opened the profile yet; caches are skipped.
+// If a full copy fails (the old app is still running and holds a lock), fall back to the saved server address only.
+const LEGACY_PROFILE = "OpenNotion"; // compat: the v0.1 userData folder name, read only
+function migrateOldProfile() {
+  const legacy = path.join(app.getPath("appData"), LEGACY_PROFILE);
+  const target = app.getPath("userData");
+  if (fs.existsSync(path.join(target, "server.json")) || !fs.existsSync(path.join(legacy, "server.json"))) return;
+  const skip = /^(Cache|Code Cache|GPUCache|DawnCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|Crashpad|blob_storage|Singleton\w*|lockfile)$/i;
+  try {
+    fs.cpSync(legacy, target, { recursive: true, force: false, errorOnExist: false, filter: (src) => !skip.test(path.basename(src)) });
+  } catch {
+    fs.mkdirSync(target, { recursive: true });
+    fs.copyFileSync(path.join(legacy, "server.json"), path.join(target, "server.json"));
+  }
+}
 const readServer = () => { try { return JSON.parse(fs.readFileSync(configFile(), "utf8")).server || null; } catch { return null; } };
 const writeServer = (server) => fs.writeFileSync(configFile(), JSON.stringify({ server }));
 
@@ -16,13 +35,13 @@ function normalize(input) {
   return url.origin;
 }
 
-// Accepts the address only when an OpenNotion server answers its health check.
+// Accepts the address only when an Acard server answers its health check.
 async function probe(origin) {
   const res = await fetch(origin + "/__local/health", { signal: AbortSignal.timeout(6000) }).catch(() => null);
-  if (!res) throw new Error("No OpenNotion server answered at " + origin + ". Check the address, the port and your network.");
+  if (!res) throw new Error("No Acard server answered at " + origin + ". Check the address, the port and your network.");
   if (res.status === 403) throw new Error("The server refused this address. Ask the admin to add it to ACARD_ALLOWED_HOSTS.");
   const body = await res.text();
-  if (!res.ok || !body.includes("ok")) throw new Error("No OpenNotion server answered at " + origin + ".");
+  if (!res.ok || !body.includes("ok")) throw new Error("No Acard server answered at " + origin + ".");
   return origin;
 }
 
@@ -41,8 +60,13 @@ function showServer() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1280, height: 860, title: "OpenNotion", icon: path.join(__dirname, "icon.png"),
+    width: 1280, height: 860, title: TITLE, icon: path.join(__dirname, "icon.png"),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, preload: path.join(__dirname, "preload.cjs") },
+  });
+  // Pages set their own title; keep the app name in it so this window is told apart from the hosted Acard app.
+  win.on("page-title-updated", (event, title) => {
+    event.preventDefault();
+    win.setTitle(title && !title.includes(TITLE) ? title + " - " + TITLE : TITLE);
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (inside(url, readServer())) return { action: "allow" };
@@ -60,7 +84,7 @@ function createWindow() {
   showServer();
 }
 
-ipcMain.handle("opennotion:connect", async (_event, input) => {
+ipcMain.handle("acard:connect", async (_event, input) => {
   try {
     const origin = await probe(normalize(input));
     writeServer(origin);
@@ -74,10 +98,10 @@ ipcMain.handle("opennotion:connect", async (_event, input) => {
 const esc = (text) => text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 // The page is blocked in sendSync until returnValue is set, so every exit path must answer exactly once.
-ipcMain.on("opennotion:prompt", (event, message, value) => {
+ipcMain.on("acard:prompt", (event, message, value) => {
   const dialog = new BrowserWindow({
     parent: BrowserWindow.fromWebContents(event.sender), modal: true, width: 420, height: 190, resizable: false,
-    minimizable: false, maximizable: false, title: "OpenNotion", autoHideMenuBar: true, show: false,
+    minimizable: false, maximizable: false, title: TITLE, autoHideMenuBar: true, show: false,
     webPreferences: { sandbox: true, contextIsolation: true },
   });
   let answered = false;
@@ -112,6 +136,7 @@ function buildMenu() {
   ]));
 }
 
+try { migrateOldProfile(); } catch (error) { console.error("profile migration failed:", error); }
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.whenReady().then(() => {

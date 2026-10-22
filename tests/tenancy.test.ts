@@ -167,6 +167,126 @@ afterAll(async () => {
 });
 
 describe("one site, many workspaces", () => {
+  test("the exported fetch boundary secures HTML, redirects, APIs and early returns", async () => {
+    const cookie = await as(OWNER_UID);
+    for (const [path, who] of [["/", undefined], ["/login", undefined], ["/edit/owner-secret", cookie], ["/?sw=off", undefined], ["/api/tree", undefined], ["/mcp", undefined], ["/sse", undefined], ["/connect", undefined]]) {
+      const response = await call("GET", path!, { cookie: who });
+      expect([path, response.headers.get("x-content-type-options"), response.headers.get("referrer-policy"), response.headers.get("strict-transport-security")]).toEqual([path, "nosniff", "no-referrer", "max-age=31536000; includeSubDomains"]);
+      if (response.headers.get("content-type")?.startsWith("text/html")) {
+        expect(response.headers.get("x-frame-options")).toBe("DENY");
+        expect(response.headers.get("content-security-policy")).toBe("frame-ancestors 'none'");
+      }
+    }
+  });
+
+  // #88 follow-up (lead check): the worker's own early 400s for undecodable paths go through the same finalizer.
+  // A path with an invalid percent escape (%ZZ) is refused by Cloudflare's edge before the Worker runs, so the
+  // reachable cases are well-formed escapes that are not UTF-8.
+  test("undecodable paths get a 400 with the security headers, never a 500 (#88)", async () => {
+    const cookie = await as(OWNER_UID);
+    for (const path of ["/print/%E0%A4%A", "/print/%C3%28/", "/api/page/%E0%A4%A", "/api/db/%E0%A4%A"]) {
+      const response = await call("GET", path, { cookie });
+      expect([path, response.status]).toEqual([path, 400]);
+      expect([path, response.headers.get("x-content-type-options"), response.headers.get("referrer-policy"), response.headers.get("strict-transport-security")])
+        .toEqual([path, "nosniff", "no-referrer", "max-age=31536000; includeSubDomains"]);
+      if (response.headers.get("content-type")?.startsWith("text/html")) expect(response.headers.get("x-frame-options")).toBe("DENY");
+    }
+  });
+
+  test("response finalization preserves route policies and immutable headers", async () => {
+    const previous = env.ASSETS;
+    try {
+      for (const [csp, frame, expectedCsp, expectedFrame] of [
+        ["default-src 'none'", null, "default-src 'none'; frame-ancestors 'none'", "DENY"],
+        ["frame-ancestors 'self'", null, "frame-ancestors 'self'", null],
+        ["style-src 'self'", "SAMEORIGIN", "style-src 'self'", "SAMEORIGIN"],
+        ["frame-ancestors 'none'", "DENY", "frame-ancestors 'none'", "DENY"],
+      ]) {
+        env.ASSETS = { fetch: async () => new Response("<html>frame</html>", { headers: {
+          "content-type": "text/html", "content-security-policy": csp!, "referrer-policy": "same-origin", "strict-transport-security": "max-age=60", "x-content-type-options": "nosniff", ...(frame ? { "x-frame-options": frame } : {}),
+        } }) };
+        const response = await call("GET", "/frame.js");
+        expect(response.headers.get("content-security-policy")).toBe(expectedCsp);
+        expect(response.headers.get("x-frame-options")).toBe(expectedFrame);
+        expect(response.headers.get("referrer-policy")).toBe("same-origin");
+        expect(response.headers.get("strict-transport-security")).toBe("max-age=60");
+      }
+      env.ASSETS = { fetch: async () => Response.redirect("https://notes.example.com/", 302) };
+      const redirect = await call("GET", "/redirect.js");
+      expect(redirect.status).toBe(302);
+      expect(redirect.headers.get("location")).toBe("https://notes.example.com/");
+      expect(redirect.headers.get("x-content-type-options")).toBe("nosniff");
+      env.ASSETS = { fetch: async () => { throw new Error("header regression"); } };
+      const failed = await call("GET", "/error.js");
+      expect(failed.status).toBe(500);
+      expect(failed.headers.get("x-frame-options")).toBe("DENY");
+      expect(failed.headers.get("x-content-type-options")).toBe("nosniff");
+    } finally { env.ASSETS = previous; }
+  });
+
+  test("invalid account JSON objects return bad_json without throwing", async () => {
+    const cookie = await as(OWNER_UID);
+    for (const path of ["/api/profile", "/api/auth/signup", "/api/auth/login", "/api/auth/forgot", "/api/auth/reset"]) {
+      for (const body of [null, [], "text", 42, true]) {
+        const response = await call("POST", path, { cookie, body });
+        expect([path, body, response.status, response.data.error]).toEqual([path, body, 400, "bad_json"]);
+      }
+    }
+  });
+
+  test("malformed print encoding returns 400 without throwing", async () => {
+    expect((await call("GET", "/print/%E0%A4%A/", { cookie: await as(OWNER_UID) })).status).toBe(400);
+  });
+
+  test("malformed SSE JSON returns a JSON-RPC parse error", async () => {
+    const made = await call("POST", "/api/agents/tokens", { cookie: await as(OWNER_UID), body: { name: "SSE regression", scopes: ["read"] } });
+    let owner: string | null = null;
+    const previous = env.SSE_RELAY;
+    env.SSE_RELAY = {
+      idFromName: (name: string) => name,
+      get: () => ({ fetch: async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === "/open") { owner = url.searchParams.get("owner"); return new Response(null); }
+        if (url.pathname === "/owner") return Response.json({ owner });
+        throw new Error("Malformed JSON must not reach relay delivery");
+      } }),
+    };
+    try {
+      expect((await call("GET", "/sse", { bearer: made.data.token })).status).toBe(200);
+      const response = await worker.fetch(new Request("https://notes.example.com/sse/message?sessionId=11111111-1111-4111-8111-111111111111", {
+        method: "POST", headers: { authorization: "Bearer " + made.data.token, "content-type": "application/json" }, body: "{",
+      }), env, {});
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32700 } });
+    } finally { env.SSE_RELAY = previous; }
+  });
+
+  test("unexpected failures become no-store structured responses on every route", async () => {
+    const original = env.ASSETS;
+    env.ASSETS = { fetch: async () => { throw new Error("private failure detail"); } };
+    try {
+      for (const path of ["/", "/login", "/style.css"]) {
+        const response = await call("GET", path);
+        expect(response.status).toBe(500);
+        expect(response.headers.get("content-type")).toContain("text/html");
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.text).not.toContain("private failure detail");
+      }
+    } finally { env.ASSETS = original; }
+    const db = env.DB;
+    env.DB = { prepare: () => { throw new Error("private database detail"); } };
+    try {
+      for (const path of ["/api/v1/me", "/mcp", "/sse"]) {
+        const response = await call("GET", path, { bearer: "acard_" + "x".repeat(40) });
+        expect(response.status).toBe(500);
+        expect(response.headers.get("content-type")).toContain("application/json");
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.data.error).toBe("internal_error");
+        expect(response.text).not.toContain("private database detail");
+      }
+    } finally { env.DB = db; }
+  });
+
   test("logged out: landing at /, account pages served, app API refused", async () => {
     const home = await call("GET", "/");
     expect(home.status).toBe(200);
@@ -290,6 +410,28 @@ describe("one site, many workspaces", () => {
     expect([200, 201]).toContain(appended.status);
   });
 
+  test("agent writes stop at the per-minute limit with 429 + Retry-After; reads and the person's own editor saves keep working", async () => {
+    const cookieB = await as(UID_B);
+    const made = await call("POST", "/api/agents/tokens", { cookie: cookieB, body: { name: "loop bot", scopes: ["read", "write"] } });
+    const page = await call("POST", "/api/v1/pages", { bearer: made.data.token, body: { title: "limit", markdown: "x" } });
+    const slug = page.data.slug;
+    const mcp = (name: string, args: Record<string, unknown>) => worker.fetch(new Request("https://notes.example.com/mcp", { method: "POST", headers: { authorization: "Bearer " + made.data.token, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) }), env, {});
+    for (let i = 1; i < 60; i++) expect((await mcp("append_to_page", { slug, markdown: "line " + i })).status).toBe(200);
+    const over = await mcp("append_to_page", { slug, markdown: "one too many" });
+    expect(over.status).toBe(429);
+    expect(Number(over.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(((await over.json()) as any).error).toContain("1분에 쓸 수 있는 횟수(60번)");
+    expect((await call("POST", "/api/v1/pages", { bearer: made.data.token, body: { title: "again", markdown: "y" } })).status).toBe(429);
+    expect((await mcp("read_page", { slug })).status).toBe(200);
+    expect((await call("GET", "/api/v1/pages/" + encodeURIComponent(slug), { bearer: made.data.token })).status).toBe(200);
+    const read = await call("GET", "/api/page/" + encodeURIComponent(slug), { cookie: cookieB });
+    for (let i = 0; i < 3; i++) {
+      const saved = await call("PUT", "/api/page/" + encodeURIComponent(slug), { cookie: cookieB, body: { base_updated: (await call("GET", "/api/page/" + encodeURIComponent(slug), { cookie: cookieB })).data.page.updated, blocks: [{ id: "p" + i, type: "paragraph", text: "person " + i }] } });
+      expect(saved.status).toBe(200);
+    }
+    expect(read.status).toBe(200);
+  });
+
   test("two members never see each other", async () => {
     await call("POST", "/api/pages", { cookie: await as(UID_B), body: { title: "B only" } });
     const a = await call("GET", "/api/tree", { cookie: await as(UID_A) });
@@ -301,6 +443,14 @@ describe("one site, many workspaces", () => {
     expect((await call("GET", "/api/tree", { cookie: "acard_at=" + (await jwt(OWNER_UID, { key: other.privateKey })) })).status).toBe(401);
     expect((await call("GET", "/api/tree", { cookie: "acard_at=" + (await jwt(OWNER_UID, { exp: 10 })) })).status).toBe(401);
     expect((await call("GET", "/api/tree", { cookie: "acard_at=" + (await jwt(OWNER_UID, { iss: "https://evil.test/auth/v1" })) })).status).toBe(401);
+  });
+
+  test("Notion import sends a signed-out visitor to login with its return path", async () => {
+    const response = await call("GET", "/import");
+    expect(response.status).toBe(303);
+    const target = new URL(response.headers.get("location")!, "https://notes.example.com");
+    expect(target.pathname).toBe("/login");
+    expect(target.searchParams.get("next")).toBe("/import");
   });
 
   test("old hosts redirect people to notes.example.com but keep agent paths answering during the move", async () => {

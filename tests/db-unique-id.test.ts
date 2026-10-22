@@ -15,6 +15,8 @@ async function pgCtx() {
   await lite.exec(strip(readFileSync(join(ROOT, "migrations/supabase/002-acard-search.sql"), "utf8")).replace(/CREATE EXTENSION[^;]*;/, "").replace(/CREATE INDEX IF NOT EXISTS page_fts_trgm[^;]*;/, ""));
   await lite.exec(strip(readFileSync(join(ROOT, "migrations/supabase/021-acard-db-recurrence.sql"), "utf8")));
   await lite.exec(strip(readFileSync(join(ROOT, "migrations/supabase/023-acard-db-relations.sql"), "utf8")));
+  await lite.exec(strip(readFileSync(join(ROOT, "migrations/supabase/025-acard-db-value-backups.sql"), "utf8")));
+  await lite.exec(strip(readFileSync(join(ROOT, "migrations/supabase/026-acard-db-template-savers.sql"), "utf8")));
   await lite.exec("SET search_path = acard");
   const query = (db: { query: PGlite["query"] }) => async (text: string, params: unknown[]) => {
     const r = await db.query<Record<string, unknown>>(text, params);

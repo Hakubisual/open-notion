@@ -9,18 +9,26 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { createAcardMcpServer, OperationFailure, type AgentOperation, type AgentPrincipal } from "../agents/mcp-tools";
 import core, { acardHost, type CoreEnv } from "./acard-core.js";
 import { withDataBackend, type DataEnv } from "./pg-driver";
-import { agentsMd, connectClients, llmsTxt, openapiSpec } from "../agent-docs.js";
+import { agentsMd, connectClients, llmsTxt, openapiSpec, webhooksMd } from "../agent-docs.js";
 import {
   MEMBER_SHARE, OWNER_WS, clearSessionCookies, memberAssets, memberToken, oauthUserId, parseToken, readCookies, readSession,
   setCookie, workspaceEnv, workspaceFromOauthUser, workspaceIdFor, type Session, type TenancyEnv,
 } from "./tenancy";
 import { ACCOUNT_API, accountApi, loadProfile, redirect, withCookies, type AccountEnv } from "./account";
-import { BETA_API, betaApi, betaClosed, hasBetaAccess, injectAppBeta, isBetaAdmin, rewriteLanding, type BetaEnv } from "./hosted-access";
+import { BETA_API, betaAccessFor, betaApi, betaClosed, hasBetaAccess, injectAppBeta, isBetaAdmin, rewriteLanding, type BetaEnv } from "./hosted-access";
+import { rewriteLandingLinks } from "./landing-links";
 import { ADMIN_PATH, adminRoute, isSuspended, myUsage, type AdminEnv } from "./hosted-console";
 import { connect as liveConnect, newSink, publish as livePublish, trackDb, type LiveNamespace, type Sink } from "./live";
 import { injectAppLang, isLang, langCookie, langSwitch, localizeJson, pickLang, pickUserLang, translateHtml, type Lang } from "./i18n";
 import { cacheVersioned, serviceWorkerOff } from "./static-cache";
-import { migrateMediaPage, r2Usage, withR2Media, type R2Like } from "./media-store";
+import { robotsTxt, seoResponse, sitemapXml } from "./seo";
+import { releaseRoute, withReleaseInfo } from "./releases";
+import { migrateMediaPage, quarantineOriginal, r2Usage, restoreOriginal, withR2Media, type R2Like } from "./media-store";
+import { scanWorkspace } from "./media-orphans";
+import { checkAgentWrites, isRestWrite, mcpWriteCalls, type WriteLimitEnv } from "./agent-write-limit";
+import { BILLING_ROUTES, checkoutFor, donePage as billingDone, webhook as billingWebhook, type BillingEnv } from "./hosted-billing";
+import { CLOUD_V1, cloudAdmin, cloudV1, cookieExport, isPublishWorkspace, publicGate, reportRoute, withReportFooter, type CloudEnv, type CloudHost } from "./hosted-cloud";
+import { queueWebhooks, routeHints, watchWrites, webhookApi, webhookTick, type Actor, type WebhookEnv } from "./webhooks";
 
 const VERSION = "1.0.0";
 const SCOPES = ["read", "write"] as const;
@@ -38,8 +46,10 @@ type Env = CoreEnv & TenancyEnv & AccountEnv & BetaEnv & {
   readonly AGENT_TICK_SECRET?: string;
   readonly RECURRING_TICK_SECRET?: string;
   readonly ACARD_IDENTITY?: (value: string | null, guest?: boolean) => void;
+  readonly ACARD_ACTOR?: (actor: Actor) => void;
   readonly MEDIA_R2?: R2Like;
   readonly MEDIA_MIGRATE_SECRET?: string;
+  readonly TEMPLATE_MIGRATE_SECRET?: string;
 };
 
 type GrantProps = { readonly agent: string };
@@ -47,6 +57,23 @@ type Principal = AgentPrincipal & { readonly key: string; readonly env: Env; rea
 
 function scoped(env: Env, ws: string): Env {
   return acardHost.trust(workspaceEnv(env, ws));
+}
+
+// acard-next-10 #4: during the closed beta an account without an invite code may connect the local app, so its OAuth
+// token is valid, but it only reaches the local-edition cloud routes (account, subscription, publish, backups). The web
+// editor data behind /mcp, /sse and the rest of /api/v1 stays invite-only, exactly like the cookie gate below.
+export const NO_INVITE_BEARER = /^\/api\/v1\/cloud(?:\/|$)/;
+async function betaBearerAllowed(env: Env, principal: { ws: string }, user: string | undefined, path: string): Promise<boolean> {
+  if (principal.ws === OWNER_WS || !betaClosed(env) || NO_INVITE_BEARER.test(path)) return true;
+  return Boolean(user) && (await betaAccessFor(env, user!).catch(() => false));
+}
+
+function cloudHost(env: Env, ctx: unknown): CloudHost {
+  return {
+    scoped: (ws) => scoped(env, ws) as unknown as ReturnType<CloudHost["scoped"]>,
+    core: (request, wsEnv) => core.fetch(request, wsEnv as Env, ctx),
+    prepare: async (wsEnv) => { await acardHost.tokenAdmin(wsEnv as Env); },
+  };
 }
 
 // Guests prove an invited email once (features/share.js) and get acard_guest=<ws>.<token>. Their env never carries
@@ -161,6 +188,12 @@ async function mcpResponse(request: Request, principal: Principal, parsedBody?: 
   return transport.handleRequest(request, parsedBody === undefined ? undefined : { parsedBody });
 }
 
+// acard-storage-cost 5: every agent write (MCP write tool, non-GET /api/v1, bearer page save) passes here once.
+function agentWriteGate(env: Env, principal: Principal, count: number): Promise<Response | null> {
+  const user = principal.ws === OWNER_WS ? env.OWNER_USER_ID ?? null : principal.ws.replace(/^(........)(....)(....)(....)(............)$/, "$1-$2-$3-$4-$5");
+  return checkAgentWrites(env as unknown as WriteLimitEnv, principal.ws, principal.key, user, count);
+}
+
 function checkOrigin(request: Request, origin: string): Response | null {
   const given = request.headers.get("origin");
   if (given && given !== origin) return jsonResponse({ jsonrpc: "2.0", error: { code: -32000, message: "Origin not allowed" }, id: null }, 403);
@@ -183,7 +216,11 @@ async function serveSse(request: Request, env: Env, url: URL, principal: Princip
     const { owner } = (await (await stub.fetch("https://relay/owner")).json()) as { owner: string | null };
     if (!owner) return jsonResponse({ error: "없는 세션이에요. /sse 로 다시 연결하세요." }, 404);
     if (owner !== principal.key) return jsonResponse({ error: "다른 에이전트의 세션이에요." }, 403);
-    const message = await request.json();
+    let message: unknown;
+    try { message = await request.json(); }
+    catch { return jsonResponse({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null }, 400); }
+    const limited = await agentWriteGate(env, principal, mcpWriteCalls(message));
+    if (limited) return limited;
     const inner = new Request(url.origin + "/mcp", {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
@@ -410,7 +447,8 @@ async function authorize(request: Request, env: Env, url: URL): Promise<Response
   if (!env.OAUTH_KV) return jsonResponse({ error: "OAuth 가 아직 준비되지 않았어요." }, 503);
   const human = await humanFor(request, env);
   if (!human) return redirect("/login?next=" + encodeURIComponent(url.pathname + url.search));
-  if (betaClosed(env) && human.session && !(await hasBetaAccess(env, human.session))) return redirect("/beta");
+  // acard-next-10 #4: connecting the local app (and so subscribing and publishing) does not need an invite code; what a
+  // no-invite token may then reach is limited by betaBearerAllowed (only /api/v1/cloud/*).
   const oauth = authorizationServer(url.origin).getOAuthApi(env);
   const kv = env.OAUTH_KV as ConsentKv;
   const user = oauthUserId(human.ws);
@@ -544,7 +582,7 @@ async function revokeAllGrants(env: Env, origin: string, userId: string): Promis
   return removed;
 }
 
-const TRANSLATED_SITE = new Set(["index", "login", "signup", "forgot", "reset", "beta", "onboarding"]);
+const TRANSLATED_SITE = new Set(["index", "login", "signup", "forgot", "reset", "beta", "onboarding", "download"]);
 const LEGAL = new Set(["terms", "privacy"]);
 
 async function sitePage(request: Request, env: Env, name: string, extra: string[] = [], lang: Lang = pickLang(request)): Promise<Response> {
@@ -552,7 +590,7 @@ async function sitePage(request: Request, env: Env, name: string, extra: string[
   const asset = await env.ASSETS.fetch(new Request(new URL("/_site/" + file + ".html", request.url)));
   if (!asset.ok) return new Response("화면을 찾지 못했어요.", { status: 500 });
   const res = new Response(asset.body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", vary: "Cookie" } });
-  const page = name === "index" ? rewriteLanding(res, env) : res;
+  const page = name === "index" ? rewriteLanding(rewriteLandingLinks(res), env) : res;
   return withCookies(TRANSLATED_SITE.has(name) ? translateHtml(page, lang) : LEGAL.has(name) ? page : injectAppLang(page, lang), extra);
 }
 
@@ -612,6 +650,18 @@ async function recurringTick(request: Request, env: Env): Promise<Response> {
   return jsonResponse(await acardHost.recurringTick(scoped(env, ws), now));
 }
 
+// #86 B10: one-time rewrite of stored row templates to the checked shape, one workspace per call ({ws:"owner"|<hex>}).
+// Secret header or 404, like the ticks; the store is fixed to that workspace by scoped().
+async function templateMigrate(request: Request, env: Env): Promise<Response> {
+  const given = request.headers.get("x-template-migrate") ?? "";
+  if (!env.TEMPLATE_MIGRATE_SECRET || !sameSecret(given, env.TEMPLATE_MIGRATE_SECRET)) return jsonResponse({ error: "not found" }, 404);
+  const body = (await request.json().catch(() => ({}))) as { ws?: unknown };
+  const ws = typeof body.ws === "string" ? body.ws : "";
+  if (ws !== OWNER_WS && !/^[0-9a-f]{32}$/.test(ws)) return jsonResponse({ error: "bad request" }, 400);
+  if (ws !== OWNER_WS && !env.WORKSPACE) return jsonResponse({ error: "not found" }, 404);
+  return jsonResponse(await acardHost.templateMigrate(scoped(env, ws)));
+}
+
 // KV -> R2 move of media originals (2026-10-20), driven page by page by scripts/media-to-r2.ts. Secret header or 404.
 // {seed:true} sets the global usage ledger to the bytes actually in R2.
 async function mediaMigrate(request: Request, env: Env & { MEDIA?: any }): Promise<Response> {
@@ -628,6 +678,31 @@ async function mediaMigrate(request: Request, env: Env & { MEDIA?: any }): Promi
   }
   const limit = typeof body.limit === "number" && body.limit > 0 && body.limit <= 100 ? body.limit : 40;
   return jsonResponse(await migrateMediaPage(kv, r2, typeof body.cursor === "string" ? body.cursor : undefined, limit));
+}
+
+// acard-storage-cost 2, driven one step at a time by scripts/media-quarantine.ts (secret header or 404):
+//   {op:"scan", ws}                 one workspace's referenced tokens and media rows (gate/media-orphans.ts)
+//   {op:"quarantine"|"restore", key} move one original to quarantine/ or back (copy, check, then remove)
+// Nothing here deletes a file for good.
+async function mediaOrphans(request: Request, env: Env & { MEDIA?: any; DB?: unknown }): Promise<Response> {
+  const given = request.headers.get("x-media-migrate") ?? "";
+  if (!env.MEDIA_MIGRATE_SECRET || !sameSecret(given, env.MEDIA_MIGRATE_SECRET)) return jsonResponse({ error: "not found" }, 404);
+  const r2 = env.MEDIA_R2;
+  if (!r2) return jsonResponse({ error: "MEDIA_R2 is needed" }, 503);
+  const body = (await request.json().catch(() => ({}))) as { op?: string; ws?: string; key?: string };
+  if (body.op === "scan") {
+    const ws = String(body.ws ?? "");
+    if (ws === OWNER_WS) return jsonResponse({ ws, ...(await scanWorkspace(env.DB as never, (env as { DATA_BACKEND?: string }).DATA_BACKEND === "supabase")) });
+    if (!/^[0-9a-f]{32}$/.test(ws) || !env.WORKSPACE) return jsonResponse({ error: "bad workspace" }, 400);
+    return jsonResponse({ ws, ...(await scanWorkspace(workspaceEnv(env, ws).DB as never, false)) });
+  }
+  if (body.op === "quarantine" || body.op === "restore") {
+    const key = String(body.key ?? "");
+    const done = body.op === "quarantine" ? await quarantineOriginal(r2, key) : await restoreOriginal(r2, key);
+    console.warn("acard media " + body.op, key, JSON.stringify(done));
+    return jsonResponse({ key, ...done }, done.ok ? 200 : 409);
+  }
+  return jsonResponse({ error: "unknown op" }, 400);
 }
 
 function sameSecret(given: string, expected: string): boolean {
@@ -675,13 +750,21 @@ const entry = {
       if (path === "/api/v1/openapi.json") return jsonResponse(openapiSpec(origin));
       if (path === "/llms.txt") return textResponse(llmsTxt(origin), "text/plain");
       if (path === "/AGENTS.md") return textResponse(agentsMd(origin), "text/markdown");
+      if (path === "/webhooks.md") return textResponse(webhooksMd(origin), "text/markdown");
       if (path === "/acard-cli.tgz") return env.ASSETS.fetch(request);
+      if (path === "/robots.txt") return seoResponse(robotsTxt(), "text/plain");
+      if (path === "/sitemap.xml") return seoResponse(sitemapXml(), "application/xml");
       if (path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/mcp") return protectedResourceMetadata(origin, origin + "/mcp");
       if (path === "/.well-known/oauth-protected-resource/api/v1") return protectedResourceMetadata(origin, origin + "/api/v1");
       if (path.startsWith("/_site/") || path.startsWith("/fonts/") || /^\/i18n\/app-(?:en|zh)\.json$/.test(path)) return env.ASSETS.fetch(request);
-      if (/^\/(?:wordmark(?:-symbol|-mono)?|logo(?:-small|-16|-square|-square-dark)?|favicon|icon-maskable)\.svg$/.test(path) || /^\/(?:logo-square(?:-dark)?|og-square|icon-maskable-(?:192|512))\.png$/.test(path)) return env.ASSETS.fetch(request);
+      if (/^\/(?:wordmark(?:-symbol|-mono)?|logo(?:-small|-16|-square|-square-dark)?|favicon|icon-maskable)\.svg$/.test(path) || /^\/(?:logo-square(?:-dark)?|og|og-square|wordmark|apple-touch-icon|favicon-(?:16|32)|icon-(?:180|192|512)|icon-maskable-(?:192|512))\.png$/.test(path) || path === "/favicon.ico") return env.ASSETS.fetch(request);
       if (path === "/gallery" || path === "/gallery/") return env.ASSETS.fetch(new Request(origin + "/gallery.html"));
       if (path === "/gallery.css") return env.ASSETS.fetch(request);
+      if (path === "/download" || path === "/download/") return withReleaseInfo(await sitePage(request, env, "download"));
+    }
+    if (path.startsWith("/download/") || path.startsWith("/releases/")) {
+      const release = await releaseRoute(request, path);
+      if (release) return release;
     }
 
     if (path === "/oauth/authorize") return authorize(request, env, url);
@@ -698,17 +781,39 @@ const entry = {
       const principal = await authenticate(request, env, origin, resource);
       if (!principal) return challenge(origin, resource);
       const user = principal.ws === OWNER_WS ? env.OWNER_USER_ID : principal.ws.replace(/^(........)(....)(....)(....)(............)$/, "$1-$2-$3-$4-$5");
+      if (!(await betaBearerAllowed(env, principal, user, path))) return jsonResponse({ error: "beta_required", message: "초대 코드가 있는 계정만 쓸 수 있어요. 로컬판 연결·구독·게시는 그대로 쓸 수 있어요." }, 403);
       if (user) env.ACARD_IDENTITY?.(user + ":" + principal.ws);
+      env.ACARD_ACTOR?.({ kind: principal.via === "oauth" ? "oauth_app" : "api_token", name: principal.name, ...(principal.tokenId ? { token_id: principal.tokenId } : {}) });
       if (bearerSave) {
         if (!principal.scopes.includes("write")) return jsonResponse({ error: "write_required" }, 403);
+        const limited = await agentWriteGate(env, principal, 1);
+        if (limited) return limited;
         const narrowed = acardHost.trust({ ...scoped(env, principal.ws), ACARD_SAVE_PRINCIPAL: principal });
         return core.fetch(request, narrowed, ctx);
       }
       if (path === "/mcp" && request.method === "GET") {
         return new Response(null, { status: 405, headers: { allow: "POST, DELETE", "cache-control": "no-store" } });
       }
-      if (path === "/mcp") return mcpResponse(request, principal);
+      if (path === "/mcp") {
+        if (request.method !== "POST") return mcpResponse(request, principal);
+        const body = await request.clone().json().catch(() => undefined);
+        const limited = body === undefined ? null : await agentWriteGate(env, principal, mcpWriteCalls(body));
+        if (limited) return limited;
+        return mcpResponse(request, principal, body);
+      }
+      if (CLOUD_V1.test(path)) {
+        if (!user) return jsonResponse({ error: "이 계정에서는 쓸 수 없어요." }, 403);
+        if (path === "/api/v1/cloud/checkout" && request.method === "GET") {
+          if (principal.ws === OWNER_WS) return jsonResponse({ error: "오너 계정은 구독하지 않아요." }, 403);
+          return checkoutFor(env as unknown as BillingEnv, user, null, origin);
+        }
+        return cloudV1(request, env as unknown as CloudEnv, cloudHost(env, ctx), principal, user, origin);
+      }
       if (path.startsWith("/sse")) return serveSse(request, env, url, principal);
+      if (isRestWrite(request.method, path)) {
+        const limited = await agentWriteGate(env, principal, 1);
+        if (limited) return limited;
+      }
       return acardHost.serveV1(request, principal.env, principal);
     }
 
@@ -720,8 +825,27 @@ const entry = {
     const memberShare = MEMBER_SHARE.exec(path);
     if (memberShare) {
       if (!env.WORKSPACE) return new Response("없는 페이지예요.", { status: 404 });
+      const published = await isPublishWorkspace(env as unknown as CloudEnv, memberShare[1]);
+      if (published) {
+        const stopped = await publicGate(env as unknown as CloudEnv, memberShare[1]);
+        if (stopped) return stopped;
+      }
       const inner = new Request(origin + "/p" + memberShare[2], { method: request.method, headers: request.headers });
-      return core.fetch(inner, scoped(env, memberShare[1]), ctx);
+      const page = await core.fetch(inner, scoped(env, memberShare[1]), ctx);
+      return published ? withReportFooter(page, origin + path) : page;
+    }
+    if (path === "/cloud/report") return reportRoute(request, env as unknown as CloudEnv, url);
+    if (BILLING_ROUTES.test(path)) {
+      const bare = path.replace(/\/$/, "");
+      if (bare === "/api/billing/webhook") return billingWebhook(request, env as unknown as BillingEnv);
+      if (bare === "/billing/done") return billingDone();
+      const buyer = await humanFor(request, env);
+      if (!buyer?.session) return redirect("/login?next=/billing/checkout");
+      if (buyer.ws === OWNER_WS) return withCookies(new Response("오너 계정은 구독하지 않아요.", { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } }), buyer.set);
+      const made = await checkoutFor(env as unknown as BillingEnv, buyer.session.user.sub, typeof buyer.session.user.email === "string" ? buyer.session.user.email : null, origin);
+      const body = (await made.json()) as { url?: string; message?: string };
+      if (body.url) return withCookies(redirect(body.url), buyer.set);
+      return withCookies(new Response(body.message ?? "구독 결제를 열 수 없어요.", { status: made.status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } }), buyer.set);
     }
     if (path.startsWith("/p/")) return core.fetch(request, scoped(env, OWNER_WS), ctx);
     const shareRoute = SHARE_PATH.exec(path);
@@ -735,12 +859,21 @@ const entry = {
 
     if (path === "/__agent/tick" && request.method === "POST") return agentTick(request, env);
     if (path === "/__recurring/tick" && request.method === "POST") return recurringTick(request, env);
+    if (path === "/__webhooks/tick" && request.method === "POST") {
+      if (!env.RECURRING_TICK_SECRET || !sameSecret(request.headers.get("x-recurring-tick") ?? "", env.RECURRING_TICK_SECRET)) return jsonResponse({ error: "not found" }, 404);
+      const body = (await request.json().catch(() => ({}))) as { cron?: unknown };
+      return jsonResponse(await webhookTick(env as unknown as WebhookEnv, { cron: body.cron === true }));
+    }
     if (path === "/__media/migrate" && request.method === "POST") return mediaMigrate(request, env);
+    if (path === "/__media/orphans" && request.method === "POST") return mediaOrphans(request, env);
+    if (path === "/__templates/migrate" && request.method === "POST") return templateMigrate(request, env);
 
     const human = await humanFor(request, env);
     if (ADMIN_PATH.test(path)) {
       const response = await adminRoute(request, env as unknown as AdminEnv, url, human?.session ?? null, {
         revokeGrants: (userId) => revokeAllGrants(env, origin, oauthUserId(workspaceIdFor(userId, env))),
+        cloud: (api, actor) => cloudAdmin(request, env as unknown as CloudEnv, cloudHost(env, ctx), api, actor, origin),
+        storageAlertTest: () => acardHost.storageAlertTest(env),
         revokeTokens: async (ws) => {
           const admin = await acardHost.tokenAdmin(scoped(env, ws));
           let n = 0;
@@ -749,6 +882,10 @@ const entry = {
         },
       });
       return withCookies(response, human?.set ?? []);
+    }
+    if (path === "/api/cloud/export" && request.method === "GET") {
+      if (!human?.session || human.ws === OWNER_WS) return jsonResponse({ error: "로그인이 필요해요." }, 401);
+      return withCookies(await cookieExport(human.env, cloudHost(env, ctx)), human.set);
     }
     if (path === "/api/me/ai-usage" && request.method === "GET") {
       if (!human?.session) return jsonResponse({ error: "로그인이 필요해요." }, 401);
@@ -772,6 +909,10 @@ const entry = {
     }
     // The old /connect page is merged into 설정 > 에이전트 연결 (owner pick, 2026-10-20); old links land there.
     if (path === "/connect" || path === "/connect/") return new Response(null, { status: 301, headers: { location: "/settings/agents/" + url.search, "cache-control": "no-store" } });
+    if (path === "/api/webhooks" || path.startsWith("/api/webhooks/")) {
+      if (!human?.session) return jsonResponse({ error: "로그인이 필요해요." }, 401);
+      return withCookies(await webhookApi(request, env as unknown as WebhookEnv, url, { ws: human.ws, user: human.session.user.sub }), human.set);
+    }
     if (path === "/api/agents" || path.startsWith("/api/agents/") || path === "/settings/agents" || path === "/settings/agents/") {
       if (!human && path.startsWith("/settings/")) return redirect("/login?next=/settings/agents/");
       if (!human) return jsonResponse({ error: "로그인이 필요해요." }, 401);
@@ -807,6 +948,7 @@ const entry = {
       return liveConnect(env.LIVE, human.ws, request, null);
     }
     if (guest) {
+      env.ACARD_ACTOR?.({ kind: "guest" });
       const response = await core.fetch(request, guest, ctx);
       env.ACARD_IDENTITY?.(response.status === 401 || response.status === 403 ? null : GUEST_COOKIE.exec(readCookies(request).acard_guest ?? "")![2], true);
       return response;
@@ -853,8 +995,7 @@ async function identityResponse(response: Response, value: string | null, guest 
   return new Response(html, { status: response.status, statusText: response.statusText, headers });
 }
 
-export default {
-  async fetch(incoming: Request, raw: Env, ctx: unknown): Promise<Response> {
+async function fetchResponse(incoming: Request, raw: Env, ctx: unknown): Promise<Response> {
     const off = serviceWorkerOff(incoming);
     if (off) return off;
     const backend = withDataBackend(withR2Media(raw) as Env & DataEnv);
@@ -866,11 +1007,15 @@ export default {
     let guestIdentity = false;
     let identityResolved = false;
     const identify = (value: string | null, guest = false) => { identity = value; guestIdentity = guest; identityResolved = true; };
-    const ownerSink = newSink(OWNER_WS);
+    const ownerSink = watchWrites(newSink(OWNER_WS));
     sinks.push(ownerSink);
-    const liveTrack = <T,>(ws: string, db: T): T => { const sink = newSink(ws); sinks.push(sink); return trackDb(db, sink); };
+    const liveTrack = <T,>(ws: string, db: T): T => { const sink = watchWrites(newSink(ws)); sinks.push(sink); return trackDb(db, sink); };
+    const incomingPath = new URL(incoming.url).pathname;
+    let actor: Actor = /^\/(?:api\/agent(?:\/|$)|api\/ai\/|__agent\/)/.test(incomingPath) ? { kind: "agent", name: "Acard 에이전트" }
+      : incomingPath.startsWith("/__") ? { kind: "system" } : { kind: "human" };
+    const setActor = (value: Actor) => { actor = value; };
     try {
-      const tracked = { ...(backend.env as Env), DB: trackDb((backend.env as Env & { DB?: unknown }).DB, ownerSink), ACARD_LIVE_TRACK: liveTrack, ACARD_IDENTITY: identify } as Env;
+      const tracked = { ...(backend.env as Env), DB: trackDb((backend.env as Env & { DB?: unknown }).DB, ownerSink), ACARD_LIVE_TRACK: liveTrack, ACARD_IDENTITY: identify, ACARD_ACTOR: setActor } as Env;
       const waitEnv = keep ? { ...tracked, ACARD_WAIT: keep } : tracked;
       response = await entry.fetch(incoming, waitEnv as Env, ctx);
       const path = new URL(incoming.url).pathname;
@@ -885,17 +1030,15 @@ export default {
       else if (!identityResolved && !path.startsWith("/p/") && !path.startsWith("/s/") && !readCookies(incoming).acard_guest && response.status < 400 && (/^text\/html\b/i.test(response.headers.get("content-type") ?? "") || path.startsWith("/api/"))) await humanFor(incoming, tracked);
       response = await identityResponse(response, identity, guestIdentity);
     } catch (error) {
-      console.error("acard request failed", (raw as Env & DataEnv).DATA_BACKEND ?? "d1", error instanceof Error ? error.stack ?? error.message : String(error));
       keep?.(backend.done().catch(() => undefined));
-      // #44: a busy database pooler that escaped a handler must not become Cloudflare error 1101; the person sees the
-      // retrying page and an app/agent call gets 503 + Retry-After.
-      if (isDbTransient(error)) return busyResponse(incoming);
       throw error;
     }
     const src = incoming.headers.get("x-acard-client") ?? "";
     // Reads can self-heal rows (member home, seed stamps); publishing those would make every open tab re-read and loop.
     const reads = incoming.method === "GET" || incoming.method === "HEAD";
-    const notify = () => (reads ? Promise.resolve() : livePublish((raw as Env).LIVE, sinks, /^[\w-]{1,40}$/.test(src) ? src : ""));
+    const hooks = () => (reads ? Promise.resolve() : queueWebhooks(raw as unknown as WebhookEnv, sinks, actor, routeHints(incomingPath))
+      .then(() => undefined, (error) => console.error("webhook queue failed", error instanceof Error ? error.message : String(error))));
+    const notify = () => (reads ? Promise.resolve() : livePublish((raw as Env).LIVE, sinks, /^[\w-]{1,40}$/.test(src) ? src : "").then(hooks));
     if (response.status === 101) { keep?.(backend.done().catch(() => undefined)); return response; }
     // A streamed reply (agent chat) keeps using the database after the Response is returned, so the connection
     // closes only when its body ends.
@@ -914,5 +1057,39 @@ export default {
       return timed;
     }
     return response;
+}
+
+export default {
+  async fetch(incoming: Request, raw: Env, ctx: unknown): Promise<Response> {
+    let response: Response;
+    try { response = await fetchResponse(incoming, raw, ctx); }
+    catch (error) {
+      console.error("acard request failed", (raw as Env & DataEnv).DATA_BACKEND ?? "d1", error instanceof Error ? error.stack ?? error.message : String(error));
+      const path = new URL(incoming.url).pathname;
+      if (isDbTransient(error)) response = busyResponse(incoming);
+      else if (path.startsWith("/api/") || /^\/(?:mcp|sse)(?:\/|$)/.test(path)) response = jsonResponse({ error: "internal_error" }, 500);
+      else response = new Response('<!doctype html><html lang="ko"><meta charset="utf-8"><title>Acard</title><h1>요청을 처리하지 못했어요.</h1><p>잠시 후 다시 시도해 주세요.</p></html>', {
+        status: 500, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+    // Clone immutable asset/redirect headers without consuming streams or losing a WebSocket upgrade.
+    const out = new Response(response.body, response);
+    for (const [name, value] of Object.entries({
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+      "strict-transport-security": "max-age=31536000; includeSubDomains",
+    })) if (!out.headers.has(name)) out.headers.set(name, value);
+    if (/^text\/html\b/i.test(out.headers.get("content-type") ?? "")) {
+      const csp = out.headers.get("content-security-policy") ?? "";
+      const ancestors = /(?:^|;)\s*frame-ancestors\s+([^;]*)/i.exec(csp);
+      const frame = out.headers.get("x-frame-options");
+      // Public visual frames explicitly allow self; an existing route policy remains authoritative.
+      const intentionalFrame = (ancestors && ancestors[1].trim() !== "'none'") || (frame && frame.toUpperCase() !== "DENY");
+      if (!intentionalFrame) {
+        if (!frame) out.headers.set("x-frame-options", "DENY");
+        if (!ancestors) out.headers.set("content-security-policy", (csp ? csp.replace(/;\s*$/, "") + "; " : "") + "frame-ancestors 'none'");
+      }
+    }
+    return out;
   },
 };

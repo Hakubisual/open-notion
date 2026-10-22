@@ -9,4 +9,4 @@
   --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-15: 15px; --fs-16: 16px; --fs-17: 17px; --fs-19: 19px; --fs-21: 21px; --fs-24: 24px; --fs-28: 28px; --fs-32: 32px; --fs-38: 38px; --fs-44: 44px; --fs-56: 56px; --fs-72: 72px; --fs-112: 112px;
 }
 
-.brand svg.wordmark, .auth-logo svg.wordmark { overflow: visible; aspect-ratio: 171.36/109.63; }
+.brand svg.wordmark, .auth-logo svg.wordmark { overflow: visible; aspect-ratio: 416.7/100; }

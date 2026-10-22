@@ -20,6 +20,19 @@ async function recurringTick(env, ws) {
   return await res.json();
 }
 
+// Outgoing webhooks (gate/webhooks.ts): the instance named "global:webhooks" is woken at the earliest send time the site
+// asks for and calls POST /__webhooks/tick, which sends what is due and answers the next time; the cron is the safety net.
+const WEBHOOK_RETRY_MS = 60 * 1000;
+async function webhookTick(env, cron) {
+  const res = await fetch(env.SITE_URL + "/__webhooks/tick", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-recurring-tick": env.RECURRING_TICK_SECRET || "" },
+    body: JSON.stringify({ cron: Boolean(cron) }),
+  });
+  if (!res.ok) throw new Error("webhook tick " + res.status);
+  return await res.json();
+}
+
 function clean(params) {
   return (params || []).map((value) => (value === undefined ? null : value === true ? 1 : value === false ? 0 : value));
 }
@@ -93,7 +106,27 @@ export class WorkspaceStore extends DurableObject {
     return { armed: Number.isFinite(nextAt) ? nextAt : null };
   }
 
+  async armWebhooks(nextAt) {
+    if (!Number.isFinite(nextAt)) return { armed: null };
+    await this.ctx.storage.put("webhooks", true);
+    const at = Math.max(Date.now() + 500, nextAt);
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > at) await this.ctx.storage.setAlarm(at);
+    return { armed: current === null || current > at ? at : current };
+  }
+
   async alarm() {
+    if (await this.ctx.storage.get("webhooks")) {
+      let next;
+      try {
+        next = (await webhookTick(this.env, false)).next;
+      } catch {
+        await this.ctx.storage.setAlarm(Date.now() + WEBHOOK_RETRY_MS);
+        return;
+      }
+      if (Number.isFinite(next)) await this.ctx.storage.setAlarm(Math.max(Date.now() + 500, next));
+      return;
+    }
     const ws = await this.ctx.storage.get("recurringWs");
     if (!ws) return;
     let next;
@@ -137,6 +170,36 @@ export class WorkspaceStore extends DurableObject {
     return true;
   }
 
+  // Upload compressions this calendar month (UTC), one row per month on global:media. Each is one unique Cloudflare Images
+  // transformation; past the cap the app stores the original instead (gate/_worker.js compressUpload).
+  async compressSlot(cap) {
+    this.sql.exec("CREATE TABLE IF NOT EXISTS compress_month (month TEXT PRIMARY KEY, used INTEGER NOT NULL)");
+    const month = new Date().toISOString().slice(0, 7);
+    const row = this.sql.exec("SELECT used FROM compress_month WHERE month = ?", month).toArray()[0];
+    const used = row ? Number(row.used) : 0;
+    if (used >= Number(cap)) return false;
+    this.sql.exec("INSERT INTO compress_month (month, used) VALUES (?, 1) ON CONFLICT(month) DO UPDATE SET used = used + 1", month);
+    return true;
+  }
+
+  // Agent write limits (gate/agent-write-limit.ts), one instance per workspace ("agent-writes:<ws>"): per-token counters
+  // for the current minute and the current day (UTC), kept in memory only so counting never adds a database write. A
+  // restart forgets the counts, which only ever lets an agent write more, never less. Returns which limit was hit and when
+  // the window ends.
+  async agentWrite(token, perMinute, perDay) {
+    const now = Date.now();
+    const minute = Math.floor(now / 60_000), day = Math.floor(now / 86_400_000);
+    if (!this.agentWrites || this.agentWrites.day !== day) this.agentWrites = { day, tokens: new Map() };
+    let entry = this.agentWrites.tokens.get(token);
+    if (!entry) { entry = { minute, inMinute: 0, inDay: 0 }; this.agentWrites.tokens.set(token, entry); }
+    if (entry.minute !== minute) { entry.minute = minute; entry.inMinute = 0; }
+    if (Number.isFinite(perDay) && entry.inDay >= perDay) return { ok: false, limit: "day", max: perDay, retryAfter: Math.ceil(((day + 1) * 86_400_000 - now) / 1000) };
+    if (Number.isFinite(perMinute) && entry.inMinute >= perMinute) return { ok: false, limit: "minute", max: perMinute, retryAfter: Math.max(1, Math.ceil(((minute + 1) * 60_000 - now) / 1000)) };
+    entry.inMinute += 1;
+    entry.inDay += 1;
+    return { ok: true, minute: entry.inMinute, day: entry.inDay };
+  }
+
   async hit(key, limit, periodSeconds) {
     const now = Date.now();
     const window = Math.floor(now / (periodSeconds * 1000));
@@ -155,5 +218,9 @@ export default {
   // The owner workspace lives on the main database, not in a store, so a 15-minute cron runs its repeating templates.
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(recurringTick(env, "owner").catch((error) => console.error("owner recurring tick failed", error instanceof Error ? error.message : String(error))));
+    ctx.waitUntil(webhookTick(env, true).then((out) => {
+      if (!Number.isFinite(out.next)) return;
+      return env.WORKSPACE.get(env.WORKSPACE.idFromName("global:webhooks")).armWebhooks(out.next);
+    }).catch((error) => console.error("webhook tick failed", error instanceof Error ? error.message : String(error))));
   },
 };

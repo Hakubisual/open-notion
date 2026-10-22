@@ -1,6 +1,6 @@
 # Third-party notices
 
-OpenNotion ships no third-party code in its browser bundles. Some editor behaviour was reimplemented after reading
+Acard ships no third-party code in its browser bundles. Some editor behaviour was reimplemented after reading
 the following MIT-licensed project; no source files were copied.
 
 ## Tiptap
@@ -51,8 +51,9 @@ OFL 1.1 in short: the fonts may be used, embedded, subset and redistributed, inc
 copyright notice and this license go with them, the font files are not sold on their own, and a modified version is
 not published under a Reserved Font Name.
 
-The OpenNotion wordmark in `assets/brand/` is drawn from outlines of **Nunito** (Copyright 2014 The Nunito Project Authors,
-https://github.com/googlefonts/nunito), also under the SIL Open Font License 1.1. The font files themselves are not redistributed.
+The Acard wordmark (`assets/wordmark*.svg`, `assets/logo*.svg`, `assets/og*.svg`) is drawn from outlines of **Fredoka**
+(Copyright 2016 The Fredoka Project Authors, https://github.com/google/fonts/tree/main/ofl/fredoka), also under the SIL
+Open Font License 1.1. The font files themselves are not redistributed.
 
 The OFL 1.1 text online: https://openfontlicense.org/open-font-license-official-text/
 
@@ -67,4 +68,4 @@ The OFL 1.1 text online: https://openfontlicense.org/open-font-license-official-
 | zod | MIT |
 | electron, electron-builder (desktop/ only, dev) | MIT |
 
-All are compatible with distributing OpenNotion under the MIT License.
+All are compatible with distributing Acard under the MIT License.

@@ -12,6 +12,8 @@
     branch: "M6 3v12a6 6 0 0 0 12 0V9M3 3h6M15 6l3 3 3-3M3 15h6",
     map: "m3 5 6-3 6 3 6-3v17l-6 3-6-3-6 3V5M9 2v17M15 5v17",
     rewind: "M3 11a9 9 0 1 1 2 7M3 4v7h7M12 7v5l3 2",
+    target: "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0M18 12a6 6 0 1 1-12 0 6 6 0 0 1 12 0M14 12a2 2 0 1 1-4 0 2 2 0 0 1 4 0",
+    chart: "M3 3v18h18M7 16v-4M12 16V8M17 16v-7",
     file: "M14 2H4v20h16V8l-6-6v6h6M8 13h8M8 17h6"
   };
   function node(tag, text, className) {
@@ -24,6 +26,21 @@
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"), path = document.createElementNS(svg.namespaceURI, "path");
     svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true");
     path.setAttribute("d", icons[name] || icons.file); svg.appendChild(path); return svg;
+  }
+  // Section headings make the one-line outline on each card.
+  function outline(template) {
+    return template.blocks.filter(function (b) { return b.type === "heading2"; }).map(function (b) { return b.text; }).slice(0, 4).join(" · ");
+  }
+  // The preview draws components with the same renderer as the page once the components chunk is loaded.
+  function previewBlock(block) {
+    var ui = window.AcardComponents;
+    if (block.type === "component" && ui) {
+      var box = node("div", "", "template-preview-ui"); box.innerHTML = ui.renderComponentBlock(block); return box;
+    }
+    if (block.type === "component") return node("p", "▦ " + ((block.meta && block.meta.ui) || ""), "template-preview-chip");
+    if (block.type === "to_do") return node("p", block.text, "template-preview-todo" + (block.checked ? " done" : ""));
+    if (block.type === "bulleted") return node("p", block.text, "template-preview-bullet");
+    return node(/^heading/.test(block.type) ? "h4" : "p", block.text);
   }
   function fail(error) {
     dialog.querySelector(".template-status").textContent = "만들지 못했어요: " + error.message;
@@ -39,6 +56,7 @@
       if (template) {
         if (template.personal) await editor.api("/page/" + encodeURIComponent(pendingPage.slug) + "/from-template", { method: "POST", body: JSON.stringify({ templateId: template.id }) });
         else await editor.api("/page/" + encodeURIComponent(pendingPage.slug), { method: "PUT", body: JSON.stringify({ title: template.name, blocks: template.blocks, base_updated: pendingPage.updated }) });
+        if (!template.personal && template.settings) await editor.api("/page/" + encodeURIComponent(pendingPage.slug) + "/settings", { method: "PUT", body: JSON.stringify(template.settings) });
       }
       location.href = "/edit/" + encodeURIComponent(pendingPage.slug) + "/" + (template ? "" : "?new");
     } catch (error) {
@@ -62,7 +80,7 @@
     dialog.append(button("빈 페이지로 시작", function () { create(null); }, "template-blank"));
     dialog.showModal();
     try {
-      var data = await editor.api("/templates");
+      var data = (await Promise.all([editor.api("/templates"), editor.lazy("components").catch(function () {})]))[0];
       status.textContent = "";
       function choose(template, card) {
         selected = template;
@@ -71,9 +89,7 @@
         aside.append(node("span", "미리보기", "template-eyebrow"), node("h3", template.name));
         var body = node("div", "", "template-preview-body");
         template.blocks.forEach(function (block) {
-          if (block.type === "heading1") return;
-          var text = (block.type === "to_do" ? (block.checked ? "[x] " : "[ ] ") : block.type === "bulleted" ? "• " : "") + block.text;
-          body.append(node(/^heading/.test(block.type) ? "h4" : "p", text));
+          if (block.type !== "heading1") body.append(previewBlock(block));
         });
         aside.append(body, button("이 템플릿 사용", function () { create(selected); }, "template-use"));
       }
@@ -84,7 +100,10 @@
         templates.forEach(function (template) {
           template.personal = personal;
           var card = button("", function () { choose(template, card); }, "template-card");
-          card.append(icon(template.icon), node("strong", template.name), node("span", template.description));
+          var ico = node("span", "", "template-ico"), sections = outline(template);
+          ico.append(icon(template.icon));
+          card.append(ico, node("strong", template.name), node("span", template.description, "template-desc"));
+          if (sections) card.append(node("span", sections, "template-outline"));
           grid.append(card);
           if (!selected) choose(template, card);
         });

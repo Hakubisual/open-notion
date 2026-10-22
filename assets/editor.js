@@ -495,8 +495,12 @@
     });
     text.addEventListener("paste", function (ev) {
       ev.preventDefault();
-      var paste = (ev.clipboardData || window.clipboardData).getData("text/plain");
-      document.execCommand("insertText", false, paste.replace(/\r?\n+/g, " "));
+      var data = ev.clipboardData || window.clipboardData, paste = data.getData("text/plain"), next = window.AcardEditorNext;
+      var insert = function () { document.execCommand("insertText", false, paste.replace(/\r?\n+/g, " ")); };
+      // issue 108: markdown -> blocks paste lives in the lazy editor-next chunk. A multi-line paste that lands before it has
+      // started (a new page, right after the title) used to be joined into one paragraph here; it now waits for the chunk.
+      if (next && next.on && !next.started && /\n/.test(paste)) return lazy("editor-next").then(function (f) { f.start(); f.paste(block.id, data.getData("text/html"), paste) || insert(); }, function () { text.focus(); insert(); });
+      insert();
     });
     text.addEventListener("keydown", function (ev) {
       if (!els.slash.hidden && ["Enter", "ArrowUp", "ArrowDown"].indexOf(ev.key) >= 0) return;
@@ -1428,6 +1432,8 @@
   function openSlash(anchor, index, query) {
     slashIndex = index;
     slashSel = 0;
+    // The lazy easy-insert chunk draws the grouped menu with previews; this plain list is only the first-keystroke fallback.
+    if (easy && easy.menu) { slashItems = easy.menu(els.slash, BLOCK_TYPES.concat(componentItems), query || "", anchor, applySlash); return; }
     slashItems = slashMatches(query);
     var rect = anchor.getBoundingClientRect();
     els.slash.style.left = Math.min(rect.left, window.innerWidth - 280) + "px";
@@ -1445,7 +1451,6 @@
       });
       els.slash.appendChild(button);
     });
-    if (easy) easy.decorate(els.slash, query, slashItems);
     els.slash.hidden = false;
   }
 
@@ -1453,6 +1458,8 @@
     els.slash.hidden = true;
     slashIndex = -1;
   }
+  // The gutter "+" opens the insert menu through easy-insert; load it while the pointer is on the way.
+  els.blocks.addEventListener("pointerover", function (ev) { if (!easy && ev.target.closest(".gutter")) loadEasy(); });
 
   function applySlash(type) {
     var index = slashIndex;
@@ -1527,10 +1534,14 @@
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "y") { ev.preventDefault(); restoreEdit(redoStack, undoStack); return; }
     if (els.slash.hidden) return;
     var buttons = Array.prototype.slice.call(els.slash.querySelectorAll("button"));
-    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+    // Hover on desktop moves the highlight too, so the keyboard continues from the highlighted item.
+    var at = buttons.findIndex(function (button) { return button.classList.contains("sel"); });
+    if (at >= 0) slashSel = at;
+    if ((ev.key === "ArrowDown" || ev.key === "ArrowUp") && buttons.length) {
       ev.preventDefault();
       slashSel = (slashSel + (ev.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length;
-      buttons.forEach(function (button, i) { button.classList.toggle("sel", i === slashSel); });
+      if (easy && easy.select) easy.select(els.slash, slashSel);
+      else buttons.forEach(function (button, i) { button.classList.toggle("sel", i === slashSel); });
     } else if (ev.key === "Enter") {
       ev.preventDefault();
       var entry = slashItems[slashSel];
@@ -1702,7 +1713,8 @@
       more.className = "more";
       more.textContent = "⋯";
       more.setAttribute("aria-label", "페이지 메뉴");
-      more.addEventListener("click", function (ev) { ev.preventDefault(); pageMenu(more, page); });
+      // The document click handler closes the menu, so this click must not reach it (same as the block menu).
+      more.addEventListener("click", function (ev) { ev.preventDefault(); ev.stopPropagation(); pageMenu(more, page); });
       row.appendChild(link);
       row.appendChild(more);
       li.appendChild(row);
@@ -1720,28 +1732,34 @@
     els.ctx.replaceChildren();
     var heading = document.createElement("h3"); heading.textContent = page.title; els.ctx.appendChild(heading);
 
-    function item(label, fn) {
+    var actions = [
+      ["이름 바꾸기", function () { renameInline(page); }],
+      ["여기 아래로 옮기기", function () { pickParent(page); }],
+      page.parent ? ["맨 위로 옮기기", function () {
+        api("/page/" + encodeURIComponent(page.slug) + "/move", { method: "POST", body: JSON.stringify({ parent: null }) }).then(loadTree, function (error) { setSave(error.message, true); });
+      }] : null,
+      ["삭제", function () {
+        if (!window.confirm(page.title + " 페이지를 지울까요?")) return;
+        api("/page/" + encodeURIComponent(page.slug), { method: "DELETE" }).then(function () {
+          if (page.slug === slug) location.href = "/";
+          else loadTree();
+        }, function (error) { setSave(error.message, true); });
+      }]
+    ];
+    actions.filter(Boolean).forEach(function (pair) {
       var button = document.createElement("button");
       button.type = "button";
-      button.textContent = label;
-      button.addEventListener("mousedown", function (ev) { ev.preventDefault(); els.ctx.hidden = true; fn(); });
+      button.textContent = pair[0];
+      button.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
+      button.addEventListener("click", function (ev) { ev.stopPropagation(); els.ctx.hidden = true; pair[1](); });
+      button.onkeydown = function (ev) {
+        if (ev.key === "Escape") { els.ctx.hidden = true; anchor.focus(); }
+      };
+      if (pair[0] === "삭제") button.className = "danger";
       els.ctx.appendChild(button);
-      if (label === "삭제") button.className = "danger";
-    }
-
-    item("이름 바꾸기", function () { renameInline(page); });
-    item("여기 아래로 옮기기", function () { pickParent(page); });
-    if (page.parent) item("맨 위로 옮기기", function () {
-      api("/page/" + encodeURIComponent(page.slug) + "/move", { method: "POST", body: JSON.stringify({ parent: null }) }).then(loadTree);
-    });
-    item("삭제", function () {
-      if (!window.confirm(page.title + " 페이지를 지울까요?")) return;
-      api("/page/" + encodeURIComponent(page.slug), { method: "DELETE" }).then(function () {
-        if (page.slug === slug) location.href = "/";
-        else loadTree();
-      });
     });
     els.ctx.hidden = false;
+    els.ctx.children[1].focus();
   }
 
   function renameInline(page) {
@@ -1758,11 +1776,11 @@
       if (!title || title === page.title) { loadTree(); return; }
       api("/page/" + encodeURIComponent(page.slug) + "/rename", { method: "POST", body: JSON.stringify({ title: title }) })
         .then(function () {
-          if (page.slug === slug) { state.title = title; els.title.value = title; }
+          if (page.slug === slug) state.title = els.title.value = title;
           return loadTree();
-        });
+        }, function (error) { renderTree(); setSave(error.message, true); });
     }
-    input.addEventListener("blur", commit);
+    input.onblur = commit;
     input.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
       if (ev.key === "Escape") { input.value = page.title; input.blur(); }
@@ -1772,16 +1790,9 @@
   function pickParent(page) {
     var select = document.createElement("select");
     select.className = "rename";
-    var none = document.createElement("option");
-    none.value = "";
-    none.textContent = "(맨 위)";
-    select.appendChild(none);
+    select.add(new Option("(맨 위)", ""));
     state.pages.forEach(function (other) {
-      if (other.slug === page.slug) return;
-      var option = document.createElement("option");
-      option.value = other.slug;
-      option.textContent = other.title;
-      select.appendChild(option);
+      if (other.slug !== page.slug) select.add(new Option(other.title, other.slug));
     });
     var link = els.tree.querySelector('a[href="/edit/' + encodeURIComponent(page.slug) + '/"]');
     if (!link) return;
@@ -1794,9 +1805,9 @@
       move(false).catch(function (error) {
         if (!/공유됩니다/.test(error.message) || !window.confirm(error.message + "\n\n그래도 옮길까요?")) throw error;
         return move(true);
-      }).then(loadTree, function (error) { setSave(error.message, true); loadTree(); });
+      }).then(loadTree, function (error) { renderTree(); setSave(error.message, true); });
     });
-    select.addEventListener("blur", function () { loadTree(); });
+    select.onblur = loadTree;
   }
 
   function loadBacklinks() {
@@ -1810,6 +1821,31 @@
   }
 
   els.title.addEventListener("input", function () { state.title = els.title.value; scheduleSave(); });
+  // editor.html focuses a new page's title before this script loads; an Enter pressed in that gap is held there
+  // (data-enter-pending) and finished here, so typing straight on goes to the body instead of the title (#80).
+  window.AcardTitleKeys = true;
+  els.title.addEventListener("keydown", function (ev) {
+    if (ev.isComposing || ev.keyCode === 229 || els.blocks.hidden) return;
+    if (ev.key !== "Enter" && !(ev.key === "ArrowDown" && els.title.selectionStart === els.title.value.length && els.title.selectionEnd === els.title.value.length)) return;
+    ev.preventDefault();
+    titleToBody();
+  });
+  function titleToBody() {
+    var text = els.blocks.querySelector('[contenteditable="true"]');
+    if (!text) {
+      state.blocks.unshift(newBlock());
+      render();
+      scheduleSave();
+      text = els.blocks.querySelector('[contenteditable="true"]');
+    }
+    text.focus();
+    var range = document.createRange();
+    range.selectNodeContents(text);
+    range.collapse(true);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
 
   document.getElementById("add-block").addEventListener("click", function () {
     var block = newBlock();
@@ -2153,7 +2189,8 @@
     state.title = els.title.value || "제목 없음";
     state.blocks = [{ id: "b1", type: "paragraph", text: "", checked: false, indent: 0, meta: null }];
     render();
-    els.title.focus();
+    if (els.title.dataset && els.title.dataset.enterPending) { delete els.title.dataset.enterPending; titleToBody(); }
+    else els.title.focus();
     if (state.title !== "제목 없음") scheduleSave();
   }
   loadTree();

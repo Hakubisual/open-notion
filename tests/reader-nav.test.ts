@@ -15,7 +15,7 @@ function primitives() {
 test("reader link eligibility excludes document routes, other origins, downloads and modified clicks", () => {
   const { eligible } = primitives(), base = "https://notes.example.com/one/";
   for (const href of ["/two/", "/", "/home/", "/two/?view=board", "/two/#heading"]) expect(eligible(href, base)).toBe(true);
-  for (const href of ["/edit/two/", "/p/token/", "/s/token/", "/api/", "/settings/", "/login/", "/__logout/", "https://other.dev/two/", "mailto:a@b.com", "#heading", "/two.js"]) expect(eligible(href, base)).toBe(false);
+  for (const href of ["/edit/two/", "/p/token/", "/s/token/", "/api/", "/settings/", "/import", "/import/", "/login/", "/__logout/", "https://other.dev/two/", "mailto:a@b.com", "#heading", "/two.js"]) expect(eligible(href, base)).toBe(false);
   for (const event of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true }, { button: 1 }, { defaultPrevented: true }]) expect(eligible("/two/", base, event)).toBe(false);
   expect(eligible("/two/", base, {}, { target: "_blank" })).toBe(false);
   expect(eligible("/two/", base, {}, { download: true })).toBe(false);

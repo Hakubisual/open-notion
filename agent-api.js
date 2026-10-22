@@ -145,11 +145,12 @@ function metaFlag(meta) {
   return String(meta && meta.acard_meta).trim() === "1";
 }
 
-function frontmatterText(page, icon, tags, authors) {
+function frontmatterText(page, icon, tags, authors, font) {
   const quote = (value) => (/[:#\[\]"']/.test(value) ? JSON.stringify(value) : value);
   const lines = ["---", "title: " + quote(page.title), "slug: " + page.slug];
   if (page.parent) lines.push("parent: " + page.parent);
   if (icon) lines.push("icon: " + quote(icon));
+  if (font === "report") lines.push("style: report");
   if (tags.length) lines.push("tags: [" + tags.map(quote).join(", ") + "]");
   lines.push("updated: " + new Date(page.updated).toISOString());
   if (authors.length) lines.push("last_author: " + quote(authors[0].agent));
@@ -232,6 +233,12 @@ async function setIcon(db, slug, icon) {
   await db.prepare("INSERT INTO editor_page_settings (page, icon) VALUES (?, ?) ON CONFLICT(page) DO UPDATE SET icon = excluded.icon").bind(slug, value).run();
 }
 
+// Front matter style: report | default sets the research-report page style (editor_page_settings.font); anything else is ignored.
+async function setStyle(db, slug, style) {
+  if (style !== "report" && style !== "default") return;
+  await db.prepare("INSERT INTO editor_page_settings (page, font) VALUES (?, ?) ON CONFLICT(page) DO UPDATE SET font = excluded.font").bind(slug, style).run();
+}
+
 function buttonNote(dropped) {
   return dropped ? { buttons: "버튼 " + dropped + "개의 동작은 저장하지 않았어요. 대상 데이터베이스에 쓸 권한이 없거나 동작 모양이 맞지 않아요." } : {};
 }
@@ -296,7 +303,7 @@ export const agentOps = {
     return {
       slug, title: found.page.title, parent: found.page.parent, icon: found.settings?.icon ?? null, tags,
       updated: found.page.updated, authors,
-      markdown: frontmatterText(found.page, found.settings?.icon ?? null, tags, authors) + body + "\n",
+      markdown: frontmatterText(found.page, found.settings?.icon ?? null, tags, authors, found.settings?.font) + body + "\n",
     };
   },
 
@@ -314,6 +321,7 @@ export const agentOps = {
     }
     const title = String(input.title ?? meta.title ?? "").trim().slice(0, 200) || "새 페이지";
     const parent = String(input.parent ?? meta.parent ?? "").trim() || null;
+    if (parent && helpers.services?.agentScopes) requireScope({ ...principal, scopes: await helpers.services.agentScopes(db, principal, parent) }, "write");
     const ids = await idemIds("create", principal, key, [parent ?? "", title, String(input.markdown)]);
     const again = async () => {
       const prior = await idemSeen(db, ids);
@@ -343,6 +351,7 @@ export const agentOps = {
       throw error;
     }
     await setIcon(db, slug, input.icon ?? meta.icon);
+    await setStyle(db, slug, input.style ?? meta.style);
     const tags = tagList(input.tags ?? meta.tags);
     if (tags.length) await setTags(db, slug, tags);
     if (folder) await markFolder(db, slug, input.description ?? meta.description, "agent");
@@ -356,12 +365,15 @@ export const agentOps = {
     if (!found) throw new AgentError("없는 페이지예요.", 404);
     await folderGuard(db, slug);
     const { meta, body } = parseFrontmatter(markdownInput(input.markdown));
+    const parentRaw = input.parent ?? meta.parent;
+    const parent = parentRaw === undefined ? found.page.parent : (String(parentRaw).trim() || null);
+    if (parent && parent !== found.page.parent && helpers.services?.agentScopes) requireScope({ ...principal, scopes: await helpers.services.agentScopes(db, principal, parent) }, "write");
     const parsed = helpers.markdownToBlocks(body, { meta: metaFlag(meta) });
     blockLimit(parsed.length);
     const written = humanAlign(found.blocks, helpers.normaliseBlocks(parsed));
     // A retry of an update that already went through (the client timed out waiting) would now be refused with 409 because
     // updated moved; when the page already holds exactly this content, answer as done.
-    const onlyBody = [input.icon, meta.icon, input.tags, meta.tags, input.parent, meta.parent].every((value) => value === undefined);
+    const onlyBody = [input.icon, meta.icon, input.tags, meta.tags, input.parent, meta.parent, input.style, meta.style].every((value) => value === undefined);
     const sameTitle = onlyBody && ((input.title ?? meta.title) === undefined || String(input.title ?? meta.title).trim().slice(0, 200) === found.page.title);
     if (sameTitle && found.blocks.length && helpers.blocksToMarkdown(found.blocks, { meta: true }) === helpers.blocksToMarkdown(written, { meta: true })) {
       return { slug, title: found.page.title, parent: found.page.parent, updated: true, unchanged: true, note: "페이지가 이미 이 내용이라 바꾸지 않았어요." };
@@ -372,37 +384,18 @@ export const agentOps = {
     const blocks = guard.blocks;
     const buttonsDropped = helpers.guardAgentButtons ? await helpers.guardAgentButtons(db, principal, found.blocks, blocks) : 0;
     const title = String(input.title ?? meta.title ?? found.page.title).trim().slice(0, 200) || found.page.title;
-    const parentRaw = input.parent ?? meta.parent;
-    const parent = parentRaw === undefined ? found.page.parent : (String(parentRaw).trim() || null);
     if (parent && (parent === slug || !(await parentExists(db, parent)))) throw new AgentError("상위 페이지가 맞지 않아요.", 400);
     const expected = input.expectedUpdated === undefined || input.expectedUpdated === null ? null : Number(input.expectedUpdated);
     if (expected !== null && !Number.isFinite(expected)) throw new AgentError("expectedUpdated 는 숫자여야 해요.");
-    const now = Date.now();
-    // 다른 쓰기가 사이에 끼어들어도 잊지 않도록, 기대한 수정 시각 확인을 UPDATE 문 안에서 한다.
-    // expectedUpdated 가 없으면 마지막 변경이 에이전트 쓰기일 때만 덮어쓴다. 사람이 편집기에서 고친 뒤면(#25) 409 로 다시 읽게 한다.
-    // The claim and this write's activity row commit together, after the page row is locked: a second agent writing
-    // the same page waits for the first and then sees its activity, so it is not refused as if a person had edited
-    // (acard-db-load: 192 of 221 concurrent agent writes got this false 409). The stamp only moves forward and the
-    // activity row gets the same stamp; the claim token marks the row this write won.
-    const claim = crypto.randomUUID();
-    const [, claimed] = await db.batch([
-      db.prepare("UPDATE pages SET updated = updated WHERE slug = ?").bind(slug),
-      db.prepare("UPDATE pages SET updated = MAX(updated + 1, ?), source = 'editor', hash = ? WHERE slug = ? AND updated <= " + (expected === null ? "COALESCE((SELECT MAX(created) FROM agent_activity WHERE page = ?), -1)" : "?"))
-        .bind(now, claim, slug, expected === null ? slug : expected),
-      db.prepare("INSERT INTO agent_activity (id, page, agent, via, action, created) SELECT ?, ?, ?, ?, 'update', updated FROM pages WHERE slug = ? AND hash = ?")
-        .bind(crypto.randomUUID(), slug, principal.name, principal.via, slug, claim),
-    ]);
-    if (Number(claimed?.meta?.changes ?? 0) === 0) {
+    const saved = await helpers.saveAgentBlocks(db, slug, blocks, { expected, title, parent, principal, activity: crypto.randomUUID() });
+    if (!saved) {
       throw new AgentError(expected === null
         ? "사람이 이 페이지를 고친 뒤라 그대로 덮어쓸 수 없어요. read_page 로 다시 읽고, 고친 내용을 합친 뒤 그 updated 값을 expectedUpdated 로 보내 주세요."
         : "그사이 페이지가 바뀌었어요. 다시 읽고 합친 뒤 쓰세요.", 409);
     }
-    await helpers.captureEditorVersion(db, slug);
-    // The stamp stays the claimed one (equal to the activity row), so the next agent write is not taken for a person's.
-    await db.prepare("UPDATE pages SET title = ?, parent = ?, source = 'editor', hash = NULL WHERE slug = ?").bind(title, parent, slug).run();
-    await helpers.saveBlocks(db, slug, blocks);
     if (title !== found.page.title) await helpers.syncPageTitleToRow(db, slug, title);
     await setIcon(db, slug, input.icon ?? meta.icon);
+    await setStyle(db, slug, input.style ?? meta.style);
     const tagsRaw = input.tags ?? meta.tags;
     if (tagsRaw !== undefined) await setTags(db, slug, tagList(tagsRaw));
     return withWarnings(humanNote({ slug, title, parent, updated: true, ...buttonNote(buttonsDropped) }, guard), imageWarnings, written);
@@ -425,16 +418,10 @@ export const agentOps = {
     blockLimit(parsedAdd.length, found.blocks.length);
     const added = helpers.normaliseBlocks(parsedAdd);
     const imageWarnings = await ingest(db, helpers, slug, added);
-    const used = new Set(found.blocks.map((block) => block.id));
-    for (const block of added) while (used.has(block.id)) block.id = "a" + Math.random().toString(36).slice(2, 10);
-    await helpers.captureEditorVersion(db, slug);
+    // Parsed IDs can collide with another append that read the same page (including an empty page).
+    for (const block of added) block.id = "a" + crypto.randomUUID();
     try {
-      await helpers.saveBlocks(db, slug, helpers.normaliseBlocks([...found.blocks, ...added]), {
-        after: [
-          db.prepare("UPDATE pages SET updated = ?, source = 'editor', hash = NULL WHERE slug = ?").bind(Date.now(), slug),
-          activityStatement(db, slug, principal, "append", ids[0]),
-        ],
-      });
+      if (!await helpers.saveAgentBlocks(db, slug, added, { append: true, principal, activity: ids[0] })) throw new AgentError("없는 페이지예요.", 404);
     } catch (error) {
       if (duplicateKey(error) && (await idemSeen(db, ids)) !== null) return skip;
       throw error;
@@ -442,10 +429,10 @@ export const agentOps = {
     return withWarnings({ slug, appended: added.length, blocks: found.blocks.length + added.length }, imageWarnings, added);
   },
 
-  async listDatabases(db, principal) {
+  async listDatabases(db, principal, helpers) {
     requireScope(principal, "read");
     const rows = await db.prepare("SELECT slug, title, icon FROM databases ORDER BY title").all();
-    return { databases: rows.results ?? [] };
+    return { databases: await agentVisible(db, principal, helpers, rows.results ?? []) };
   },
 
   // Formula, rollup and time values are computed on read; style() results go out as their plain text.
@@ -544,7 +531,7 @@ export async function handleAgentV1(request, db, path, principal, helpers) {
       }
       return json({ error: "지원하지 않는 방법이에요." }, 405);
     }
-    if (path === "/databases" && method === "GET") return json(await agentOps.listDatabases(db, principal));
+    if (path === "/databases" && method === "GET") return json(await agentOps.listDatabases(db, principal, helpers));
     const rows = /^\/databases\/([^/]+)\/rows(?:\/([^/]+))?$/.exec(path);
     if (rows) {
       const database = decodeURIComponent(rows[1]);

@@ -25,6 +25,17 @@ const props = (extra: any[] = []) => [
 const row = (id: string, values: any, page: string | null = "page-" + id) => ({ id, page, ord: 0, values });
 
 describe("row links", () => {
+  test("table widths cannot inject elements or nonfinite CSS (#87)", () => {
+    for (const width of ['100px"><img src=x onerror=alert(1)>', Infinity, NaN, -10, 9000, "240"]) {
+      const out = html.databaseTableHtml(props(), [], { config: { widths: { t: width } } }, {});
+      expect(out).not.toContain("<img");
+      const rendered = /min-width:(\d+)px/.exec(out);
+      expect(rendered).not.toBeNull();
+      expect(Number(rendered![1])).toBeGreaterThanOrEqual(60);
+      expect(Number(rendered![1])).toBeLessThanOrEqual(800);
+    }
+  });
+
   test("every view links rows through row.page, never row.id", () => {
     const properties = props([{ id: "d", name: "날짜", type: "date", config: {} }]);
     const rows = [row("r1", { t: "A", d: { start: "2026-10-10" } }, "pg one")];

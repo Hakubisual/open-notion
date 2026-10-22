@@ -2,6 +2,7 @@
 // here over a service binding. No public route (workers_dev off, no routes): only the bound app reaches it.
 //   POST /resize?w=<px>&f=<avif|webp|jpeg|png>  body = image bytes -> the variant
 //   POST /meta                                  body = image bytes -> { width, height, format, lqip } (lqip: 24 px webp data URL)
+//   POST /compress?max=<px>&q=<1-100>           body = png/jpeg bytes -> WebP that fits in max x max (never enlarged)
 const FORMATS = { avif: "image/avif", webp: "image/webp", jpeg: "image/jpeg", png: "image/png" };
 
 function streamOf(bytes) {
@@ -22,6 +23,15 @@ export default {
         let binary = "";
         for (const b of new Uint8Array(tiny)) binary += String.fromCharCode(b);
         return Response.json({ width: info.width, height: info.height, format: info.format, lqip: "data:image/webp;base64," + btoa(binary) });
+      }
+      if (url.pathname === "/compress") {
+        const max = Number(url.searchParams.get("max"));
+        const quality = Number(url.searchParams.get("q"));
+        if (!Number.isInteger(max) || max < 16 || max > 4096 || !Number.isInteger(quality) || quality < 1 || quality > 100) return new Response("bad request", { status: 400 });
+        const result = await env.IMAGES.input(request.body)
+          .transform({ width: max, height: max, fit: "scale-down" })
+          .output({ format: "image/webp", quality });
+        return result.response();
       }
       if (url.pathname !== "/resize") return new Response("not found", { status: 404 });
       const width = Number(url.searchParams.get("w"));

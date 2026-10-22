@@ -173,10 +173,9 @@ export function databaseTableHtml(properties, allRows, view, context) {
   if (!columns.length) return '<p class="dbempty">속성이 없어요.</p>';
   const config = (view && view.config) || {};
   const calculations = config.calculations || {};
-  const widths = config.widths || {};
 
   const head = columns.map((prop) => {
-    const width = widths[prop.id] || columnWidth(prop, view);
+    const width = columnWidth(prop, view);
     return '<th scope="col" style="min-width:' + width + 'px"><span class="thname">' + tableHeaderIcon(prop.name, prop.type) + dbEscape(prop.name) + "</span></th>";
   }).join("");
   // #34: the leftmost box shows a status 완료 row, so it only exists when a status property has a 완료 option.

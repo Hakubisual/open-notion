@@ -16,7 +16,18 @@ const TABLE_KIND: Record<string, string> = {
 };
 const WRITE = /^\s*(?:with\b[\s\S]*?\)\s*)?(insert(?:\s+or\s+\w+)?\s+into|update|delete\s+from|replace\s+into)\s+"?([a-z_]+)"?/i;
 
-export type Sink = { ws: string; kinds: Set<string>; slugs: Set<string> };
+// onWrite (gate/webhooks.ts) hears every committed write with its row count (null when the driver does not report one);
+// db is the untracked database of that workspace, for reading the changed pages back after the response.
+export type Sink = {
+  ws: string; kinds: Set<string>; slugs: Set<string>;
+  onWrite?: (sql: string, params: unknown[], changes: number | null) => void;
+  db?: unknown;
+};
+
+const changesOf = (value: unknown): number | null => {
+  const n = (value as { meta?: { changes?: unknown } } | null)?.meta?.changes;
+  return typeof n === "number" ? n : null;
+};
 
 export function classify(sql: string): string | null {
   const match = WRITE.exec(sql);
@@ -24,7 +35,10 @@ export function classify(sql: string): string | null {
   return TABLE_KIND[match[2].toLowerCase()] ?? null;
 }
 
-function note(sink: Sink, sql: string, params: unknown[]) {
+function note(sink: Sink, sql: string, params: unknown[], changes: number | null = null) {
+  if (sink.onWrite) {
+    try { sink.onWrite(sql, params, changes); } catch (error) { console.error("live onWrite failed", error instanceof Error ? error.message : String(error)); }
+  }
   const kind = classify(sql);
   if (!kind) return;
   sink.kinds.add(kind);
@@ -58,8 +72,9 @@ export function slugParams(sql: string, params: unknown[]): unknown[] {
 export function trackDb<T>(db: T, sink: Sink): T {
   const inner = db as unknown as Db;
   if (!inner || typeof inner.prepare !== "function" || (inner as { acardLive?: boolean }).acardLive) return db;
+  sink.db = inner;
   const wrap = (stmt: Stmt): Stmt => {
-    const fire = <R>(p: Promise<R>) => p.then((value) => { note(sink, stmt.sql, stmt.params ?? []); return value; });
+    const fire = <R>(p: Promise<R>) => p.then((value) => { note(sink, stmt.sql, stmt.params ?? [], changesOf(value)); return value; });
     return {
       get sql() { return stmt.sql; },
       get params() { return stmt.params; },
@@ -77,7 +92,7 @@ export function trackDb<T>(db: T, sink: Sink): T {
   tracked.batch = async (list: Stmt[]) => {
     const raw = list.map((s) => ((s as unknown as { __inner?: Stmt }).__inner ?? s));
     const out = await inner.batch(raw);
-    for (const s of raw) note(sink, s.sql, s.params ?? []);
+    raw.forEach((s, i) => note(sink, s.sql, s.params ?? [], changesOf(out?.[i])));
     return out;
   };
   const script = (inner as { script?: (list: Stmt[]) => Promise<void> }).script;

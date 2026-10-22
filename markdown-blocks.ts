@@ -1,4 +1,5 @@
 import "./assets/columns-model.js";
+import "./assets/editor-model.js";
 
 // 마크다운 -> 블록 변환기.
 // 도리는 마크다운을 쓰고(정본), 오너는 브라우저 에디터에서 같은 페이지를 블록으로 고친다.
@@ -220,6 +221,11 @@ export function markdownToBlocks(markdown: string, options: MarkdownOptions = {}
   }
 
   const push = (type: BlockType, text: string, extra: Partial<Block> = {}) => {
+    const target = /^(video|audio|file|embed|bookmark|button)$/.test(type) ? extra.meta?.url : undefined;
+    if (typeof target === "string" && target && !(globalThis as typeof globalThis & { EditorModel: { safeHref(value: string): string } }).EditorModel.safeHref(target)) {
+      blocks.push({ id: nextId(), type: "paragraph", text: text ? text + " " + target : target, indent: currentIndent });
+      return;
+    }
     blocks.push({ id: nextId(), type, text, indent: currentIndent, ...extra });
   };
   let currentIndent = 0;
@@ -391,7 +397,7 @@ export function markdownToBlocks(markdown: string, options: MarkdownOptions = {}
       cols.push({ text: current.join("\n").trim() });
       // 3열을 넘으면 남은 묶음을 버리지 않고 마지막 열로 합친다.
       while (cols.length > 3) {
-        const extra = cols.pop();
+        const extra = cols.pop()!;
         cols[cols.length - 1].text = (cols[cols.length - 1].text + "\n" + extra.text).trim();
       }
       while (cols.length < 2) cols.push({ text: "" });

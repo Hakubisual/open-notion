@@ -11,7 +11,7 @@ type KvLike = {
   list(options?: { prefix?: string; cursor?: string; limit?: number }): Promise<{ keys: { name: string; metadata?: unknown }[]; list_complete: boolean; cursor?: string }>;
 };
 
-type R2Object = { key: string; size: number; customMetadata?: Record<string, string>; arrayBuffer(): Promise<ArrayBuffer>; text(): Promise<string> };
+type R2Object = { key: string; size: number; customMetadata?: Record<string, string>; httpMetadata?: { contentType?: string }; arrayBuffer(): Promise<ArrayBuffer>; text(): Promise<string> };
 export type R2Like = {
   get(key: string): Promise<R2Object | null>;
   head(key: string): Promise<{ key: string; size: number; customMetadata?: Record<string, string> } | null>;
@@ -43,20 +43,34 @@ export function r2Put(r2: R2Like, key: string, value: unknown, options?: unknown
   return r2.put(key, value, { httpMetadata: { contentType: mime }, customMetadata: { meta: JSON.stringify(metadata ?? {}) } });
 }
 
+// acard-storage-cost 2: an original that no page, trash, history, share, backup, template, comment, journal or setting
+// refers to is moved to quarantine/<its key> (copied, checked, then removed from its place) instead of being deleted. A
+// read that misses the original still finds the quarantined copy, so a wrong call never breaks an image; it is logged
+// so the file can be put back (scripts/media-quarantine.ts restore).
+export const QUARANTINE = "quarantine/";
+
+async function quarantined(r2: R2Like, key: string) {
+  const object = await r2.get(QUARANTINE + key);
+  if (object) console.warn("acard media served from quarantine", key);
+  return object;
+}
+
 export function hybridMedia(kv: KvLike, r2: R2Like): KvLike & { readonly r2: R2Like; readonly kv: KvLike } {
   return {
     r2,
     kv,
     async get(key, options) {
       if (!ORIGINAL_KEY.test(key)) return kv.get(key, options);
-      const object = await r2.get(key);
+      const object = (await r2.get(key)) ?? (await quarantined(r2, key));
       return object ? decode(object, typeOf(options)) : kv.get(key, options);
     },
     async getWithMetadata(key, options) {
       if (!ORIGINAL_KEY.test(key)) return kv.getWithMetadata(key, options);
       const object = await r2.get(key);
-      if (!object) return kv.getWithMetadata(key, options);
-      return { value: await decode(object, typeOf(options)), metadata: { ...readMeta(object), store: "r2" } };
+      if (object) return { value: await decode(object, typeOf(options)), metadata: { ...readMeta(object), store: "r2" } };
+      const held = await quarantined(r2, key);
+      if (held) return { value: await decode(held, typeOf(options)), metadata: { ...readMeta(held), store: "r2", quarantined: true } };
+      return kv.getWithMetadata(key, options);
     },
     async put(key, value, options) {
       if (!ORIGINAL_KEY.test(key)) return kv.put(key, value, options);
@@ -107,6 +121,44 @@ export async function migrateMediaPage(kv: KvLike, r2: R2Like, cursor: string | 
     out.bytes += value.byteLength;
   }
   return out;
+}
+
+type R2Full = R2Like;
+
+// Move one original into quarantine: copy with its metadata, read the copy back and compare size and bytes' hash, and only
+// then remove the original. Any failure leaves the original where it was. Idempotent: already quarantined is ok.
+export async function quarantineOriginal(r2: R2Full, key: string): Promise<{ ok: boolean; bytes?: number; error?: string }> {
+  if (!ORIGINAL_KEY.test(key)) return { ok: false, error: "not an original key" };
+  const object = await r2.get(key);
+  if (!object) return (await r2.head(QUARANTINE + key)) ? { ok: true, bytes: 0 } : { ok: false, error: "missing" };
+  const bytes = await object.arrayBuffer();
+  await r2.put(QUARANTINE + key, bytes, { httpMetadata: { contentType: object.httpMetadata?.contentType ?? "application/octet-stream" }, customMetadata: { ...(object.customMetadata ?? {}), quarantinedAt: new Date().toISOString() } });
+  const copy = await r2.get(QUARANTINE + key);
+  if (!copy) return { ok: false, error: "copy not found" };
+  const back = await copy.arrayBuffer();
+  if (back.byteLength !== bytes.byteLength || (await digest(back)) !== (await digest(bytes))) return { ok: false, error: "copy differs" };
+  await r2.delete(key);
+  return { ok: true, bytes: bytes.byteLength };
+}
+
+// The way back: copy quarantine/<key> to <key>, check it, then remove the quarantined copy.
+export async function restoreOriginal(r2: R2Full, key: string): Promise<{ ok: boolean; bytes?: number; error?: string }> {
+  if (!ORIGINAL_KEY.test(key)) return { ok: false, error: "not an original key" };
+  const held = await r2.get(QUARANTINE + key);
+  if (!held) return (await r2.head(key)) ? { ok: true, bytes: 0 } : { ok: false, error: "not in quarantine" };
+  const bytes = await held.arrayBuffer();
+  const { quarantinedAt: _at, ...meta } = held.customMetadata ?? {};
+  await r2.put(key, bytes, { httpMetadata: { contentType: held.httpMetadata?.contentType ?? "application/octet-stream" }, customMetadata: meta });
+  const copy = await r2.get(key);
+  if (!copy) return { ok: false, error: "restore not found" };
+  const back = await copy.arrayBuffer();
+  if (back.byteLength !== bytes.byteLength || (await digest(back)) !== (await digest(bytes))) return { ok: false, error: "restore differs" };
+  await r2.delete(QUARANTINE + key);
+  return { ok: true, bytes: bytes.byteLength };
+}
+
+async function digest(bytes: ArrayBuffer) {
+  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function r2Usage(r2: R2Like) {

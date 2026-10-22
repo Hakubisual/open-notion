@@ -212,6 +212,35 @@ export function openapiSpec(origin) {
         }),
       },
     },
+    webhooks: {
+      pageChange: {
+        post: {
+          operationId: 'pageChangeWebhook',
+          summary: 'Acard POSTs this to a webhook URL when a page changes (setup: 설정 > 에이전트 연결 > 웹훅; details: ' + origin + '/webhooks.md)',
+          parameters: [
+            { name: 'X-Acard-Signature', in: 'header', required: true, schema: str, description: 't=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" with the endpoint secret>' },
+            { name: 'X-Acard-Event', in: 'header', required: true, schema: str },
+            { name: 'X-Acard-Delivery', in: 'header', required: true, schema: str, description: 'Same value on every retry of one delivery: use it to drop duplicates' },
+          ],
+          requestBody: { required: true, ...json({
+            type: 'object',
+            required: ['id', 'type', 'version', 'occurred_at', 'workspace', 'page', 'changes', 'actor'],
+            properties: {
+              id: str,
+              type: { type: 'string', enum: ['page.created', 'page.updated', 'page.renamed', 'page.moved', 'page.trashed', 'page.restored', 'page.deleted', 'ping'] },
+              version: { type: 'integer', const: 1 },
+              occurred_at: { type: 'string', format: 'date-time' },
+              attempt: { type: 'integer' },
+              workspace: { type: 'object', properties: { id: str } },
+              page: { type: ['object', 'null'], properties: { slug: str, title: { type: ['string', 'null'] }, parent: { type: ['string', 'null'] }, kind: { type: ['string', 'null'] }, trashed: { type: 'boolean' }, url: { type: ['string', 'null'] }, api: { type: ['string', 'null'] } } },
+              changes: { type: 'array', items: str },
+              actor: { type: 'object', properties: { kind: { type: 'string', enum: ['human', 'api_token', 'oauth_app', 'agent', 'guest', 'system'] }, name: str, token_id: str } },
+            },
+          }) },
+          responses: { 200: { description: 'Any 2xx within 10 seconds counts as delivered; anything else (redirects too) is retried' } },
+        },
+      },
+    },
   };
 }
 
@@ -243,11 +272,141 @@ export function llmsTxt(origin) {
 
 ## Optional
 
-- [MCP tools](${origin}/AGENTS.md): whoami, get_agent_skills, read_blocks, update_block, insert_blocks, delete_block, list_pages, read_page, create_page, update_page, append_to_page, list_databases, read_database, add_database_row, update_database_row, list_decisions, upload_media
+- [Webhooks](${origin}/webhooks.md): Acard POSTs to your https URL when pages change (signed, debounced, retried)
+- [MCP tools](${origin}/AGENTS.md): whoami, get_agent_skills, read_blocks, update_block, insert_blocks, delete_block, list_pages, read_page, create_page, update_page, append_to_page, list_databases, read_database, add_database_row, update_database_row, list_decisions, upload_media, list_components, set_component_data
 `;
 }
 
-export function agentsMd(origin) {
+// Outgoing webhooks, served at /webhooks.md and linked from llms.txt and the settings screen. The values match
+// WEBHOOK_CONFIG in gate/webhooks.ts.
+export function webhooksMd(origin) {
+  return `# Acard webhooks
+
+Acard can POST to your server when a page changes, so a tool that mirrors Acard (a task tracker such as Vikunja, an n8n
+flow, your own script) does not have to poll. Set it up in 설정 > 에이전트 연결 > 웹훅 (${origin}/settings/agents/#webhooks):
+an https address, the events to send, then copy the signing secret. It is shown once; "비밀값 다시 만들기" makes a new one.
+
+Webhooks are plain HTTP calls between servers. They use no AI and no AI tokens.
+
+## Events
+
+| type | when |
+| --- | --- |
+| \`page.created\` | a page was made |
+| \`page.updated\` | its content changed |
+| \`page.renamed\` | its title changed |
+| \`page.moved\` | it moved under another page |
+| \`page.trashed\` / \`page.restored\` | it went to the trash / came back |
+| \`page.deleted\` | it was deleted for good |
+| \`ping\` | the "테스트 보내기" button |
+
+Edits are grouped per page: Acard waits until the page has been quiet for 10 seconds (at most 60 seconds while someone
+keeps typing) and sends one request. \`type\` is the strongest change in the group (deleted > trashed > restored > created >
+moved > renamed > updated) and \`changes\` lists all of them.
+
+## Request
+
+\`POST\` with \`content-type: application/json\` and these headers:
+
+- \`X-Acard-Event\`: the event type
+- \`X-Acard-Delivery\`: the delivery id, the same on every retry of it; drop a delivery id you already handled
+- \`X-Acard-Signature\`: \`t=<unix seconds>,v1=<hex HMAC-SHA256>\`
+
+\`\`\`json
+{
+  "id": "4f0c8f8e-6c1a-4c55-9d43-2f1f0b6b2a10",
+  "type": "page.updated",
+  "version": 1,
+  "occurred_at": "2026-10-22T05:12:03.000Z",
+  "attempt": 1,
+  "workspace": { "id": "…" },
+  "page": { "slug": "weekly-plan", "title": "Weekly plan", "parent": null, "kind": "note", "trashed": false,
+            "url": "${origin}/weekly-plan/", "api": "${origin}/api/v1/pages/weekly-plan" },
+  "changes": ["page.updated"],
+  "actor": { "kind": "human" }
+}
+\`\`\`
+
+The body never carries page content. Read it with an agent token from \`page.api\` (GET /api/v1/pages/{slug}, see
+${origin}/api/v1/openapi.json). For \`page.deleted\` the url fields are null and title/parent are the last ones sent.
+
+\`actor.kind\` says who made the change: \`human\` (the editor), \`api_token\` or \`oauth_app\` (with \`name\` and, for
+tokens, \`token_id\`), \`agent\` (the agent built into Acard), \`guest\` (someone a page was shared with), \`system\`.
+If your receiver writes back to Acard, skip events whose actor is your own token, or every write triggers another
+webhook and the two systems loop.
+
+## Checking the signature
+
+Compute HMAC-SHA256 with the secret over \`<t>.<raw body>\` (the exact bytes received, before parsing), compare with
+\`v1\` in constant time, and refuse a \`t\` more than 5 minutes from your clock.
+
+Node.js:
+
+\`\`\`js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+export function verifyAcard(secret, header, rawBody) {
+  const parts = Object.fromEntries(String(header || "").split(",").map((p) => p.trim().split("=", 2)));
+  const t = Number(parts.t);
+  if (!Number.isInteger(t) || Math.abs(Date.now() / 1000 - t) > 300 || !parts.v1) return false;
+  const expected = createHmac("sha256", secret).update(t + "." + rawBody).digest("hex");
+  return expected.length === parts.v1.length && timingSafeEqual(Buffer.from(expected), Buffer.from(parts.v1));
+}
+// express: app.post("/acard", express.raw({ type: "application/json" }), (req, res) => {
+//   if (!verifyAcard(process.env.ACARD_WEBHOOK_SECRET, req.get("x-acard-signature"), req.body.toString("utf8"))) return res.sendStatus(401);
+//   const event = JSON.parse(req.body); res.sendStatus(200); /* then handle event */ });
+\`\`\`
+
+Python:
+
+\`\`\`python
+import hashlib, hmac, time
+
+def verify_acard(secret: str, header: str, raw_body: bytes) -> bool:
+    parts = dict(p.strip().split("=", 1) for p in (header or "").split(",") if "=" in p)
+    try:
+        t = int(parts["t"])
+    except (KeyError, ValueError):
+        return False
+    if abs(time.time() - t) > 300:
+        return False
+    expected = hmac.new(secret.encode(), f"{t}.".encode() + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, parts.get("v1", ""))
+\`\`\`
+
+## Answering, retries and limits
+
+- Answer any 2xx within 10 seconds. Do slow work after answering.
+- Redirects are not followed and count as failures, like timeouts and other statuses.
+- A failed delivery is sent again after 30 s, 1 min, 2 min, 4 min … (doubling, at most 1 hour apart), up to 8 attempts.
+  Retries can arrive after newer events of the same page; order by \`occurred_at\`.
+- After 10 failed attempts in a row the webhook turns itself off and the settings screen shows "자동으로 꺼짐".
+  Switching it back on resets the count. Deliveries waiting while it was off are dropped.
+- Up to 5 webhooks per workspace. The last 20 deliveries of each are listed under "최근 기록" (kept 7 days).
+- Only public https addresses on port 443: no localhost, private, link-local or cloud metadata addresses. The name is
+  resolved again before each send and refused if it points inside a private network.
+- The desktop (local) edition does not send webhooks yet.
+`;
+}
+
+// AGENTS.md "Components" section, built from componentCatalog() (component-registry.js) so it lists exactly the
+// registered components. Without a catalog it still points at list_components.
+export function componentsMd(catalog) {
+  const list = Array.isArray(catalog) ? catalog : [];
+  const fields = (schema) => {
+    const props = Object.keys((schema && schema.properties) || {});
+    const required = new Set((schema && schema.required) || []);
+    return props.map((key) => (required.has(key) ? key + '*' : key)).join(', ');
+  };
+  const lines = list.map((c) => '- `' + c.id + '` ' + c.name + ': ' + c.description + (fields(c.schema) ? ' Fields: ' + fields(c.schema) + '.' : ''));
+  const example = list[0] ? '\n\n' + list[0].markdown : '';
+  return `## Components
+
+For a summary, key numbers, steps, a comparison or a timeline, write a component instead of HTML: a \`\`\`acard-ui {"ui":"<id>"} fence holding JSON data only (no HTML, no CSS). \`list_components\` (GET /api/v1/components, or /api/v1/components/{id}) gives each one's schema, defaults and a ready fence. To change one later call \`set_component_data\` with \`page\`, \`block_id\` (or \`ui\` and optional \`after_block_id\` for a new block), \`data\` and \`expected_version\` from \`read_blocks\`; data that does not fit the schema is refused and the error names the field. A missing or malformed field is drawn with its default; the stored data is never changed by drawing.
+` + (lines.length ? '\n' + lines.join('\n') + '\n\n* required.' + example + '\n' : '');
+}
+
+export function agentsMd(origin, components) {
   return `# AGENTS.md (Acard)
 
 Acard (${origin}) is a Notion-like notes app. Agents write markdown. The human owner, called 주인님, reads and edits the same pages in a block editor on phone and PC. Your pages are their window into your work, so keep them tidy and readable.
@@ -273,6 +432,7 @@ Acard (${origin}) is a Notion-like notes app. Agents write markdown. The human o
 - Prefer these tools over replacing a whole page. Send the exact \`version\` you read as \`expected_version\`; each successful write returns a new version. A stale version is HTTP 409, or MCP \`isError: true\` with \`structuredContent.status: 409\`. Re-read and merge instead of forcing a write.
 
 
+${componentsMd(components)}
 ## Where to write work logs
 
 - You'll be told a parent page. Create one page per project under it (create_page with \`parent\`).

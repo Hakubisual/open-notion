@@ -10,6 +10,7 @@ export const BETA_API = /^\/api\/(?:beta\/|admin\/beta\/)/;
 export const betaClosed = (_env: BetaEnv) => false;
 export async function isBetaAdmin(_env: BetaEnv, _session: Session | null): Promise<boolean> { return false; }
 export async function hasBetaAccess(_env: BetaEnv, _session: Session): Promise<boolean> { return true; }
+export async function betaAccessFor(_env: BetaEnv, _uid: string): Promise<boolean> { return true; }
 export async function betaApi(_request: Request, _env: BetaEnv, _url: URL, _session: Session | null): Promise<Response> {
   return new Response(JSON.stringify({ error: "not_found" }), { status: 404, headers: { "content-type": "application/json; charset=utf-8" } });
 }

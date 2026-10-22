@@ -11,7 +11,7 @@
 
   function slashItems() {
     return listComponents().map(function (c) {
-      return { type: "component:" + c.id, label: c.slash.label || c.name, hint: c.slash.hint || "", ico: c.slash.ico || "▦", aliases: c.slash.aliases || "", group: "컴포넌트" };
+      return { type: "component:" + c.id, label: c.slash.label || c.name, hint: c.slash.hint || "", ico: c.slash.ico || "▦", aliases: [c.slash.aliases, c.id, c.name].filter(Boolean).join(" "), group: "컴포넌트" };
     });
   }
 

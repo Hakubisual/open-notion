@@ -1,4 +1,26 @@
 (function () {
+  function openSharedPage() {
+    var button = document.getElementById("share"), url = new URL(location.href);
+    if (!button || url.searchParams.get("share") !== "1") return;
+    url.searchParams.delete("share");
+    history.replaceState(history.state, "", url.href);
+    button.click();
+  }
+  openSharedPage();
+  document.addEventListener("acard:page-fresh", openSharedPage);
+})();
+(function () {
+  var tocLoaded = false;
+  function loadReaderToc() {
+    if (tocLoaded || document.querySelectorAll("#article .blocks h2[id],#article .blocks h3[id],#article .blocks h4[id],#article .blocks h5[id]").length < 2) return;
+    tocLoaded = true;
+    document.head.appendChild(Object.assign(document.createElement("link"), { rel: "stylesheet", href: "/lazy/toc.css?v=__TOC_CSS__" }));
+    document.head.appendChild(Object.assign(document.createElement("script"), { src: "/lazy/toc.js?v=__TOC_JS__" }));
+  }
+  loadReaderToc();
+  document.addEventListener("acard:page-fresh", loadReaderToc);
+})();
+(function () {
   function mountHomeTabs() {
   var bar = document.querySelector('.home-tasks [role="tablist"]');
   if (!bar) return;

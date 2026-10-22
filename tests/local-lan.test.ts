@@ -51,6 +51,15 @@ test("password gate: login sets a cookie that unlocks pages, wrong password and 
     const api = await gate(req(base + "/api/tree"), new URL(base + "/api/tree"));
     expect(api?.status).toBe(401);
     expect(await gate(req(base + "/__local/health"), new URL(base + "/__local/health"))).toBeNull();
+    // Brand files load before sign-in (the sign-in page shows them); anything else stays locked.
+    expect(await gate(req(base + "/wordmark.svg"), new URL(base + "/wordmark.svg"))).toBeNull();
+    expect(await gate(req(base + "/favicon.svg"), new URL(base + "/favicon.svg"))).toBeNull();
+    expect((await gate(req(base + "/wordmark.svg", { method: "POST" }), new URL(base + "/wordmark.svg")))?.status).toBe(401);
+    expect((await gate(req(base + "/og.png"), new URL(base + "/og.png")))?.status).toBe(401);
+    const signIn = await gate(req(base + "/__local/login"), new URL(base + "/__local/login"));
+    const signInHtml = await signIn!.text();
+    expect(signInHtml).toContain("<title>Sign in - Acard</title>");
+    expect(signInHtml).toContain('src="/wordmark.svg"');
 
     const login = (password: string, next = "/edit/home/") => gate(req(base + "/__local/login", { method: "POST", body: new URLSearchParams({ password, next }) }), new URL(base + "/__local/login"));
     expect((await login("wrong"))?.status).toBe(401);

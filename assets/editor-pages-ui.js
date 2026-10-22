@@ -1,4 +1,4 @@
-(function(d,w){function c(h){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}w.acardFont=function(f){f=="serif"&&c("/fonts/serif.css")};w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
+(function(d,w){function c(h){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}w.acardFont=function(f){(f=="serif"||f=="report")&&c("/fonts/serif.css");f=="report"&&c("/tokens-report.css")};w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
 (function () {
   "use strict";
   window.mountEditorPages = function (context) {
@@ -7,6 +7,7 @@
     var settings = {};
     var bar = document.getElementById("page-tools") || document.createElement("div");
     if (!bar.parentNode) { bar.className = "page-tools"; document.querySelector(".docbar").before(bar); }
+    var more = document.getElementById("more-menu");
     var cover = document.createElement("img");
     cover.className = "page-cover"; cover.alt = "페이지 표지"; cover.hidden = true;
     bar.before(cover);
@@ -15,8 +16,11 @@
     document.body.appendChild(panel);
     function fail(error) { context.setSave("실패: " + error.message, true); }
     function button(host, label, fn) {
-      var b = document.createElement("button"); b.type = "button"; b.className = /삭제|휴지통으로/.test(label) ? "mini danger" : "mini"; b.textContent = label;
-      b.addEventListener("click", function () { Promise.resolve().then(fn).catch(fail); }); host.appendChild(b); return b;
+      var b = document.createElement("button"); b.type = "button"; b.className = host === more ? "menuitem" : /삭제|휴지통으로/.test(label) ? "mini danger" : "mini"; b.textContent = label;
+      b.addEventListener("click", function () {
+        if (host === more) { more.hidden = true; document.getElementById("more").setAttribute("aria-expanded", "false"); }
+        Promise.resolve().then(fn).catch(fail);
+      }); host.appendChild(b); return b;
     }
     function open(title) {
       panel.replaceChildren();
@@ -56,10 +60,10 @@
     function pick(kind) { return function () { return look(function (ui) { ui.open(kind, kind == "icon" ? iconButton : coverButton, settings[kind], slug, function (v) { patch(kind == "icon" ? { icon: v } : { cover: v }).catch(fail); }); }); }; }
     var iconButton = button(bar, "아이콘 추가", pick("icon"));
     var coverButton = button(bar, "표지", pick("cover"));
-    var favoriteButton = button(bar, "즐겨찾기", function () { return patch({ favorite: !settings.favorite }); });
+    var favoriteButton = button(more, "즐겨찾기", function () { return patch({ favorite: !settings.favorite }); });
     button(bar, "페이지 설정", function () {
       open("페이지 설정");
-      [["너비", "width", [["default", "좁게"], ["normal", "보통"], ["full", "넓게"]]], ["글꼴", "font", [["default", "기본"], ["serif", "명조"], ["mono", "고정폭"]]]].forEach(function (field) {
+      [["너비", "width", [["default", "좁게"], ["normal", "보통"], ["full", "넓게"]]], ["글꼴", "font", [["default", "기본"], ["serif", "명조"], ["mono", "고정폭"], ["report", "연구 보고서"]]]].forEach(function (field) {
         var label = document.createElement("label"); label.textContent = field[0];
         var select = document.createElement("select");
         field[2].forEach(function (pair) { var option = document.createElement("option"); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option); });
@@ -71,7 +75,7 @@
       button(panel, "휴지통으로 이동", function () { confirmPanel(state.title + " 휴지통으로 이동", function () { return context.save().then(function () { return api(base + "/trash", { method: "POST" }); }).then(function () { location.href = "/edit/index/"; }); }); });
       button(panel, "템플릿으로 저장", function () { inputPanel("템플릿 이름", state.title, function (name) { return context.save().then(function () { return api("/editor/templates", { method: "POST", body: JSON.stringify({ slug: slug, name: name }) }); }).then(function () { context.setSave("템플릿 저장됨", false); }); }); });
     });
-    button(bar, "페이지 기록", function () {
+    button(more, "페이지 기록", function () {
       return context.save().then(function () { return api(base + "/history"); }).then(function (data) {
         open("페이지 기록");
         if (!data.versions.length) { var empty = document.createElement("p"); empty.textContent = "저장된 이전 버전이 없어요."; panel.appendChild(empty); }
@@ -80,7 +84,7 @@
         }); });
       });
     });
-    button(bar, "템플릿 사용", function () { if (window.AcardEditor.openTemplatePicker) return window.AcardEditor.openTemplatePicker(); return api("/editor/templates").then(function (data) {
+    button(more, "템플릿 사용", function () { if (window.AcardEditor.openTemplatePicker) return window.AcardEditor.openTemplatePicker(); return api("/editor/templates").then(function (data) {
       open("템플릿 사용");
       if (!data.templates.length) { var empty = document.createElement("p"); empty.textContent = "페이지 설정에서 템플릿을 저장해 주세요."; panel.appendChild(empty); }
       data.templates.forEach(function (template) { button(panel, template.name, function () {

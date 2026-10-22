@@ -24,6 +24,7 @@ export declare const acardHost: {
   serveV1(request: Request, env: CoreEnv, principal: AgentPrincipal): Promise<Response>;
   agentStep(env: CoreEnv, session: string): Promise<{ status: number; done?: boolean; busy?: boolean; error?: string }>;
   recurringTick(env: CoreEnv, now: number): Promise<{ created: { template: string; occurrence: number; row: string }[]; next: number | null }>;
+  templateMigrate(env: CoreEnv): Promise<{ before: { i: number; ii: number; iii: number }; after: { i: number; ii: number; iii: number }; changed: string[]; backup_table: string }>;
   hasHumanTicket(request: Request, env: CoreEnv): Promise<boolean>;
   trust<E extends CoreEnv>(env: E): E;
   tokenAdmin(env: CoreEnv): Promise<{
@@ -36,6 +37,7 @@ export declare const acardHost: {
     grantRevoked(id: string): Promise<boolean>;
   }>;
   isAgentError(error: unknown): error is Error & { status: number };
+  storageAlertTest(env: CoreEnv): Promise<{ used: number; to: string | null; ok: boolean; status?: number; id?: string | null; error?: string }>;
   challenge(message: string, next: string, status: number): Response;
   escapeHtml(text: string): string;
 };

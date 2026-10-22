@@ -25,16 +25,25 @@
     ".sv-bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:14px;height:52px;padding:0 20px;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}" +
     ".sv-path{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-14)}.sv-crumb{display:inline-flex;align-items:center;gap:8px;min-width:0;color:var(--fg);text-decoration:none}.sv-crumb span:last-child,.sv-here{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
     ".sv-ico{display:inline-grid;place-items:center;width:22px;height:22px;flex:0 0 22px}.sv-ico img,.sv-ico svg{width:20px;height:20px;border-radius:5px}.sv-sep{color:var(--fg-dim)}.sv-here{color:var(--fg-dim)}.sv-grow{flex:1}" +
-    ".sv-made{display:inline-flex;align-items:flex-end;gap:1px;color:var(--fg);font-size:var(--fs-13);line-height:1;text-decoration:none;white-space:nowrap}.sv-wm{display:block;height:22px;aspect-ratio:171.36/109.63;overflow:visible;color:currentColor}.sv-made span{display:block;line-height:1;margin-bottom:-0.12em}.sv-made:hover{text-decoration:underline}" +
+    ".sv-made{display:inline-flex;align-items:baseline;gap:2px;color:var(--fg);font-size:var(--fs-13);line-height:1;text-decoration:none;white-space:nowrap}.sv-wm{display:block;height:13px;aspect-ratio:416.7/100;overflow:visible;color:currentColor}.sv-made span{display:block;line-height:1;margin-bottom:-0.12em}.sv-made:hover{text-decoration:underline}" +
     ".sv-theme{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:8px;color:var(--fg-dim);cursor:pointer}.sv-theme:hover{background:var(--bg-soft);color:var(--fg)}.sv-tt:focus-visible~.sv-bar .sv-theme{outline:2px solid var(--accent)}" +
     ".sv-notice{max-width:460px;margin:14vh auto 0;padding:0 24px;text-align:center}.sv-code{margin:0;color:var(--accent);font-weight:700;font-size:var(--fs-14);letter-spacing:.08em}.sv-notice h1{margin:8px 0 10px;font-size:var(--fs-28);letter-spacing:-.02em}.sv-notice p{color:var(--fg-dim)}" +
+    ".sv-edit{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4);margin:calc(var(--space-8) * -1 + var(--space-2)) 0 var(--space-8);color:var(--fg-dim);font-size:var(--fs-13)}.sv-edit .sv-btn{margin-top:0}" +
     ".sv-btn{display:inline-block;margin-top:14px;padding:10px 18px;border-radius:999px;background:var(--accent);color:var(--on-accent);text-decoration:none;font-weight:600;font-size:var(--fs-14)}";
-  const SV_PAGE_CSS = ".sv-cover .pagecover{position:relative;height:220px;margin:0;overflow:hidden;background:var(--cover);background-size:cover}.sv-cover .pagecover.img img{width:100%;height:100%;object-fit:cover}" +
+  const SV_PAGE_CSS = ".sv-cover .pagecover{position:relative;height:198px;margin:0;overflow:hidden;background:var(--cover);background-size:cover}.sv-cover .pagecover.img img{width:100%;height:100%;object-fit:cover}" +
     ".sv-cover .g1{background-image:var(--grad-1)}.sv-cover .g2{background-image:var(--grad-2)}.sv-cover .g3{background-image:var(--grad-3)}.sv-cover .g4{background-image:var(--grad-4)}.sv-cover .g5{background-image:var(--grad-5)}.sv-cover .g6{background-image:var(--grad-6)}" +
     ".sv-cover .brandcover img{position:absolute;right:9%;top:30px;width:150px;height:150px;opacity:.35}" +
     ".sv-wrap{display:grid;grid-template-columns:minmax(0,760px);justify-content:center;gap:56px;padding:0 24px 72px}.sv-wrap.has-toc{grid-template-columns:minmax(0,760px) 240px}" +
-    ".sv-main{min-width:0}.sv-icon{display:grid;place-items:center;width:92px;height:92px;margin:-46px 0 18px;border-radius:22px;background:var(--surface);border:1px solid var(--line);box-shadow:0 8px 24px rgba(30,28,50,.08);position:relative}.sv-icon img{width:56px;height:56px}.sv-icon .emoji{font-size:var(--fs-44)}" +
-    ".sv-title{margin:0 0 6px;font-size:var(--fs-44);line-height:1.2;letter-spacing:-.03em;font-weight:800}.sv-meta{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0 0 32px;color:var(--fg-dim);font-size:var(--fs-14)}" +
+    ".sv-main{min-width:0}.sv-icon{display:grid;place-items:center;width:88px;height:88px;margin:-44px 0 var(--space-6);border-radius:var(--radius-lg);background:var(--surface);box-shadow:var(--shadow-md),0 0 0 1px var(--line);position:relative}.sv-icon img{width:60px;height:60px}.sv-icon img.upicon{width:88px;height:88px}.sv-icon .emoji{font-size:var(--fs-44)}" +
+    ".sv-title{margin:0 0 var(--space-3);font-size:var(--fs-44);line-height:1.2;letter-spacing:-.03em;font-weight:800;overflow-wrap:anywhere}" +
+    // ref-1 byline: date, hairline, then the access pill (same look as the reader byline).
+    ".sv-meta{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4);margin:0 0 var(--space-8);color:var(--fg-dim);font-size:var(--fs-14);line-height:var(--lh-ui)}.sv-meta>span{display:inline-flex;align-items:center;gap:var(--space-2)}.sv-meta svg{width:16px;height:16px;flex:none}" +
+    ".sv-meta .sv-when+.sv-pill{padding-left:var(--space-4);border-left:1px solid var(--line);border-radius:0;background:none}.sv-pill-in{display:inline-flex;align-items:center;gap:6px;height:var(--control-h-sm);padding:0 var(--space-3);border-radius:var(--radius-xs);background:var(--color-accent-soft);color:var(--color-accent-strong);font-size:var(--fs-13);font-weight:500;white-space:nowrap}" +
+    // Block rhythm: the same scale as the reader (acard-body.css), which a link visitor does not load.
+    ".sv-main .blocks>h2{margin:var(--space-12) 0 var(--space-3)}.sv-main .blocks>h3{margin:var(--space-10) 0 var(--space-3)}.sv-main .blocks>h4{margin:var(--space-8) 0 var(--space-2)}.sv-main .blocks>h5{margin:var(--space-6) 0 var(--space-2)}.sv-main .blocks>span:first-child+:is(h2,h3,h4,h5){margin-top:var(--space-2)}" +
+    ".sv-main .blocks>p{margin:0 0 var(--space-4);line-height:var(--lh-body)}.sv-main .blocks>:is(ul,ol){margin:0 0 var(--space-4)}.sv-main .blocks>:is(ul,ol) li{margin:var(--space-1) 0}.sv-main .blocks>hr{margin:var(--space-8) 0}" +
+    ".sv-main .blocks .callout{display:flex;align-items:center;gap:var(--space-5);min-height:64px;margin:var(--space-6) 0;padding:var(--space-4) 18px;border:0;border-radius:var(--radius-sm);background-color:var(--mint);color:var(--fg);font-size:var(--fs-16);line-height:var(--lh-body)}.sv-main .callout .callout-ico{flex:0 0 28px;width:28px;height:28px;color:var(--tag-green-fg)}.sv-main .callout-body{min-width:0;overflow-wrap:anywhere}" +
+    ".sv-main .blocks .stable{overflow-x:auto;margin:var(--space-6) 0;border:1px solid var(--line);border-radius:var(--radius-sm)}.sv-main .blocks .stable table{display:table;margin:0;border:0;border-collapse:separate;border-spacing:0;font-size:var(--fs-14)}.sv-main .stable :is(th,td){padding:var(--space-2) var(--space-5);border:0;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.sv-main .stable :is(th,td):last-child{border-right:0}.sv-main .stable tbody tr:last-child td{border-bottom:0}.sv-main .stable th{font-weight:400;font-size:var(--fs-13);color:var(--fg-dim)}" +
     ".sv-toc{position:sticky;top:76px;align-self:start;margin-top:28px;max-height:calc(100dvh - 96px);overflow:auto;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface);font-size:var(--fs-14)}" +
     ".sv-toc summary{cursor:pointer;font-weight:700;font-size:var(--fs-16);list-style:none;display:flex;justify-content:space-between}.sv-toc summary::after{content:'\\2303';color:var(--fg-dim)}.sv-toc details:not([open]) summary::after{content:'\\2304'}" +
     ".sv-toc ol{list-style:none;margin:10px 0 0;padding:0}.sv-toc li a{display:flex;gap:10px;align-items:center;padding:7px 8px;border-radius:8px;color:var(--fg);text-decoration:none;line-height:1.4}.sv-toc li a:hover{background:var(--accent-soft);color:var(--accent-strong)}" +
@@ -43,8 +52,9 @@
     ".sv-card{display:flex;gap:12px;align-items:flex-start;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--fg);text-decoration:none;transition:border-color .15s,box-shadow .15s}.sv-card:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(30,28,50,.08)}" +
     ".sv-cico{flex:0 0 40px;height:40px;display:grid;place-items:center;border-radius:10px;background:var(--accent-soft);color:var(--accent)}.sv-cico img,.sv-cico svg{width:22px;height:22px}.sv-ct{display:flex;flex-direction:column;gap:3px;min-width:0}.sv-ct b{font-size:var(--fs-15)}.sv-ct small{color:var(--fg-dim);font-size:var(--fs-13);line-height:1.5}" +
     ".sv-foot{display:flex;justify-content:center;padding:28px 0 40px;border-top:1px solid var(--line)}.sv-foot a{display:inline-flex;gap:8px;align-items:center;color:var(--fg-dim);font-size:var(--fs-13);text-decoration:none}" +
+    ".sv-wrap:not(.sv-normal,.sv-full):has(.blocks :is(.cols,.table-section,.ui-card-grid,.ui-compare,.ui-stat-row)){grid-template-columns:minmax(0,1170px)}.sv-main article:has(.blocks :is(.cols,.table-section,.ui-card-grid,.ui-compare,.ui-stat-row)){max-width:none}.sv-main .blocks:has(.cols,.table-section,.ui-card-grid,.ui-compare,.ui-stat-row){max-width:1170px}@media (min-width:1100px){.sv-wrap.has-toc:not(.sv-normal,.sv-full):has(.blocks :is(.cols,.table-section,.ui-card-grid,.ui-compare,.ui-stat-row)){grid-template-columns:minmax(0,1170px) 240px}}" +
     ".sv-main [id]{scroll-margin-top:72px}.sv-toc-narrow{display:none}html{scroll-padding-top:72px}.sv-wrap.sv-normal{grid-template-columns:minmax(0,1170px)}.sv-wrap.sv-normal.has-toc{grid-template-columns:minmax(0,1170px) 240px}.sv-wrap.sv-full{grid-template-columns:minmax(0,1fr);padding:0 48px 72px}.sv-wrap.sv-full.has-toc{grid-template-columns:minmax(0,1fr) 240px}@media (max-width:1099px){.sv-toc-narrow{display:block}.sv-wrap.sv-normal.has-toc,.sv-wrap.sv-full.has-toc{grid-template-columns:minmax(0,1fr)}.sv-toc-wide{display:none}.sv-wrap.has-toc{grid-template-columns:minmax(0,760px)}.sv-toc{position:static;max-height:none;margin:0 0 8px}}" +
-    "@media (max-width:640px){.sv-wrap.sv-full{padding:0 18px 56px}.sv-bar{padding:0 12px;gap:8px}.sv-made span{display:none}.sv-cover .pagecover{height:140px}.sv-cover .brandcover img{width:90px;height:90px;top:20px}.sv-wrap{padding:0 18px 56px}.sv-icon{width:72px;height:72px;margin-top:-36px}.sv-title{font-size:var(--fs-32)}}" +
+    "@media (max-width:640px){.sv-wrap.sv-full{padding:0 18px 56px}.sv-bar{padding:0 12px;gap:8px}.sv-made span{display:none}.sv-cover .pagecover{height:132px}.sv-cover .brandcover img{width:90px;height:90px;top:20px}.sv-wrap{padding:0 18px 56px}.sv-icon{width:64px;height:64px;margin-top:-32px;border-radius:var(--radius-md)}.sv-icon img{width:44px;height:44px}.sv-title{font-size:var(--fs-28)}.sv-meta{font-size:var(--fs-13);margin-bottom:var(--space-6)}.sv-main .blocks>h2{margin-top:var(--space-10)}}" +
     ".blocks figure.img picture{display:block}.blocks figure.img img[height]{height:auto}.sv-cover .pagecover picture{display:contents}" +
     "@media print{.sv-bar,.sv-toc,.sv-foot,.sv-tt{display:none!important}.sv-cover .pagecover{height:120px;-webkit-print-color-adjust:exact;print-color-adjust:exact}.sv-wrap{display:block;padding:0}.sv-card{break-inside:avoid}a{color:inherit}}";
   const SESSION_S = 30 * 24 * 60 * 60;
@@ -80,16 +90,13 @@
       "button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:10px;background:#3aa9c4;color:#fff;font:inherit;font-weight:600;cursor:pointer}.err{color:#b23c52}</style></head><body><main>" + body + "</main></body></html>";
   }
 
+  // One statement takes the slot and reports the new count, so overlapping requests cannot all read "under the limit"
+  // (issue 114 gate review: 25 concurrent code mails all passed a read-then-write version).
   async function hit(db, key, limit, periodMs) {
     const now = Date.now();
-    const row = await db.prepare("SELECT count, reset FROM share_rate WHERE key = ?").bind(key).first();
-    if (!row || Number(row.reset) <= now) {
-      await db.prepare("INSERT INTO share_rate (key, count, reset) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET count = 1, reset = excluded.reset").bind(key, now + periodMs).run();
-      return true;
-    }
-    if (Number(row.count) >= limit) return false;
-    await db.prepare("UPDATE share_rate SET count = count + 1 WHERE key = ?").bind(key).run();
-    return true;
+    const row = await db.prepare("INSERT INTO share_rate (key, count, reset) VALUES (?, 1, ?) ON CONFLICT (key) DO UPDATE SET count = CASE WHEN share_rate.reset <= ? THEN 1 ELSE share_rate.count + 1 END, reset = CASE WHEN share_rate.reset <= ? THEN excluded.reset ELSE share_rate.reset END RETURNING count")
+      .bind(key, now + periodMs, now, now).first();
+    return Number(row && row.count) <= limit;
   }
 
   async function loadModel(db) {
@@ -122,8 +129,23 @@
   }
 
   // The view database hides every page this caller cannot read from tree, search, backlinks and embeds in core.
-  function viewDb(db, visible, roles) {
-    return { prepare: sql => db.prepare(sql), batch: list => db.batch(list), acardKey: db.acardKey, acardVisible: visible, acardRoles: roles };
+  // acardSaver: who this guest is, so a template it saves records its session (gate/_worker.js templateSaverStatement, #86).
+  function viewDb(db, visible, roles, saver) {
+    return { prepare: sql => db.prepare(sql), batch: list => db.batch(list), acardKey: db.acardKey, acardVisible: visible, acardRoles: roles, acardSaver: saver };
+  }
+
+  // #86: the role map a saved guest has now, rebuilt from its session (null when the session is revoked, expired or gone,
+  // or no longer belongs to that email). Same resolver as a live guest request.
+  async function guestRolesNow(db, sessionHash, email) {
+    const row = await db.prepare("SELECT email, links FROM share_sessions WHERE token_hash = ? AND revoked IS NULL AND expires > ?").bind(String(sessionHash), Date.now()).first();
+    if (!row || String(row.email) !== String(email)) return null;
+    let links = [];
+    try { links = JSON.parse(row.links); } catch { links = []; }
+    const model = await loadModel(db);
+    const who = { kind: "guest", email: String(row.email), links: new Set(Array.isArray(links) ? links.map(String) : []) };
+    const roles = new Map();
+    for (const slug of model.parents.keys()) { const role = shareRole(model, slug, who); if (role !== "none") roles.set(slug, role); }
+    return roles;
   }
 
   const clearCookie = COOKIE + "=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
@@ -212,7 +234,7 @@
     const roleOf = slug => roles.get(slug) || "none";
     const route = matchGuestRoute(method, path, url);
     const denied = message => path.startsWith("/api/") ? reply({ error: message || "이 페이지에 대한 권한이 없어요." }, 401) : page401(message || "이 페이지를 볼 권한이 없어요. 공유한 사람에게 권한을 요청해 주세요.", {}, route.slug && method === "GET" ? "/s/" + wsTag(env) + "/r/" + encodeURIComponent(route.slug) : "");
-    const view = acardHost.trust({ ...env, ACARD_GUEST_TOKEN: undefined, ACARD_SESSION: "guest", ACARD_GUEST_EMAIL: session.email, ACARD_GUEST_SESSION: session.id, DB: viewDb(db, visible, roles) });
+    const view = acardHost.trust({ ...env, ACARD_GUEST_TOKEN: undefined, ACARD_SESSION: "guest", ACARD_GUEST_EMAIL: session.email, ACARD_GUEST_SESSION: session.id, DB: viewDb(db, visible, roles, { session: session.id, email: session.email }) });
     const pass = () => next(request, view);
     switch (route.need) {
       case "asset": return pass();
@@ -252,11 +274,32 @@
     }
   }
 
-  async function createInvite(db, env, rule, email) {
+  // issue 114: the 6-digit code for an edit/comment link goes to the address the visitor typed (Resend, same sender domain as
+  // beta invites). Without a mail key nothing is sent and the caller says so; the code never goes back in the response.
+  async function mailLinkCode(env, email, code) {
+    if (!env.RESEND_API_KEY) return false;
+    const text = "Acard 공유 페이지 확인 코드: " + code + "\n24시간 동안 쓸 수 있어요. 직접 요청하지 않았다면 이 메일은 무시해 주세요.";
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { authorization: "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+        body: JSON.stringify({ from: env.MAIL_FROM || "Acard <share@send.notes.example.com>", to: [email], subject: "Acard 확인 코드 " + code, text }),
+      });
+      if (!res.ok) console.error("acard link code mail refused", res.status);
+      return res.ok;
+    } catch (error) {
+      console.error("acard link code mail failed", String(error));
+      return false;
+    }
+  }
+
+  // perEmail: a link rule is shared by everyone who opens the link, so a new code only replaces that email's pending one.
+  async function createInvite(db, env, rule, email, perEmail = false) {
     const id = randomToken();
     const code = code6();
     const now = Date.now();
-    await db.prepare("UPDATE share_invites SET used = ? WHERE rule = ? AND used IS NULL").bind(now, rule).run();
+    if (perEmail) await db.prepare("UPDATE share_invites SET used = ? WHERE rule = ? AND email = ? AND used IS NULL").bind(now, rule, email).run();
+    else await db.prepare("UPDATE share_invites SET used = ? WHERE rule = ? AND used IS NULL").bind(now, rule).run();
     await db.prepare("INSERT INTO share_invites (id_hash, rule, email, code_hash, created, expires) VALUES (?, ?, ?, ?, ?, ?)").bind(await sha(id), rule, email, await sha(id + ":" + code), now, now + INVITE_MS).run();
     return { url: "/s/" + wsTag(env) + "/i/" + id, code, expires: now + INVITE_MS };
   }
@@ -470,8 +513,8 @@
     return reply({ error: "없는 API예요." }, 404);
   }
 
-  function inviteForm(action, message, values = {}) {
-    return shell("공유 초대", '<h1>공유된 페이지 열기</h1><p>초대받은 이메일과 받은 6자리 코드를 넣어 주세요. 코드는 24시간 동안 쓸 수 있어요.</p>' +
+  function inviteForm(action, message, values = {}, intro = "초대받은 이메일과 받은 6자리 코드를 넣어 주세요. 코드는 24시간 동안 쓸 수 있어요.") {
+    return shell("공유 초대", '<h1>공유된 페이지 열기</h1><p>' + escapeHtml(intro) + '</p>' +
       (message ? '<p class="err" role="alert">' + escapeHtml(message) + "</p>" : "") +
       '<form method="post" action="' + escapeHtml(action) + '"><label for="email">이메일</label><input id="email" name="email" type="email" autocomplete="email" required value="' + escapeHtml(values.email || "") + '">' +
       '<label for="code">코드</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>' +
@@ -496,17 +539,47 @@
       const ip = request.headers.get("cf-connecting-ip") || "local";
       if (!(await hit(db, "verify:" + ip, 20, VERIFY_WINDOW_MS))) return html(inviteForm(action, "시도가 너무 많아요. 15분 뒤에 다시 해 주세요.", { email }), 429);
       const idHash = await sha(invite[1]);
-      const row = await db.prepare("SELECT i.id_hash, i.rule, i.email, i.code_hash, i.expires, i.tries, i.used, r.page FROM share_invites i JOIN share_rules r ON r.id = i.rule AND r.revoked IS NULL WHERE i.id_hash = ?").bind(idHash).first();
-      if (!row || row.used !== null || Number(row.expires) <= Date.now() || Number(row.tries) >= MAX_TRIES) return html(inviteForm(action, "코드가 끝났거나 맞지 않아요. 공유한 사람에게 새 코드를 받아 주세요.", { email }), 401);
+      const row = await db.prepare("SELECT i.id_hash, i.rule, i.email, i.code_hash, i.expires, i.tries, i.used, r.page, r.principal, r.role, r.expires AS rule_expires FROM share_invites i JOIN share_rules r ON r.id = i.rule AND r.revoked IS NULL WHERE i.id_hash = ?").bind(idHash).first();
+      const viaLink = row && row.principal === "link";
+      if (!row || row.used !== null || Number(row.expires) <= Date.now() || Number(row.tries) >= MAX_TRIES || (viaLink && (row.role === "read" || (row.rule_expires !== null && Number(row.rule_expires) <= Date.now())))) return html(inviteForm(action, "코드가 끝났거나 맞지 않아요. 공유한 사람에게 새 코드를 받아 주세요.", { email }), 401);
       await db.prepare("UPDATE share_invites SET tries = tries + 1 WHERE id_hash = ?").bind(idHash).run();
       if (email !== String(row.email) || !constantTimeEqual(await sha(invite[1] + ":" + code), String(row.code_hash))) return html(inviteForm(action, "이메일이나 코드가 맞지 않아요.", { email }), 401);
       const token = randomToken();
       const now = Date.now();
       await db.batch([
         db.prepare("UPDATE share_invites SET used = ? WHERE id_hash = ?").bind(now, idHash),
-        db.prepare("INSERT INTO share_sessions (token_hash, email, links, created, expires) VALUES (?, ?, '[]', ?, ?)").bind(await sha(token), email, now, now + SESSION_S * 1000),
+        // issue 114: a code asked for on an edit/comment link page opens a session that holds that link, like opening the link
+        // while already signed in as a guest (renderPublicPage). Email invites keep an empty link set.
+        db.prepare("INSERT INTO share_sessions (token_hash, email, links, created, expires) VALUES (?, ?, ?, ?, ?)").bind(await sha(token), email, JSON.stringify(viaLink ? [String(row.rule)] : []), now, now + SESSION_S * 1000),
       ]);
-      return new Response(null, { status: 303, headers: { ...noStore, "clear-site-data": '"cache"', location: "/" + encodeURIComponent(String(row.page)) + "/", "set-cookie": COOKIE + "=" + wsTag(env) + "." + token + "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=" + SESSION_S } });
+      return new Response(null, { status: 303, headers: { ...noStore, "clear-site-data": '"cache"', location: (viaLink && row.role !== "comment" ? "/edit/" : "/") + encodeURIComponent(String(row.page)) + "/", "set-cookie": COOKIE + "=" + wsTag(env) + "." + token + "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=" + SESSION_S } });
+    }
+    const linkAsk = /^\/s\/l\/([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])$/.exec(path);
+    if (linkAsk) {
+      // issue 114: anyone with an edit/comment link proves an email here (a mailed 6-digit code, no account) and then edits
+      // as a guest of that link. A read link, or a turned-off or expired one, has no such step.
+      const rule = await db.prepare("SELECT id, page, role, expires FROM share_rules WHERE token_hash = ? AND principal = 'link' AND revoked IS NULL").bind(await sha(linkAsk[1])).first();
+      if (!rule || rule.role === "read" || (rule.expires !== null && Number(rule.expires) <= Date.now())) return html(shell("공유", "<h1>없거나 끝난 링크예요</h1>"), 404);
+      const action = "/s/" + wsTag(env) + "/l/" + linkAsk[1];
+      const verb = rule.role === "comment" ? "댓글을 달려면" : "편집하려면";
+      const form = (message = "", email = "") => shell("이메일 확인", "<h1>" + verb + " 이메일을 확인해 주세요</h1><p>이메일로 6자리 코드를 보내 드려요. 회원가입은 필요 없어요.</p>" +
+        (message ? '<p class="err" role="alert">' + escapeHtml(message) + "</p>" : "") +
+        '<form method="post" action="' + escapeHtml(action) + '"><label for="email">이메일</label><input id="email" name="email" type="email" autocomplete="email" required value="' + escapeHtml(email) + '">' +
+        '<button type="submit">코드 받기</button></form>');
+      if (method === "GET" || method === "HEAD") return html(form());
+      if (method !== "POST") return new Response(null, { status: 405, headers: { ...noStore, allow: "GET, POST" } });
+      const data = await request.formData().catch(() => null);
+      const email = String(data?.get("email") || "").trim().toLowerCase();
+      if (!EMAIL.test(email)) return html(form("이메일 주소를 확인해 주세요.", email), 400);
+      const ip = request.headers.get("cf-connecting-ip") || "local";
+      if (!(await hit(db, "linkcode:" + ip, 10, 60 * 60 * 1000)) || !(await hit(db, "linkcode-to:" + email, 3, 60 * 60 * 1000))) return html(form("요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.", email), 429);
+      const invite = await createInvite(db, env, String(rule.id), email, true);
+      const sent = await mailLinkCode(env, email, invite.code);
+      if (!sent) {
+        await db.prepare("UPDATE share_invites SET used = ? WHERE rule = ? AND email = ? AND used IS NULL").bind(Date.now(), String(rule.id), email).run();
+        return html(form("코드 메일을 보내지 못했어요. 잠시 뒤에 다시 해 주세요.", email), 503);
+      }
+      return html(inviteForm(invite.url, "", { email }, email + " 로 보낸 6자리 코드를 넣어 주세요. 코드는 24시간 동안 쓸 수 있어요."));
     }
     const ask = /^\/s\/r\/([^/]+)$/.exec(path);
     if (ask) {
@@ -544,6 +617,9 @@
   const svFrameResizeHash = async () => svFrameResizeHashValue || (svFrameResizeHashValue = "sha256-" + btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(SV_FRAME_RESIZE))))));
   const SV_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
   const SV_MOON = SV_ICON + '<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>';
+  const SV_CLOCK = SV_ICON + '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
+  const SV_GLOBE = SV_ICON + '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
+  const SV_LOCK = SV_ICON + '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
   const svPage = (title, inner, extraHead = "") => '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>' + title + '</title>' + extraHead + '</head><body class="sv">' +
     '<input type="checkbox" id="sv-tt" class="sv-tt" aria-label="테마 바꾸기">' + inner + "</body></html>";
   const SV_NOTICE_VARS = ":root{--bg:#fff;--bg-soft:#f6f6f8;--fg:#26252c;--fg-dim:#5f5d69;--line:#ececf0;--accent:#6450dc;--on-accent:#fff;--font-body:'Pretendard Variable',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;--fs-12:12px;--fs-13:13px;--fs-14:14px;--fs-16:16px;--fs-28:28px}" +
@@ -792,6 +868,8 @@
           else if (name === "href" && value.startsWith("#")) continue;
           else if (name === "href" && element.tagName === "a" && target && target !== String(rule.page) && reachable(target)) element.setAttribute(name, base + "/" + encodeURIComponent(target) + "/");
           else if (name === "href" && element.tagName === "a" && target === String(rule.page)) element.setAttribute(name, base);
+          // A card-grid card is the link itself: drop only the href so the card keeps its box.
+          else if (element.tagName === "a" && /(^|\s)ui-cards-item(\s|$)/.test(element.getAttribute("class") || "")) element.removeAttribute(name);
           else if (element.tagName === "a") element.removeAndKeepContent();
           else element.remove();
         }
@@ -800,10 +878,13 @@
     }).transform(new Response(renderBlocks(blocks, { page: { readOnly: true } })));
     // Inline existing reader styles: private static asset routes remain cookie-gated.
     // #73: lazy/checks.css draws "[ ]" table cells; a link visitor gets no checks chunk, so it rides inline.
-    const styles = await Promise.all(["tokens.css", "style.css", "lazy/checks.css"].map(async name => {
+    const report = isReportPage(found.settings);
+    const styles = await Promise.all(["tokens.css", "style.css", "lazy/checks.css", ...(report ? ["tokens-report.css"] : [])].map(async name => {
       const asset = await env.ASSETS.fetch(new Request(new URL("/" + name, request.url)));
       return asset.ok ? (await asset.text()).replace(/@import\s+[^;]+;/g, "") : "";
     }));
+    // Report pages: the --rp-* tokens join tokens.css so the theme switch below covers their dark values too.
+    if (report) styles[0] += "\n" + styles.pop();
     const lightVars = [...styles[0].matchAll(/(?:^|\})\s*:root\s*\{([^}]*)\}/g)].map(m => m[1]).join(";");
     styles[0] = styles[0].replace(/html\[data-theme="dark"\]/g, 'html[data-theme="dark"], html:has(#sv-tt:checked):not(#sv-none)') + "@media (prefers-color-scheme: dark){html:has(#sv-tt:checked):not(#sv-none){color-scheme:light;" + lightVars + "}}";
     const siteTitle = settings?.site_title ? String(settings.site_title) : "";
@@ -813,17 +894,24 @@
     if (subRows.length) {
       const marks = subRows.map(() => "?").join(",");
       const icons = await db.prepare("SELECT page, icon FROM editor_page_settings WHERE page IN (" + marks + ")").bind(...subRows.map(row => String(row.slug))).all().catch(() => ({ results: [] }));
-      const firsts = await db.prepare("SELECT page, text FROM blocks WHERE page IN (" + marks + ") AND type = 'paragraph' AND trim(text) != '' ORDER BY page, ord").bind(...subRows.map(row => String(row.slug))).all();
+      const firsts = await db.prepare("SELECT b.page, b.text FROM blocks b WHERE b.page IN (" + marks + ") AND b.id = (SELECT id FROM blocks WHERE page = b.page AND type = 'paragraph' AND trim(text) != '' ORDER BY ord, id LIMIT 1) ORDER BY b.page").bind(...subRows.map(row => String(row.slug))).all();
       for (const row of icons.results ?? []) subMeta.set(String(row.page), { icon: row.icon });
-      for (const row of firsts.results ?? []) { const m = subMeta.get(String(row.page)) || {}; if (!m.text) m.text = String(row.text); subMeta.set(String(row.page), m); }
+      for (const row of firsts.results ?? []) {
+        const m = subMeta.get(String(row.page)) || {};
+        // Inline markdown only; emphasis marks inside words (snake_case, a*b) stay as written.
+        m.text = String(row.text).replace(/\[\[([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/`([^`]+)`/g, "$1")
+          .replace(/(^|[^\w*])(\*\*|__)(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, "$1$3").replace(/(^|[^\w*])([*_])(?=\S)(.+?)(?<=\S)\2(?![\w*])/g, "$1$3");
+        subMeta.set(String(row.page), m);
+      }
     }
     const pageSettings = found.settings || {};
     const bodyHtml = await content.text();
     const headings = [...bodyHtml.matchAll(/<h([2345]) id="([^"]+)">([\s\S]*?)<\/h\1>/g)].map(m => ({ level: Number(m[1]), id: m[2], text: m[3].replace(/<[^>]+>/g, "").trim() })).filter(h => h.text);
     const firstText = (found.blocks.find(block => block.type === "paragraph" && String(block.text || "").trim()) || {}).text || "";
     const description = String(firstText).replace(/\s+/g, " ").trim().slice(0, 160) || (siteTitle || "Acard") + "에서 공유한 페이지예요.";
-    const origin = new URL(request.url).origin;
-    const pageUrl = origin + base + (slug !== String(rule.page) ? "/" + encodeURIComponent(slug) + "/" : "");
+    // Canonical and og:url use the configured site origin (SITE_URL), not the request host: no query, no trailing slash.
+    const siteOrigin = String(env.SITE_URL || new URL(request.url).origin).replace(/\/+$/, "");
+    const pageUrl = siteOrigin + base + (slug !== String(rule.page) ? "/" + encodeURIComponent(slug) : "");
     let cover = coverHtml(found.page, pageSettings);
     if (coverMedia) {
       const markup = variantMarkup(base, coverMedia[1], infos.get(coverMedia[1]), "100vw", true);
@@ -833,7 +921,10 @@
     }
     else if (/^https?:/.test(String(pageSettings.cover || "").trim())) cover = coverHtml(found.page, { ...pageSettings, cover: "" });
     const updated = found.page.updated ? new Date(Number(found.page.updated)).toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Seoul" }) + "에 수정됨" : "";
-    const stamp = rule.principal === "link" ? "공유 링크 · 읽기 전용" : siteTitle ? escapeHtml(siteTitle) : "공개 페이지 · 읽기 전용";
+    // issue 114: an edit/comment link shows how to get that permission (email code, no account) instead of only the read-only stamp.
+    const upgrade = rule.principal === "link" && (rule.role === "edit" || rule.role === "comment");
+    const stamp = rule.principal === "link" ? (upgrade ? (rule.role === "edit" ? "공유 링크 · 편집 허용" : "공유 링크 · 댓글 허용") : "공유 링크 · 읽기 전용") : siteTitle ? escapeHtml(siteTitle) : "공개 페이지 · 읽기 전용";
+    const upgradeHtml = upgrade ? '<p class="sv-edit"><a class="sv-btn" href="/s/' + wsTag(env) + "/l/" + match[1] + '">' + (rule.role === "edit" ? "편집하려면 이메일로 확인" : "댓글을 달려면 이메일로 확인") + "</a><small>회원가입 없이 이메일로 받은 6자리 코드로 확인해요.</small></p>" : "";
     const crumb = '<a class="sv-crumb" href="' + base + '"><span class="sv-ico">' + (rootRow ? pageIconHtml({ slug: String(rule.page) }, {}, 20) : shareIcon(pageIconHtml(found.page, pageSettings, 20))) + '</span><span>' + escapeHtml(String(rootRow ? rootRow.title : found.page.title)) + "</span></a>" +
       (rootRow ? '<span class="sv-sep">/</span><span class="sv-here">' + escapeHtml(found.page.title) + "</span>" : "");
     const toc = headings.length >= 2 ? '<aside class="sv-toc" aria-label="목차"><details open><summary>목차</summary><ol>' + headings.map((h, i) => '<li class="l' + h.level + '"><a href="#' + escapeHtml(h.id) + '"><span class="n">' + (i + 1) + "</span>" + escapeHtml(h.text) + "</a></li>").join("") + "</ol></details></aside>" : "";
@@ -842,19 +933,24 @@
       return '<a class="sv-card" href="' + base + "/" + encodeURIComponent(String(row.slug)) + '/"><span class="sv-cico">' + pageIconHtml({ slug: String(row.slug), ws: "member" }, { icon: /^\/media\//.test(String(meta.icon || "")) ? "" : meta.icon || "" }, 24) + '</span><span class="sv-ct"><b>' + escapeHtml(String(row.title)) + "</b>" + (meta.text ? "<small>" + escapeHtml(String(meta.text).replace(/\s+/g, " ").slice(0, 70)) + "</small>" : "") + "</span></a>";
     }).join("") + "</div></section>" : "";
     const title = escapeHtml(found.page.title) + (siteTitle ? " · " + escapeHtml(siteTitle) : "");
-    const og = '<meta name="robots" content="' + (indexable ? "index" : "noindex") + '"><meta name="description" content="' + escapeHtml(description) + '">' +
-      '<meta property="og:type" content="article"><meta property="og:site_name" content="' + escapeHtml(siteTitle || "Acard") + '"><meta property="og:title" content="' + escapeHtml(found.page.title) + '"><meta property="og:description" content="' + escapeHtml(description) + '">' +
-      '<meta property="og:url" content="' + escapeHtml(pageUrl) + '"><meta property="og:image" content="' + origin + '/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:locale" content="ko_KR">' +
-      '<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="' + escapeHtml(found.page.title) + '"><meta name="twitter:description" content="' + escapeHtml(description) + '"><meta name="twitter:image" content="' + origin + '/og.png">' +
+    // Only a page the owner published with search allowed gets its own card; link shares and unlisted pages get the
+    // generic Acard card so their title and text stay out of crawlers and link previews.
+    const cardTitle = indexable ? found.page.title : siteTitle || "Acard";
+    const cardText = indexable ? description : (siteTitle || "Acard") + "에서 공유한 페이지예요.";
+    const ogImage = siteOrigin + "/og.png";
+    const og = '<meta name="robots" content="' + (indexable ? "index" : "noindex") + '">' + (indexable ? '<meta name="description" content="' + escapeHtml(description) + '"><link rel="canonical" href="' + escapeHtml(pageUrl) + '">' : "") +
+      '<meta property="og:type" content="article"><meta property="og:site_name" content="' + escapeHtml(siteTitle || "Acard") + '"><meta property="og:title" content="' + escapeHtml(cardTitle) + '"><meta property="og:description" content="' + escapeHtml(cardText) + '">' +
+      '<meta property="og:url" content="' + escapeHtml(pageUrl) + '"><meta property="og:image" content="' + ogImage + '"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Acard"><meta property="og:locale" content="ko_KR">' +
+      '<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="' + escapeHtml(cardTitle) + '"><meta name="twitter:description" content="' + escapeHtml(cardText) + '"><meta name="twitter:image" content="' + ogImage + '">' +
       (frameBlocks.size ? "<script>" + SV_FRAME_RESIZE + "</script>" : "") + '<link rel="icon" href="/favicon.svg" type="image/svg+xml"><style>' + styles.join("\n") + "\n" + VISUAL_CSS + "\n" +
       // notion-parity-1: block colors, heading 4 and toggle headings ride inline in reader pages; the sanitizer above drops
       // inline <style> from the body, so the shared page carries the same rules here (CSP and sanitizing unchanged).
-      BLOCK_COLOR_CSS + HEADING4_CSS + TOGGLE_HEADING_CSS + componentCss() + "\n" + SV_BASE_CSS + SV_PAGE_CSS + "</style>";
+      BLOCK_COLOR_CSS + HEADING4_CSS + TOGGLE_HEADING_CSS + componentCss() + "\n" + SV_BASE_CSS + SV_PAGE_CSS + (isReportPage(pageSettings) ? REPORT_CSS : "") + (bodyHtml.includes('<span class="ev ev-') ? EVIDENCE_CSS : "") + "</style>";
     const html = svPage(title,
-      '<header class="sv-bar"><nav class="sv-path" aria-label="위치">' + crumb + '</nav><span class="sv-grow"></span><a class="sv-made" href="/" aria-label="Acard로 만들었어요"><svg class="wordmark sv-wm" viewBox="-1.00 -15.63 171.36 109.63" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg><span>로 만들었어요</span></a><label for="sv-tt" class="sv-theme" title="테마 바꾸기">' + SV_MOON + "</label></header>" +
+      '<header class="sv-bar"><nav class="sv-path" aria-label="위치">' + crumb + '</nav><span class="sv-grow"></span><a class="sv-made" href="/" aria-label="Acard로 만들었어요"><svg class="wordmark sv-wm" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg><span>로 만들었어요</span></a><label for="sv-tt" class="sv-theme" title="테마 바꾸기">' + SV_MOON + "</label></header>" +
       '<div class="sv-cover">' + cover + "</div>" +
-      '<div class="sv-wrap' + (toc ? " has-toc" : "") + (pageSettings.width === "full" ? " sv-full" : pageSettings.width === "normal" ? " sv-normal" : "") + '"><main class="sv-main"><article><div class="sv-icon" aria-hidden="true">' + shareIcon(pageIconHtml(found.page, pageSettings, 88)) + "</div>" +
-      '<h1 class="sv-title">' + escapeHtml(found.page.title) + '</h1><p class="sv-meta"><span>' + stamp + "</span>" + (updated ? "<span>" + updated + "</span>" : "") + "</p>" +
+      '<div class="sv-wrap' + (toc ? " has-toc" : "") + (pageSettings.width === "full" ? " sv-full" : pageSettings.width === "normal" ? " sv-normal" : "") + (isReportPage(pageSettings) ? " rp" : "") + '"><main class="sv-main"><article><div class="sv-icon" aria-hidden="true">' + shareIcon(pageIconHtml(found.page, pageSettings, 88)) + "</div>" +
+      '<h1 class="sv-title">' + escapeHtml(found.page.title) + '</h1><p class="sv-meta">' + (updated ? '<span class="sv-when">' + SV_CLOCK + "<span>" + updated + "</span></span>" : "") + '<span class="sv-pill"><span class="sv-pill-in">' + (rule.principal === "link" ? SV_LOCK : SV_GLOBE) + stamp + "</span></span></p>" + upgradeHtml +
       '<div class="sv-toc-narrow">' + toc + '</div><div class="blocks">' + bodyHtml + "</div>" + cards + "</article></main>" + toc.replace('class="sv-toc"', 'class="sv-toc sv-toc-wide"') + "</div>" +
       '<footer class="sv-foot"><a href="/"><img src="/logo.svg" alt="" width="16" height="16">Acard로 만들었어요</a></footer>', og);
     return new Response(html, { headers: contentHeaders });
@@ -887,6 +983,7 @@
     publicRoutes: [publicPage, shareRoutes],
     services: {
       guestFetch,
+      guestRoles: guestRolesNow,
       async agentScopes(db, principal, slug) {
         const key = agentKey(principal);
         if (!slug || !(await hasAgentRules(db, key, principal))) return principal.scopes;

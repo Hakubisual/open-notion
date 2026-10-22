@@ -1,4 +1,4 @@
-(function(d,w){function c(h){if(!d.querySelector('[href="'+h+'"]')){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}}w.acardFont=function(f){f=="serif"&&c("/fonts/serif.css")};d.querySelector('[data-font="serif"]')&&c("/fonts/serif.css");w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
+(function(d,w){function c(h){if(!d.querySelector('[href="'+h+'"]')){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}}w.acardFont=function(f){(f=="serif"||f=="report")&&c("/fonts/serif.css")};d.querySelector('[data-font="serif"],[data-font="report"]')&&c("/fonts/serif.css");w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
 (function () {
   document.addEventListener("submit", function (event) {
     var form = event.target;
@@ -235,6 +235,8 @@
   }
   var paletteOpenBtn = document.getElementById("palette-open");
   if (paletteOpenBtn) paletteOpenBtn.addEventListener("click", openPalette);
+  // The shortcut accepts Ctrl or Cmd; Apple keyboards see the Cmd hint (ref-1).
+  if (paletteOpenBtn && /Mac|iP/.test(navigator.platform)) paletteOpenBtn.lastChild.textContent = "\u2318 K";
   var thumbSearch = document.querySelector('.thumbbar [data-open="palette"]');
   if (thumbSearch) thumbSearch.addEventListener("click", openPalette);
   if (paletteInput) {
@@ -537,6 +539,11 @@
   if (panel) panel.addEventListener("mousedown", function (ev) { if (ev.target === panel) panel.hidden = true; });
   document.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && panel) panel.hidden = true; });
 
+  var thumbNew = document.querySelector(".thumbbar [data-new-page]");
+  if (thumbNew) thumbNew.addEventListener("click", function () {
+    location.href = "/edit/page-" + Math.random().toString(36).slice(2, 8) + "/?new&create";
+  });
+
   function mountPageActions() {
   var share = document.getElementById("share");
   // The build stamps the lazy share dialog's content hash into __SHARE_DIALOG__.
@@ -575,7 +582,7 @@
   }
   function first(e) {
     var a = e.target.closest && e.target.closest("a[href]"), u = a && new URL(a.href, location.href);
-    if (!a || e.defaultPrevented || e.button > 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.hasAttribute("download") || a.target && a.target !== "_self" || u.origin !== location.origin || !(/^\/(?!edit\/|p\/|s\/|api\/|__|login\/|signup\/|onboarding\/|settings\/|connect\/|admin\/)[^/.]+\/$/.test(u.pathname) || u.pathname === "/") || u.pathname === location.pathname && u.search === location.search && u.hash) return;
+    if (!a || e.defaultPrevented || e.button > 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.hasAttribute("download") || a.target && a.target !== "_self" || u.origin !== location.origin || !(/^\/(?!edit\/|p\/|s\/|api\/|__|login\/|signup\/|onboarding\/|settings\/|connect\/|admin\/|import\/)[^/.]+\/$/.test(u.pathname) || u.pathname === "/") || u.pathname === location.pathname && u.search === location.search && u.hash) return;
     e.preventDefault(); e.stopImmediatePropagation();
     load().then(function () { window.AcardReader.navigate(u.href); }, function () { location.assign(u.href); });
   }

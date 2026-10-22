@@ -6,7 +6,7 @@
     try {
       var u = new URL(href, base), here = new URL(base);
       return u.origin === here.origin && /^https?:$/.test(u.protocol) &&
-        (u.pathname === "/" || /^\/(?!edit\/|p\/|s\/|api\/|__|login\/|signup\/|onboarding\/|settings\/|connect\/|admin\/)[^/.]+\/$/.test(u.pathname)) &&
+        (u.pathname === "/" || /^\/(?!edit\/|p\/|s\/|api\/|__|login\/|signup\/|onboarding\/|settings\/|connect\/|admin\/|import\/)[^/.]+\/$/.test(u.pathname)) &&
         !(u.pathname === here.pathname && u.search === here.search && u.hash);
     } catch (e) { return false; }
   }
@@ -107,8 +107,6 @@
     var main = page.main.cloneNode(true);
     document.getElementById("main").replaceWith(main);
     document.title = page.title; reader.slug = slug(url); active = key(url);
-    var edit = document.querySelector('.thumbbar a[href^="/edit/"]');
-    if (edit) edit.href = "/edit/" + encodeURIComponent(reader.slug) + "/";
     document.querySelectorAll('#sidebar a[href]').forEach(function (a) {
       var on = key(a.href) === active;
       a.classList.toggle("on", on);
