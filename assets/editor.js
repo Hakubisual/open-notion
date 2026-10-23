@@ -1,5 +1,11 @@
 (function () {
   "use strict";
+  // Network seam (open-notion-acard #1): a host page can set window.AcardEditorProvider = { fetch(url, options) } before
+  // this script loads to route the editor's requests elsewhere. Without it every call is the browser fetch to /api.
+  function net(url, options) {
+    var provider = window.AcardEditorProvider;
+    return provider && typeof provider.fetch === "function" ? provider.fetch(url, options) : fetch(url, options);
+  }
   var model = window.EditorModel;
   var pageContext;
   var formatContext;
@@ -113,7 +119,7 @@
   };
 
   function api(path, options) {
-    return fetch("/api" + path, Object.assign({ headers: { "content-type": "application/json" } }, options || {})).then(apiResponse);
+    return net("/api" + path, Object.assign({ headers: { "content-type": "application/json" } }, options || {})).then(apiResponse);
   }
 
   function apiResponse(res) {
@@ -165,7 +171,7 @@
     api: api, slug: slug, loadTree: function () { return loadTree(); }, scheduleSave: scheduleSave, render: render, setSave: setSave, save: save,
     transport: function (pageSlug, payload) {
       if (!Number.isSafeInteger(payload.base_updated)) return Promise.resolve(new Response(JSON.stringify({ error: "불러오지 못했어요 · 읽기 전용. 새로고침해 주세요." }), { status: 428 }));
-      return fetch("/api/page/" + encodeURIComponent(pageSlug), { method: "PUT", headers: { "content-type": "application/json", "x-acard-client": this.clientId || "" }, body: JSON.stringify(payload) });
+      return net("/api/page/" + encodeURIComponent(pageSlug), { method: "PUT", headers: { "content-type": "application/json", "x-acard-client": this.clientId || "" }, body: JSON.stringify(payload) });
     },
     insertBlocksAfter: function (id, blocks) {
       var index = state.blocks.findIndex(function (block) { return block.id === id; });
@@ -974,7 +980,7 @@
     var form = new FormData();
     form.append("file", file, file.name);
     form.append("page", slug);
-    return fetch("/api/upload", { method: "POST", body: form }).then(function (res) {
+    return net("/api/upload", { method: "POST", body: form }).then(function (res) {
       return res.json().then(function (body) {
         if (!res.ok) throw new Error(body.error || String(res.status));
         return body;
@@ -1144,7 +1150,7 @@
         var url = meta.url;
         if (!/^https?:\/\//.test(url)) return;
         note.textContent = "미리보기를 가져오는 중…";
-        fetch("/api/link-preview?url=" + encodeURIComponent(url))
+        net("/api/link-preview?url=" + encodeURIComponent(url))
           .then(function (r) { return r.json(); })
           .then(function (body) {
             meta.title = body.title || "";
@@ -1929,7 +1935,7 @@
     setImportStatus("가져오는 중… (" + Math.round(file.size / 1024) + " KB)", true);
     if (importGo) importGo.disabled = true;
     file.arrayBuffer().then(function (buffer) {
-      return fetch("/api/import", {
+      return net("/api/import", {
         method: "POST",
         headers: { "content-type": "application/zip" },
         body: buffer,
@@ -1990,7 +1996,7 @@
     }
     setImportStatus("가져오는 중… (" + names.length + "개 파일)", true);
     if (importMdGo) importMdGo.disabled = true;
-    fetch("/api/import/md", { method: "POST", body: form })
+    net("/api/import/md", { method: "POST", body: form })
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (body) { if (!res.ok) throw new Error(body.error || String(res.status)); return body; }); })
       .then(function (body) {
         var lines = [];
@@ -2055,7 +2061,7 @@
       renderPalette();
       return;
     }
-    fetch("/api/search?q=" + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { results: [] }; }).catch(Object).then(function (data) {
+    net("/api/search?q=" + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { results: [] }; }).catch(Object).then(function (data) {
       if (asked != pSeq) return;
       pWait = 0;
       paletteItems = (data.results || []).map(function (hit) {

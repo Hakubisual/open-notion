@@ -292,7 +292,7 @@ test("save retains the unload guard until acknowledgement and freezes the submit
 
 test("full-save transport refuses a missing base and includes it in every PUT", async () => {
   const calls: any[] = [];
-  const transport = new Function("fetch", "Response", "return " + section("    transport: function", "    insertBlocksAfter").trim().slice("transport: ".length).replace(/,$/, ""))(
+  const transport = new Function("net", "Response", "return " + section("    transport: function", "    insertBlocksAfter").trim().slice("transport: ".length).replace(/,$/, ""))(
     async (_: string, options: any) => { calls.push(options); return Response.json({ updated: 11 }); }, Response);
   expect((await transport("page", { title: "bad", blocks: [] })).status).toBe(428);
   expect(calls).toEqual([]);
@@ -304,7 +304,7 @@ test("upload sends page, preserves image dimensions in the draft, and renders in
   const node = (tag: string) => { const value: any = { tag, style: {}, dataset: {}, appendChild() {}, addEventListener() {}, setAttribute() {} }; nodes.push(value); return value; };
   const context: any = { slug: "page", FormData, created: Promise.resolve(), render() {}, setSave() {}, scheduleSave() {},
     downscaleImage: (file: File) => Promise.resolve(file), document: { createElement: node },
-    fetch: async (_: string, options: any) => { requests.push(options); return new Response(JSON.stringify({ url: "/media/photo", name: "photo.png", size: 12, width: 640, height: 480 })); } };
+    net: async (_: string, options: any) => { requests.push(options); return new Response(JSON.stringify({ url: "/media/photo", name: "photo.png", size: 12, width: 640, height: 480 })); } };
   runInNewContext(section("  function uploadFile", "  function focusedIndex") + section("  function mediaBlock", "  function embedSizer"), context);
   const block: any = { type: "image", meta: { width: 70 } };
   await context.uploadInto(block, new File(["image"], "photo.png", { type: "image/png" }));

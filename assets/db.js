@@ -7,6 +7,12 @@
 // DoriDB.reload(mountId) always GETs; mountAll() mounts newly replaced reader nodes.
 (function () {
   "use strict";
+  // Network seam (open-notion-acard #1): a host page can set window.AcardEditorProvider = { fetch(url, options) } before
+  // this script loads to route the editor's requests elsewhere. Without it every call is the browser fetch to /api.
+  function net(url, options) {
+    var provider = window.AcardEditorProvider;
+    return provider && typeof provider.fetch === "function" ? provider.fetch(url, options) : fetch(url, options);
+  }
 
   var MODEL = window.DoriDBModel || {};
   var VIEWS = window.DoriDBViews || {};
@@ -16,7 +22,7 @@
   var lastMount = null;
 
   function api(path, options) {
-    return fetch("/api" + path, Object.assign({ headers: { "content-type": "application/json" } }, options || {})).then(function (res) {
+    return net("/api" + path, Object.assign({ headers: { "content-type": "application/json" } }, options || {})).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (body) {
         if (!res.ok) throw new Error(body.error || String(res.status));
         return body;

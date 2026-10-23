@@ -126,6 +126,19 @@ describe("database bootstrap", () => {
     expect(row.html).toContain("Related person");
   });
 
+  test("a host's AcardEditorProvider.fetch carries the database GET; without one the browser fetch does", async () => {
+    const routed = await browser.evaluate(`(async () => {
+      document.querySelector('main').innerHTML = ${JSON.stringify(reader())};
+      window.calls = []; window.routed = [];
+      window.fetch = async (url) => { calls.push(url); return {ok:true,json:async()=>structuredClone(${JSON.stringify(payload)})}; };
+      window.AcardEditorProvider = { fetch: async (url, options) => { routed.push([url, options.headers['content-type']]); return {ok:true,json:async()=>structuredClone(${JSON.stringify(payload)})}; } };
+      try { await DoriDB.load('tasks', {initial:null}); } finally { delete window.AcardEditorProvider; }
+      return { calls, routed };
+    })()`);
+    expect(routed).toEqual({ calls: [], routed: [["/api/db/tasks", "application/json"], ["/api/db/people", "application/json"]] });
+    expect((await load("get")).calls).toEqual(["/api/db/tasks", "/api/db/people"]);
+  });
+
   test("absent, malformed, wrong-slug, and incomplete boot payloads fall back to GET", async () => {
     for (const boot of ["", '<script type="application/json" class="acard-db-boot" data-slug="tasks">{</script>', dbBootTag("other", payload), dbBootTag("tasks", {}), dbBootTag("tasks", { ...payload, database: { slug: "other" } })]) {
       const result = await load("network", "table", boot, {});

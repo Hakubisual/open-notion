@@ -52,6 +52,15 @@ Reader/editor first-screen caps stay fixed as the total feature collection grows
 - `transport(slug, payload)` is replaceable, returns `Promise<Response>`, and
   defaults to JSON `PUT /api/page/<encoded slug>`. Save parses the response and
   checks its status. Wrap the previous function to compose transports.
+- Network provider: `editor.js`, `db.js` and the lazy `editor-next` chunk send
+  every request through `window.AcardEditorProvider.fetch(url, options)` when a
+  host page sets that object before the scripts load, and through the browser
+  `fetch` otherwise. It has the `fetch` signature and must resolve a `Response`
+  (or an object with `ok`, `status`, `headers` and `json()`); URLs stay the
+  same-origin `/api/...` paths, so the provider maps them to its own backend.
+  The default `transport()` goes through it too, so a wrapped transport chain
+  (save queue, changed blocks) keeps working. Lazy chunk URLs come from the
+  build's `window.AcardLazy` manifest and are not routed through the provider.
 - `insertBlocksAfter(id, blocks)` inserts after that block's subtree, supplies
   missing block defaults/IDs, renders, schedules saving and returns inserted
   IDs. An unknown anchor throws. Supplied IDs must be unique.

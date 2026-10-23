@@ -31,7 +31,7 @@ function setup() {
   };
   const setTimeout = (fn: () => void) => { timers.push(fn); return timers.length; };
   const clearTimeout = () => {};
-  const run = new Function("document", "fetch", "location", "localStorage", "setTimeout", "clearTimeout", block + "return { openPalette: openPalette };");
+  const run = new Function("document", "net", "location", "localStorage", "setTimeout", "clearTimeout", block + "return { openPalette: openPalette };");
   const api = run(document, fetch, location, localStorage, setTimeout, clearTimeout);
   api.openPalette();
   const type = (q: string) => { input.value = q; handlers.input({}); };
