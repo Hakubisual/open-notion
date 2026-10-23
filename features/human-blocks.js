@@ -61,15 +61,19 @@ function humanAlign(oldBlocks, newBlocks) {
 
 // Runs after every agent write. Person-edited blocks the agent changed go back to the person's version with the
 // agent's text as meta.suggest; ones it removed come back with a removal suggestion. Returns the guarded blocks.
-function humanGuard(before, after, by) {
+// First the AI marks (acard-human-edit, assets/ai-marks.js): blocks and text pieces a person marked lock or ref come back
+// exactly as they were, whatever the agent sent; aiDefault is the page's editor_page_settings.ai.
+function humanGuard(before, after, by, aiDefault, aligned) {
   const now = Date.now();
-  const out = after.map((block) => ({ ...block }));
+  const marked = globalThis.AiMarks.guard(before, after, aiDefault, aligned);
+  const lockedIds = new Set(marked.locked);
+  const out = marked.blocks.map((block) => ({ ...block }));
   let suggestions = 0;
   const kept = [];
   const at = (id) => out.findIndex((block) => block.id === id);
   for (let index = 0; index < before.length; index += 1) {
     const person = before[index];
-    if (!person.meta || !person.meta.human) continue;
+    if (!person.meta || !person.meta.human || lockedIds.has(person.id)) continue;
     let pos = at(person.id);
     if (pos < 0) pos = out.findIndex((block) => humanSame(block, person) && !before.some((b) => b.id === block.id));
     if (pos < 0) {
@@ -103,7 +107,7 @@ function humanGuard(before, after, by) {
     suggestions += 1; kept.push(person.id);
   }
   humanKeepColumn(before, out);
-  return { blocks: out, suggestions, kept };
+  return { blocks: out, suggestions, kept, locked: marked.locked };
 }
 
 // The column a block sits in: the id of its nearest column ancestor, or null outside columns.
@@ -137,10 +141,20 @@ function humanKeepColumn(before, out) {
   });
 }
 
+// A direct write aimed at named blocks (update_block, delete_block, patch_block, set_*_data) on a block a person marked
+// lock or ref is refused outright with 423, so the agent learns why instead of reading a quiet "kept".
+function markRefusal(found, ids) {
+  const hit = globalThis.AiMarks.blocked(found.blocks, found.settings?.ai, ids.filter((id) => typeof id === "string"));
+  if (hit.length) throw Object.assign(new AgentError("사람이 고정·참고로 표시한 블록이라 AI가 바꿀 수 없어요: " + hit.join(", ") + ". read_blocks 의 ai 값을 보고 다른 블록을 고치세요.", 423), { locked: hit });
+}
+
 function humanNote(result, guard) {
-  if (!guard || !guard.suggestions) return result;
-  return { ...result, suggestions: guard.suggestions, humanKept: guard.kept,
-    note: "사람이 고친 문단 " + guard.suggestions + "개는 그대로 두고, 바꾸려던 내용은 그 문단 아래 '업데이트 제안'으로 붙였어요. 사람이 반영하거나 무시해요." };
+  if (!guard || (!guard.suggestions && !(guard.locked && guard.locked.length))) return result;
+  const notes = [];
+  if (guard.locked && guard.locked.length) notes.push("사람이 고정·참고로 표시한 블록 " + guard.locked.length + "개는 바꾸지 않았어요(locked). 그 블록은 읽기만 하고 다른 블록을 고치세요.");
+  if (guard.suggestions) notes.push("사람이 고친 문단 " + guard.suggestions + "개는 그대로 두고, 바꾸려던 내용은 그 문단 아래 '업데이트 제안'으로 붙였어요. 사람이 반영하거나 무시해요.");
+  return { ...result, ...(guard.suggestions ? { suggestions: guard.suggestions, humanKept: guard.kept } : {}),
+    ...(guard.locked && guard.locked.length ? { locked: guard.locked } : {}), note: notes.join(" ") };
 }
 
 (() => {

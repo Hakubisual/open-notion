@@ -80,7 +80,7 @@
       if (!found) continue;
       const file = pageFile(slug);
       const up = "../".repeat(file.split("/").length - 1);
-      const blocks = found.blocks.map((b) => {
+      const blocks = globalThis.AiMarks.stripMarks(found.blocks).map((b) => {
         if (!b.meta) return b;
         const next = { ...b, meta: { ...b.meta } };
         for (const field of ["src", "url"]) {

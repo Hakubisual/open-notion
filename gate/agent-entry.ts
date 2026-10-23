@@ -897,7 +897,8 @@ const entry = {
       if (body.url) return withCookies(redirect(body.url), buyer.set);
       return withCookies(new Response(body.message ?? "구독 결제를 열 수 없어요.", { status: made.status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } }), buyer.set);
     }
-    if (path.startsWith("/p/")) return core.fetch(request, scoped(env, OWNER_WS), ctx);
+    // /kit/ pictures (visual kit static files) are served by the core like a public page asset: no session needed.
+    if (path.startsWith("/p/") || path.startsWith("/kit/")) return core.fetch(request, scoped(env, OWNER_WS), ctx);
     const shareRoute = SHARE_PATH.exec(path);
     if (shareRoute) {
       const ws = shareRoute[1] === "o" ? OWNER_WS : shareRoute[1];

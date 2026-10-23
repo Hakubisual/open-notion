@@ -414,14 +414,6 @@
       return row;
     }
 
-    if (block.type === "plugin") {
-      var ph = document.createElement("div");
-      ph.textContent = "불러오는 중…";
-      lazy("plugins").then(function (p) { p.mount(ph, block); }, function () { ph.textContent = "플러그인을 불러오지 못했어요."; });
-      body.appendChild(ph);
-      row.appendChild(body);
-      return row;
-    }
 
     if (/^(diagram|chart|visual|html|part)$/.test(block.type)) {
       var vh = document.createElement("div");
@@ -1603,7 +1595,6 @@
         if (meta.toggle) { delete meta.toggle; delete meta.open; } else { meta.toggle = true; meta.open = true; }
         block.meta = meta; render(); scheduleSave();
       }] : null,
-      block.type === "plugin" ? ["공개 화면에 이 모습 쓰기", function () { lazy("plugins").then(function (p) { return p.snapshot(block); }).then(function (s) { setSave(s ? "공개 화면 모습을 저장했어요" : "플러그인 화면을 읽지 못했어요", !s); }, function () { setSave("플러그인 화면을 읽지 못했어요", true); }); }] : null,
       /^(html|visual)$/.test(block.type) && window.AcardFolders ? ["부품으로 등록", function () { lazy("part-register").then(function (r) { r.open(block, index); }); }] : null,
       ["색", function () { lazy("block-style").then(function (s) { s.open(anchor, block); }); }],
       ["댓글", function () { if (pageContext) pageContext.comments(block.id); }],

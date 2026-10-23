@@ -47,6 +47,11 @@ test("anonymous private routes stay cookie gated and malformed public routes hav
   }
   expect(new Set(bodies).size).toBe(1);
   for (const method of ["GET", "POST", "DELETE"]) expect((await request("/api/page/shared/share", method)).status).toBe(401);
+  // The visual kit's static pictures under /kit/ reach signed-out readers of a shared page (served by ASSETS, like /fonts/).
+  const served: string[] = [];
+  h.env.ASSETS = { fetch: async (req: Request) => { served.push(new URL(req.url).pathname); return new Response("img", { status: 200 }); } };
+  expect((await request("/kit/headers/desk.webp")).status).toBe(200);
+  expect(served).toEqual(["/kit/headers/desk.webp"]);
 });
 
 test("valid public link renders exactly one page without private navigation or active remote content", async () => {

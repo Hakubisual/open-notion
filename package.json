@@ -2,7 +2,7 @@
   "name": "acard-local",
   "private": true,
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Acard Local: a self-hosted, local-first Notion-style workspace. Server + desktop app, AGPL-3.0.",
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261015.1",

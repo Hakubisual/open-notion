@@ -102,14 +102,14 @@ flowchart LR
 
 ### 내 컴퓨터에 설치
 
-[최신 릴리스](https://github.com/Hakubisual/open-notion-acard/releases/latest)에서 `Acard-Local-Setup-0.3.0.exe` 를 받아
+[최신 릴리스](https://github.com/Hakubisual/open-notion-acard/releases/latest)에서 `Acard-Local-Setup-0.3.1.exe` 를 받아
 실행하고, 첫 화면에서 **이 컴퓨터에서 사용** 을 고르세요. 그걸로 끝입니다. 앱이 뒤에서 작은 서버를 직접 띄우고, 노트는
 `%APPDATA%\Acard Local\data` 에 저장합니다. 계정도 비밀번호도 필요 없고, 어떤 데이터도 이 컴퓨터 밖으로 나가지 않습니다.
 
 > **Windows SmartScreen:** 설치 파일에 아직 코드 서명이 없어 *"Windows의 PC 보호"* 창이 뜰 수 있습니다.
 > **추가 정보 → 실행** 을 누르거나, 앱을 직접 빌드하세요.
 
-macOS·Linux 에서는 소스로 빌드합니다: `cd desktop && bun install && bun run dist`.
+macOS·Linux 에서는 소스로 빌드합니다: `bun install && cd desktop && bun install && bun run dist`.
 
 앱 없이 브라우저로만 쓰고 싶다면 서버를 바로 실행하세요.
 

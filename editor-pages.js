@@ -8,13 +8,20 @@ const EDITOR_SCHEMA = [
   "CREATE TABLE IF NOT EXISTS editor_templates (id TEXT PRIMARY KEY, name TEXT NOT NULL, created INTEGER NOT NULL, snapshot TEXT NOT NULL)",
 ];
 
-const DEFAULT_SETTINGS = { icon: null, cover: null, width: "default", font: "default", favorite: false };
+// ai: the page's AI mark default (assets/ai-marks.js: edit | lock | ref | smart); small: Notion's small text.
+const DEFAULT_SETTINGS = { icon: null, cover: null, width: "default", font: "default", favorite: false, ai: "edit", small: false };
+const EDITOR_COLUMNS = [
+  "ALTER TABLE editor_page_settings ADD COLUMN ai TEXT NOT NULL DEFAULT 'edit'",
+  "ALTER TABLE editor_page_settings ADD COLUMN small INTEGER NOT NULL DEFAULT 0",
+];
 
 // Remembered per store key, like ensureAgentSchema (#17).
 const editorSchemaReady = new Set();
 export async function ensureEditorSchema(db) {
   if (db.acardKey && editorSchemaReady.has(db.acardKey)) return;
   await db.batch(EDITOR_SCHEMA.map((sql) => db.prepare(sql)));
+  // Older stores get the columns too; an existing column is a duplicate-column error, ignored (Postgres: migration 037).
+  for (const sql of EDITOR_COLUMNS) await db.prepare(sql).run().catch(() => {});
   if (db.acardKey) editorSchemaReady.add(db.acardKey);
 }
 
@@ -26,7 +33,7 @@ export async function readEditorPageMeta(db, slug) {
 // Row shape: editor_page_settings columns plus trash_page / trash_deleted / trash_permanent.
 export function editorPageMeta(row) {
   const { page, trash_page, trash_deleted, trash_permanent, ...stored } = row || {};
-  const settings = page ? { ...stored, favorite: stored.favorite === 1 } : { ...DEFAULT_SETTINGS };
+  const settings = page ? { ...stored, favorite: stored.favorite === 1, ai: stored.ai || "edit", small: stored.small === 1 } : { ...DEFAULT_SETTINGS };
   return {
     settings,
     trashed: Boolean(trash_page),
@@ -102,6 +109,8 @@ function settingsPatch(body) {
   // existing font column, so no schema change; an older build that does not know it draws the page without numbers.
   if ("font" in body && !["default", "serif", "mono", "report"].includes(body.font)) throw new EditorInputError("Invalid font.");
   if ("favorite" in body && typeof body.favorite !== "boolean") throw new EditorInputError("Invalid favorite.");
+  if ("ai" in body && !["edit", "lock", "ref", "smart"].includes(body.ai)) throw new EditorInputError("Invalid ai.");
+  if ("small" in body && typeof body.small !== "boolean") throw new EditorInputError("Invalid small.");
   return body;
 }
 
@@ -113,7 +122,7 @@ function insertRow(db, table, row) {
 }
 
 function settingsRow(slug, settings) {
-  return { ...settings, page: slug, favorite: settings.favorite ? 1 : 0 };
+  return { ...settings, page: slug, favorite: settings.favorite ? 1 : 0, ...("small" in settings ? { small: settings.small ? 1 : 0 } : {}) };
 }
 
 function replaceContent(db, slug, snapshot) {
@@ -179,7 +188,7 @@ export async function handleEditorApi(request, db, url, helpers) {
       const keys = Object.keys(patch);
       const { statement } = versionInsert(db, slug, await snapshotPage(db, slug));
       await db.batch([statement, db.prepare(`INSERT INTO editor_page_settings (page, ${keys.join(", ")}) VALUES (?, ${keys.map(() => "?").join(", ")}) ON CONFLICT(page) DO UPDATE SET ${keys.map(key => key + " = excluded." + key).join(", ")}`)
-        .bind(slug, ...keys.map(key => key === "favorite" ? (patch[key] ? 1 : 0) : patch[key]))]);
+        .bind(slug, ...keys.map(key => key === "favorite" || key === "small" ? (patch[key] ? 1 : 0) : patch[key]))]);
       const { settings } = await readEditorPageMeta(db, slug);
       return json({ settings });
     }

@@ -205,15 +205,8 @@
     editor.lazy("part-gallery").then(function (g) { g.open(index); }, function () { window.alert("부품 갤러리를 불러오지 못했어요. 새로고침해 주세요."); });
     return true;
   }
-  // issue 144: Acard plugin blocks join as 플러그인, only for accounts with plugins on (the page sets data-plugins="on").
-  var plugins = null;
-  if (document.documentElement.getAttribute("data-plugins") === "on") editor.lazy("plugins").then(function (p) {
-    plugins = p;
-    return p.load().then(function () { if (last && !last.el.hidden) menu.apply(null, last.args); });
-  }, function () {});
   function applyPart(block, type) {
     if (type === GALLERY.type) return openGallery(block);
-    if (/^plugin:/.test(type)) { if (!plugins || !plugins.pick(block, type)) return false; remember(type); editor.render(); editor.scheduleSave(); return true; }
     if (!/^part:/.test(type) || !parts || !parts.pick(block, type.slice(5))) return false;
     remember(type);
     editor.render();

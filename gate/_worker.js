@@ -434,7 +434,9 @@ async function exportPage(db, url, env) {
   // acard-md: lossless Acard markdown (colors, icons, embed heights, toggle headings as meta comment lines) that
   // /api/import/md and MCP read back the same; md stays the Notion-style export without them.
   if (format === "acard-md") {
-    return new Response(acardMarkdown(title, found.blocks), {
+    // AI marks (acard-human-edit) are the editing person's metadata: left out unless the export is meant for re-import.
+    const blocks = url.searchParams.get("keep_ai") === "1" ? found.blocks : globalThis.AiMarks.stripMarks(found.blocks);
+    return new Response(acardMarkdown(title, blocks), {
       headers: { "content-type": "text/markdown; charset=utf-8", "content-disposition": exportFilename(slug, "md"), "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" },
     });
   }
@@ -676,26 +678,8 @@ function scopedId(databaseId, local) {
 }
 
 // db_ref 의 meta.html 은 서버가 렌더해 넣는 값이다. 클라이언트가 보낸 html 은 신뢰하지 않는다.
-// issue 144: a plugin block keeps only its plugin/block ids, a caption and a snapshot the plugin UI checker accepts
-// (no HTML, capped), so a stored snapshot can never put markup or script on a public page.
-const PLUGIN_SNAPSHOT_MAX = 32 * 1024;
-function cleanPluginMeta(meta) {
-  const out = {};
-  if (typeof meta.plugin === "string" && /^[a-z][a-z0-9-]{1,39}$/.test(meta.plugin)) out.plugin = meta.plugin;
-  if (typeof meta.block === "string" && /^[a-z][a-z0-9-]{0,39}$/.test(meta.block)) out.block = meta.block;
-  if (typeof meta.caption === "string" && meta.caption) out.caption = meta.caption.slice(0, 200);
-  const snap = meta.snapshot;
-  if (snap && typeof snap === "object" && !Array.isArray(snap)) {
-    const checked = checkTree(snap.tree ?? null);
-    const kept = checked.tree && checked.tree.children.length ? { name: String(snap.name ?? out.plugin ?? "").slice(0, 40), tree: checked.tree.children } : null;
-    if (kept && new TextEncoder().encode(JSON.stringify(kept)).length <= PLUGIN_SNAPSHOT_MAX) out.snapshot = kept;
-  }
-  return out;
-}
-
 function cleanMeta(type, meta) {
   if (!meta || typeof meta !== "object") return meta || null;
-  if (type === "plugin") return cleanPluginMeta(meta);
   if (type !== "db_ref") return meta;
   const out = Object.assign({}, meta);
   delete out.html;
@@ -2952,6 +2936,11 @@ export default {
       }
     }
 
+    // The visual kit's static pictures (/kit/: icon sprite, header and empty-state art, patterns, covers) are part of
+    // the build, never note data; shared pages show them to signed-out readers.
+    if (url.pathname.startsWith("/kit/") && (request.method === "GET" || request.method === "HEAD") && /^\/kit\/[a-z0-9/_-]+\.(?:svg|webp|json)$/.test(url.pathname)) {
+      return env.ASSETS.fetch(request);
+    }
     // Service-worker update requests can omit the gate cookie. This generated
     // script contains policy and asset hashes only, never note data.
     if (url.pathname === "/sw.js" && request.method === "GET") {

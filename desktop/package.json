@@ -1,7 +1,7 @@
 {
   "name": "acard-local-desktop",
   "productName": "Acard Local",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Acard Local: Notion-style notes on your own computer, or a client for your team's Acard server",
   "author": "Acard contributors",
@@ -32,8 +32,14 @@
     ],
     "asar": true,
     "extraResources": [
-      { "from": "stage/app", "to": "app" },
-      { "from": "stage/server", "to": "server" }
+      {
+        "from": "stage/app",
+        "to": "app"
+      },
+      {
+        "from": "stage/server",
+        "to": "server"
+      }
     ],
     "artifactName": "Acard-Local-${version}-${os}-${arch}.${ext}",
     "publish": null,
@@ -59,11 +65,7 @@
     "mac": {
       "target": [
         {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
+          "target": "dmg"
         }
       ],
       "category": "public.app-category.productivity",

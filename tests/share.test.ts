@@ -360,30 +360,6 @@ describe("sharing", () => {
     await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "invited" } });
   });
 
-  test("a plugin block reaches link visitors only as its checked static snapshot, under the same page CSP (issue 144)", async () => {
-    const before = (await asOwner("GET", "/api/page/root")).data.blocks;
-    const csp0 = (await call("GET", (await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } })).data.link.url)).headers.get("content-security-policy");
-    const plugin = { id: "pl1", type: "plugin", text: '{"n":3}', meta: { plugin: "qa-counter", block: "counter", html: "<script>alert(1)</script>", snapshot: { name: "<img src=x onerror=alert(1)>", tree: [{ t: "stat", label: "합계", value: "9" }, { t: "html", html: "<script>steal()</script>" }, { t: "text", text: "<script>x()</script>" }, { t: "button", label: "다시", action: "again" }] } } };
-    expect((await asOwner("PUT", "/api/page/root", { body: { blocks: [...before, plugin] } })).status).toBe(200);
-    const stored = (await asOwner("GET", "/api/page/root")).data.blocks.find((b: any) => b.id === "pl1");
-    expect(Object.keys(stored.meta).sort()).toEqual(["block", "plugin", "snapshot"]);
-    expect(JSON.stringify(stored.meta.snapshot)).not.toContain('"t":"html"');
-    const url = (await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } })).data.link.url as string;
-    const page = await call("GET", url);
-    expect(page.status).toBe(200);
-    expect(page.headers.get("content-security-policy")).toBe(csp0);
-    const fig = /<figure class="pl-block"[\s\S]*?<\/figure>/.exec(page.text)?.[0] ?? "";
-    expect(fig).toContain('data-plugin="qa-counter"');
-    expect(fig).toContain('<span class="pl-stat-v">9</span>');
-    expect(fig).toContain(" disabled");
-    expect(fig).not.toMatch(/<script|<iframe|<img/);
-    expect(fig).toContain("&lt;script&gt;x()&lt;/script&gt;");
-    expect(fig).not.toContain("steal()");
-    expect(page.text).not.toContain("/lazy/plugins.js");
-    expect((await asOwner("PUT", "/api/page/root", { body: { blocks: before } })).status).toBe(200);
-    await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "invited" } });
-  });
-
   test("an HTML block reaches link visitors only inside the sandbox, and only while the link allows it", async () => {
     const put = (slug: string, blocks: unknown[]) => asOwner("PUT", "/api/page/" + slug, { body: { blocks } });
     const before = { root: (await asOwner("GET", "/api/page/root")).data.blocks, other: (await asOwner("GET", "/api/page/other")).data.blocks };

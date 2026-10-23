@@ -90,7 +90,9 @@ describe("agents and components (#98)", () => {
     expect(lines[at + 3]).toBe(F);
     const tools = (await client.listTools()).tools;
     const list = tools.find((t) => t.name === "list_components")!;
-    for (const c of listComponents()) expect(list.description).toContain(c.id);
+    // Basic ids appear in full; every other family is folded to prefix-{a,b} so the one-line description stays short.
+    const named = (id: string) => list.description!.includes(id) || new RegExp(id.slice(0, id.indexOf("-") + 1) + "\\{[^}]*\\b" + id.slice(id.indexOf("-") + 1) + "\\b").test(list.description!);
+    for (const c of listComponents()) expect(named(c.id), c.id).toBe(true);
     expect(list.description).not.toContain("properties");
     expect(list.description!.split("\n")).toHaveLength(1);
     expect(tools.find((t) => t.name === "set_component_data")!.annotations?.readOnlyHint).toBe(false);

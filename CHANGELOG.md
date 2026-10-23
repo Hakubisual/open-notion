@@ -2,6 +2,25 @@
 
 All notable changes to this project. Dates are UTC.
 
+## 0.3.1 - 2026-10-24
+
+### Added
+
+- Page, block and text marks for agents: mark a part as locked (an agent never changes it) or as reference (an agent
+  reads it, never changes it). MCP and REST writes keep marked blocks as they were and say which ones they kept.
+- More components (diagrams, interactive controls, media) and a kit of cover, header and empty-state images.
+
+### Removed
+
+- The plugin UI renderer (`plugin-ui.js`) that 0.3.0 still carried. This edition has no plugins; a plugin block
+  saved by the hosted Acard app shows as an unknown block.
+
+### Docs
+
+- Building the desktop app from source installs the root dependencies first, and the macOS build makes one DMG for
+  the Mac it runs on.
+- `ACARD_LOCAL_API` is listed as on by default in the team server guide, as it is.
+
 ## 0.3.0 - 2026-10-24
 
 ### Added

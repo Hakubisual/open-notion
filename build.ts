@@ -281,7 +281,7 @@ await mkdir(DIST, { recursive: true });
 await cp(ASSETS, DIST, { recursive: true });
 // Editor first-screen scripts ship whitespace-minified (classic scripts, behaviour unchanged) to stay under the editor cap.
 // The block models load on the editor first screen, so they get full minify like editor.js.
-for (const name of ["editor-model.js", "columns-model.js"]) {
+for (const name of ["editor-model.js", "columns-model.js", "ai-marks.js"]) {
   const built = await Bun.build({ entrypoints: [join(ASSETS, name)], minify: true, format: "iife" });
   if (!built.success) throw new Error(name + " build failed:\n" + built.logs.map(String).join("\n"));
   await writeFile(join(DIST, name), await built.outputs[0].text());
@@ -527,8 +527,8 @@ const inlines: Record<string, string> = {
   "//__READER_FEATURE_CSS__": readerFeatures.css ? "'<link rel=\"stylesheet\" href=\"/features-reader.css\">'," : "",
   "//__READER_FEATURE_JS__": readerFeatures.js ? "'<script src=\"/features-reader.js\"></script>'," : "",
   "//__FEATURES__": (await Promise.all(featureFiles.map((name) => inline("features/" + name)))).join("\n;\n"),
-  "//__EQUATION_HTML__": stripModule(equationSource).trim() + "\n" + await inline("sandbox-policy.js") + "\n" + await inline("plugin-ui.js") + "\n" + await inline("visual-html.js") + "\n" + await inline("part-html.js") + "\n" + componentSource,
-  "//__BLOCK_HTML__": (await readFile(join(ROOT, "assets/editor-model.js"), "utf8")) + "\n" + (await readFile(join(ROOT, "assets/columns-model.js"), "utf8")) + "\n" + await inline("block-html.js"),
+  "//__EQUATION_HTML__": stripModule(equationSource).trim() + "\n" + await inline("sandbox-policy.js") + "\n" + await inline("visual-html.js") + "\n" + await inline("part-html.js") + "\n" + componentSource,
+  "//__BLOCK_HTML__": (await readFile(join(ROOT, "assets/editor-model.js"), "utf8")) + "\n" + (await readFile(join(ROOT, "assets/columns-model.js"), "utf8")) + "\n" + (await readFile(join(ROOT, "assets/ai-marks.js"), "utf8")) + "\n" + await inline("block-html.js"),
   "//__EDITOR_PAGES__": await inline("editor-pages.js"),
   "//__AGENT_API__": await inline("agent-api.js"),
   "//__DB_MODEL__": await inline("db-model.js"),

@@ -23,7 +23,7 @@ export function assembleWorkerSource(fixture = "") {
   for (const [marker, file] of Object.entries(parts)) {
     const code = file.endsWith(".ts") ? new Bun.Transpiler({ loader: "ts" }).transformSync(read(file)) : read(file);
     const components = ["component-registry.js", ...readdirSync(join(ROOT, "components")).filter((name) => name.endsWith(".js") && name !== "index.js").sort().map((name) => "components/" + name)];
-    const extra = marker === "//__EQUATION_HTML__" ? "\n" + stripModule(read("sandbox-policy.js")) + "\n" + stripModule(read("plugin-ui.js")) + "\n" + stripModule(read("visual-html.js")) + "\n" + stripModule(read("part-html.js")) + "\n" + components.map((name) => stripModule(read(name))).join("\n") : "";
+    const extra = marker === "//__EQUATION_HTML__" ? "\n" + stripModule(read("sandbox-policy.js")) + "\n" + stripModule(read("visual-html.js")) + "\n" + stripModule(read("part-html.js")) + "\n" + components.map((name) => stripModule(read(name))).join("\n") : "";
     source = source.replace(marker, () => stripModule(code) + extra);
   }
   const importCore = IMPORT_CORE_FILES.filter((name) => existsSync(join(ROOT, name))).map((name) => stripModule(new Bun.Transpiler({ loader: "ts" }).transformSync(read(name)))).join("\n");
@@ -39,7 +39,7 @@ export function assembleWorkerSource(fixture = "") {
     const tag = ext === "js" ? '<script src="/features-reader.js"></script>' : '<link rel="stylesheet" href="/features-reader.css">';
     source = source.replace("//__READER_FEATURE_" + ext.toUpperCase() + "__", () => present ? JSON.stringify(tag) + "," : "");
   }
-  source = read("assets/editor-model.js") + "\n" + read("assets/columns-model.js") + "\n" + source;
+  source = read("assets/editor-model.js") + "\n" + read("assets/columns-model.js") + "\n" + read("assets/ai-marks.js") + "\n" + source;
   source = source.replace("export default {", "const __worker = {").replace(/^export /gm, "");
   return source + "\nreturn Object.assign(__worker, { acardHost });";
 }

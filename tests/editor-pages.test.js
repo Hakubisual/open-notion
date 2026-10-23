@@ -69,7 +69,7 @@ describe("editor page lifecycle", () => {
 
   test("settings default, partial update, and pre-mutation snapshot preserve extension metadata", async () => {
     sqlite.exec("ALTER TABLE editor_page_settings ADD COLUMN extra TEXT");
-    expect((await api("page/alpha/settings")).body.settings).toEqual({ icon: null, cover: null, width: "default", font: "default", favorite: false });
+    expect((await api("page/alpha/settings")).body.settings).toEqual({ icon: null, cover: null, width: "default", font: "default", favorite: false, ai: "edit", small: false });
     const result = await api("page/alpha/settings", "PUT", { icon: "star", cover: "https://images.test/cover.png", width: "full", font: "serif", favorite: true });
     expect(result.status).toBe(200);
     sqlite.query("UPDATE editor_page_settings SET extra = 'settings-extension' WHERE page = 'alpha'").run();

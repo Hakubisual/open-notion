@@ -162,7 +162,32 @@ function cleanBlockMeta(raw: unknown): Record<string, unknown> | null {
   if (typeof src.open === "boolean") out.open = src.open;
   const actions = mdButtonActions(src.actions);
   if (actions) out.actions = actions;
+  // AI marks (acard-human-edit): the block's own mark and its marked text pieces.
+  if (AI_MARK.test(String(src.ai))) out.ai = src.ai;
+  const spans = aiTextSpans(src.aiSpans);
+  if (spans.length) out.aiSpans = spans;
   return Object.keys(out).length ? out : null;
+}
+
+// AI marks (assets/ai-marks.js) in the meta line: the block's own mark and its marked pieces as [mark, markdown text].
+const AI_MARK = /^(edit|lock|ref)$/;
+function aiTextSpans(list: unknown): [string, string][] {
+  if (!Array.isArray(list)) return [];
+  return list.filter((s) => Array.isArray(s) && (s[0] === "lock" || s[0] === "ref") && typeof s[1] === "string" && s[1] && s[1].length <= 4000)
+    .slice(0, 50).map((s) => [s[0], s[1]]);
+}
+function aiSpansOf(block: Block): [string, string][] {
+  const runs = block.meta?.richText;
+  if (!Array.isArray(runs) || !runs.some((run: any) => run && (run.ai === "lock" || run.ai === "ref"))) return aiTextSpans(block.meta?.aiSpans);
+  const out: [string, string][] = [];
+  runs.forEach((run: any, i: number) => {
+    const m = run && (run.ai === "lock" || run.ai === "ref") ? run.ai : null;
+    if (!m || !run.text) return;
+    const piece = block.type === "code" ? String(run.text) : richRun(run);
+    if (out.length && runs[i - 1]?.ai === m) out[out.length - 1][1] += piece;
+    else out.push([m, piece]);
+  });
+  return out;
 }
 
 // Button actions (notion-parity C3) in a meta comment: only the five known shapes, at most ten, values a flat object; a
@@ -206,6 +231,9 @@ function blockMetaComment(block: Block): Record<string, unknown> | null {
   if (block.type === "button") { const actions = mdButtonActions(meta.actions); if (actions) out.actions = actions; }
   if (block.type === "embed" && Number(meta.height) > 0) out.height = Math.min(2000, Math.max(120, Math.round(Number(meta.height))));
   if (/^heading[1-4]$/.test(block.type) && meta.toggle === true) { out.toggle = true; out.open = meta.open === true; }
+  if (AI_MARK.test(String(meta.ai))) out.ai = meta.ai;
+  const spans = aiSpansOf(block);
+  if (spans.length) out.aiSpans = spans;
   return Object.keys(out).length ? out : null;
 }
 
@@ -529,15 +557,17 @@ function tableCell(value: unknown): string {
 function richMarkdown(block: Block): string {
   const runs = block.meta?.richText;
   if (!Array.isArray(runs) || block.type === "code") return block.text;
-  return runs.map((run: any) => {
-    let text = String(run?.text ?? "");
-    if (!text.trim()) return text;
-    if (run.code) text = "`" + text + "`";
-    if (run.bold) text = "**" + text + "**";
-    const href = run.mention?.type === "page" ? "/" + run.mention.slug + "/" : run.href;
-    if (typeof href === "string" && /^(https?:\/\/|\/)/.test(href)) text = "[" + text + "](" + href + ")";
-    return text;
-  }).join("");
+  return runs.map(richRun).join("");
+}
+
+function richRun(run: any): string {
+  let text = String(run?.text ?? "");
+  if (!text.trim()) return text;
+  if (run.code) text = "`" + text + "`";
+  if (run.bold) text = "**" + text + "**";
+  const href = run.mention?.type === "page" ? "/" + run.mention.slug + "/" : run.href;
+  if (typeof href === "string" && /^(https?:\/\/|\/)/.test(href)) text = "[" + text + "](" + href + ")";
+  return text;
 }
 
 // Two-space indentation preserves child hierarchy without replacing existing flat callers.

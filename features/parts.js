@@ -127,6 +127,7 @@
       index = blocks.findIndex((b) => b.id === input.block_id);
       if (index < 0) throw new AgentError("없는 블록이에요.", 404);
       if (blocks[index].type !== "part") throw new AgentError("부품 블록이 아니에요. set_part_data 는 부품 블록의 데이터만 바꿔요.");
+      if (globalThis.AiMarks.effective(blocks[index], found.settings?.ai) !== "edit") markRefusal(found, [blocks[index].id]);
       partId = String(blocks[index].meta?.part || "");
     } else {
       partId = String(input.part || "");
@@ -157,7 +158,7 @@
 
   // One versioned agent write: the person-edit guard (#36), the version claim in SQL, history and attribution.
   async function writeGuarded(db, principal, helpers, found, slug, blocks, expected, action, extra) {
-    const guard = humanGuard(found.blocks, blocks, principal.name);
+    const guard = humanGuard(found.blocks, blocks, principal.name, found.settings?.ai);
     const version = Math.max(Date.now(), found.page.updated + 1);
     const claimed = await db.prepare("UPDATE pages SET updated = ? WHERE slug = ? AND updated = ?").bind(version, slug, expected).run();
     if (Number(claimed?.meta?.changes ?? 0) === 0) throw new AgentError("그사이 페이지가 바뀌었어요. 다시 읽고 합친 뒤 쓰세요.", 409);
@@ -182,6 +183,7 @@
     const blocks = found.blocks.slice();
     const index = blocks.findIndex((b) => b.id === input.block_id);
     if (index < 0) throw new AgentError("없는 블록이에요.", 404);
+    if (globalThis.AiMarks.effective(blocks[index], found.settings?.ai) !== "edit") markRefusal(found, [blocks[index].id]);
     let text = String(blocks[index].text ?? "");
     for (const [n, edit] of input.edits.entries()) {
       if (!edit || typeof edit.find !== "string" || !edit.find || typeof edit.replace !== "string") throw new AgentError("edits[" + n + "] 는 find 와 replace 문자열이 필요해요.");

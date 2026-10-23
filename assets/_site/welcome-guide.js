@@ -32,7 +32,22 @@
     if (g && g.active && !g.done) return { k: L("js.guide.count").replace("{n}", String(g.count || 0)), t: L("js.guide.resumeTitle"), b: L("js.guide.resumeBody"), go: L("js.guide.resume") };
     return null;
   }
-  window.AcardGuide = { chooseStep, landingCopy };
+  // Phone placement (#150): w x h coach next to target rect r inside viewport vp, below it (pointer up) or above it
+  // (pointer down), off the fixed rects in avoid (피드백, agent button, tab bar). No usable target: a sheet above them.
+  function spot(r, w, h, vp, avoid) {
+    const m = 8, gap = 12;
+    const floor = Math.min(vp.h, ...avoid.filter((a) => a.top > vp.h / 2).map((a) => a.top));
+    if (!r || r.bottom <= 0 || r.top >= vp.h || (!r.width && !r.height)) return { side: "sheet", left: m, top: Math.max(m, floor - m - h), floor };
+    const left = Math.max(m, Math.min(r.left, vp.w - w - m));
+    const hit = (top) => avoid.some((a) => a.left < left + w && a.right > left && a.top < top + h && a.bottom > top);
+    const below = r.bottom + gap, above = r.top - gap - h;
+    const fitsBelow = below + h <= vp.h - m, fitsAbove = above >= m;
+    const side = fitsBelow && !hit(below) ? "below" : fitsAbove && !hit(above) ? "above" : fitsBelow ? "below" : fitsAbove ? "above" : "sheet";
+    if (side === "sheet") return { side, left: m, top: Math.max(m, floor - m - h), floor };
+    const px = Math.max(14, Math.min(r.left + Math.min(16, r.width / 2) - left - 6, w - 26));
+    return { side, left, top: side === "below" ? below : above, px };
+  }
+  window.AcardGuide = { chooseStep, landingCopy, spot };
 
   const css = `.wg-coach{position:fixed;z-index:58;width:min(340px,calc(100vw - 16px));padding:14px 16px 10px;border:1px solid var(--color-border,var(--line));border-radius:var(--radius-md);background:var(--color-raised,var(--bg));color:var(--color-text,var(--fg));box-shadow:var(--shadow-lg);font:var(--fs-14,14px)/1.5 var(--font-body,system-ui,sans-serif)}
 .wg-coach[hidden]{display:none}.wg-coach .wg-k{margin:0 0 4px;color:var(--color-accent,var(--accent));font-size:var(--fs-12,12px);font-weight:700}
@@ -45,7 +60,9 @@
 .wg-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .wg-coach.wg-site{--color-raised:var(--bg);--color-text:var(--ink);--color-text-dim:var(--muted);--color-border:var(--line);--color-accent:var(--accent);--radius-md:14px;--radius-xs:6px;--shadow-lg:0 12px 32px rgba(30,28,50,.18)}
 .wg-coach.wg-site .wg-go{display:inline-flex;align-items:center;white-space:nowrap;padding:0 12px;border-radius:8px;background:var(--accent);color:#fff}
-@media (max-width:899px){.wg-coach.wg-site{bottom:16px}.wg-coach{left:8px!important;right:8px;width:auto;bottom:calc(76px + env(safe-area-inset-bottom));top:auto!important}.wg-coach button,.wg-coach a{min-height:44px}}
+@media (max-width:899px){.wg-coach.wg-sheet{width:calc(100vw - 16px)}.wg-coach button,.wg-coach a{min-height:44px}}
+.wg-coach.wg-below::before,.wg-coach.wg-above::before{content:"";position:absolute;left:var(--wg-px,16px);width:11px;height:11px;background:var(--color-raised,var(--bg));border:solid var(--color-border,var(--line));transform:rotate(45deg)}
+.wg-coach.wg-below::before{top:-7px;border-width:1px 0 0 1px}.wg-coach.wg-above::before{bottom:-7px;border-width:0 1px 1px 0}
 @media (prefers-reduced-motion:no-preference){.wg-coach{transition:opacity .15s ease}}`;
 
   let box, live, current, ring, raf = 0, view, siteMode = false;
@@ -61,12 +78,26 @@
       e.preventDefault(); skip();
     });
     addEventListener("resize", place); addEventListener("scroll", place, true);
+    if (window.visualViewport) visualViewport.addEventListener("resize", place);
+  }
+  function placeNarrow() {
+    const vv = window.visualViewport;
+    const vp = { w: innerWidth, h: vv ? Math.min(innerHeight, vv.offsetTop + vv.height) : innerHeight };
+    const avoid = [...document.querySelectorAll(".fbt, .agent-fab, .thumbbar")].filter(visible).map((el) => el.getBoundingClientRect());
+    const t = current ? pick(current.target) : null;
+    box.classList.remove("wg-sheet", "wg-below", "wg-above");
+    const s = spot(t && t.getBoundingClientRect(), box.offsetWidth, box.offsetHeight, vp, avoid);
+    if (s.side === "sheet") { box.classList.add("wg-sheet"); box.style.top = Math.max(8, s.floor - 8 - box.offsetHeight) + "px"; }
+    else { box.classList.add("wg-" + s.side); box.style.setProperty("--wg-px", s.px + "px"); box.style.top = s.top + "px"; }
+    box.style.left = s.left + "px";
   }
   function place() {
     if (raf || !box || box.hidden) return;
     raf = requestAnimationFrame(() => {
       raf = 0;
-      if (narrow() || !current) return;
+      if (narrow()) return placeNarrow();
+      if (!current) return;
+      box.classList.remove("wg-sheet", "wg-below", "wg-above");
       const t = pick(current.target);
       const r = t ? t.getBoundingClientRect() : { left: innerWidth / 2 - 170, bottom: 120, top: 120 };
       const h = box.offsetHeight;
@@ -91,6 +122,7 @@
     if (recent) { const a = box.querySelector("[data-guide-open]"); a.href = recent; a.textContent = searchElsewhere ? "홈으로" : "페이지 열기"; }
     box.querySelector("[data-guide-skip]").addEventListener("click", skip);
     if (t) { ring = t; t.classList.add("wg-ring"); }
+    if (t && narrow() && !visible($(".wg-card"))) { const r = t.getBoundingClientRect(); if (r.bottom <= 0 || r.top >= innerHeight) t.scrollIntoView({ block: "center" }); }
     if (visible($(".wg-card"))) { box.hidden = true; live.textContent = "시작 가이드 " + view.count + " / 4 완료"; return; }
     box.hidden = false;
     live.textContent = "시작 가이드 " + view.count + " / 4 완료";
@@ -120,7 +152,9 @@
     box.querySelector("[data-guide-feedback]").addEventListener("click", () => { const f = $(".fbt"); hide(); if (f) f.click(); });
     box.querySelector("[data-guide-close]").addEventListener("click", hide);
     box.hidden = false; if (ring) ring.classList.remove("wg-ring");
-    current = null; box.style.top = "64px"; box.style.left = Math.max(8, innerWidth - box.offsetWidth - 16) + "px";
+    current = null;
+    if (narrow()) return placeNarrow(), post({ action: "celebrated" });
+    box.style.top = "64px"; box.style.left = Math.max(8, innerWidth - box.offsetWidth - 16) + "px";
     post({ action: "celebrated" });
   }
   function watch(sel, cb) {

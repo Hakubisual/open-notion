@@ -44,7 +44,9 @@ describe.each(KIT.map((c) => [c.id, c] as const))("%s", (id, c) => {
 
   test("text from data never becomes markup", () => {
     const html = render(id, JSON.stringify(poison(c.sample)));
-    expect(html).not.toMatch(/<script|<img/i);
+    expect(html).not.toMatch(/<script/i);
+    const imgs: string[] = [...html.matchAll(/<img\b[^>]*>/gi)].map((m) => m[0]);
+    expect(imgs.filter((tag) => !/\ssrc="\/(kit|media)\/[^"<>]*"/.test(tag))).toEqual([]);
     expect(html).not.toMatch(/<[a-z]+(\s+[a-z:-]+(="[^"]*")?)*\s+on[a-z]+=/i);
   });
 

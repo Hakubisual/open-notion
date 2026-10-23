@@ -20,6 +20,7 @@
     if (typeof input.block_id === "string" && input.block_id) {
       index = blocks.findIndex((b) => b.id === input.block_id);
       if (index < 0) throw new AgentError("없는 블록이에요.", 404);
+      if (globalThis.AiMarks.effective(blocks[index], found.settings?.ai) !== "edit") markRefusal(found, [blocks[index].id]);
       if (blocks[index].type !== "component") throw new AgentError("컴포넌트 블록이 아니에요. set_component_data 는 컴포넌트 블록의 데이터만 바꿔요.");
       const own = String(blocks[index].meta?.ui || "");
       if (ui && ui !== own) throw new AgentError("이 블록은 " + own + " 컴포넌트예요. 다른 컴포넌트는 ui 와 after_block_id 로 새 블록을 붙인 뒤 delete_block 으로 옛 블록을 지워 주세요.");
@@ -42,7 +43,7 @@
       blocks.splice(after + 1, 0, block);
       affected = block.id;
     }
-    const guard = humanGuard(found.blocks, blocks, principal.name);
+    const guard = humanGuard(found.blocks, blocks, principal.name, found.settings?.ai);
     const version = Math.max(Date.now(), found.page.updated + 1);
     const claimed = await db.prepare("UPDATE pages SET updated = ? WHERE slug = ? AND updated = ?").bind(version, slug, input.expected_version).run();
     if (Number(claimed?.meta?.changes ?? 0) === 0) throw new AgentError("그사이 페이지가 바뀌었어요. 다시 읽고 합친 뒤 쓰세요.", 409);
@@ -56,7 +57,7 @@
 
   registerFeature({
     services: { mcpTools: [
-      { name: "list_components", description: "Components for good-looking pages without HTML: " + componentNames() + ". Each is a ```acard-ui {\"ui\":\"<id>\"} fence holding JSON data only. Call with no id for every component's schema, defaults and example fence, or with id for one. Missing or malformed fields fall back to defaults when shown.", scope: "read", operation: "listComponents",
+      { name: "list_components", description: "Components for good-looking pages without HTML: " + componentNames() + ". Each is a ```acard-ui {\"ui\":\"<id>\"} fence with JSON data only. No id: every schema, defaults and example fence; id: one. Missing fields fall back to defaults.", scope: "read", operation: "listComponents",
         inputSchema: (z) => ({ id: z.string().optional() }) },
       { name: "set_component_data", description: "Set the JSON data of a component block (block_id) or add a new component block (ui = component id, optional after_block_id). The data is checked against the component's schema from list_components; a mismatch fails and names the field. A component a person edited keeps the person's data and yours becomes an update suggestion. Requires version from read_blocks as expected_version.", scope: "write", operation: "setComponentData",
         inputSchema: (z) => ({ page: z.string(), block_id: z.string().optional(), ui: z.string().optional(), after_block_id: z.string().optional(), data: z.record(z.string(), z.unknown()), expected_version: z.number().int().nonnegative() }) },

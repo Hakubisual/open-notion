@@ -216,7 +216,7 @@ registerComponent({
   schema: { type: "object", properties: { ...chstProps, groups: { type: "array", items: { type: "object", properties: { label: { type: "string" }, values: { type: "array", items: { type: "number" } }, min: { type: "number" }, q1: { type: "number" }, median: { type: "number" }, q3: { type: "number" }, max: { type: "number" } } } } }, required: ["groups"] },
   presets: chstPresets, defaults: { groups: [] },
   sample: { title: "팀별 응답 시간", subtitle: "중앙값, 사분위 범위와 이상값을 비교합니다.", xTitle: "지원 팀", yTitle: "응답 시간", unit: "분", groups: [{ label: "기획팀", values: [12, 14, 15, 18, 20, 21, 23, 25, 48] }, { label: "디자인팀", values: [10, 14, 18, 19, 22, 24, 28, 30, 34] }, { label: "개발팀", values: [8, 12, 14, 16, 17, 19, 21, 24, 42] }] },
-  slash: { label: "상자 그림", hint: "중앙값과 분포 비교", ico: "⊞", aliases: "상자그림 상자 수염 사분위 boxplot box whisker quartile outlier" }, css: "",
+  slash: { label: "상자 그림", hint: "중앙값과 분포 비교", ico: "⊞", aliases: "박스플롯 상자그림 상자 수염 사분위 boxplot box whisker quartile outlier" }, css: "",
   render(d, h) {
     const wide = chstBoxBody(d, h, 640, 320), narrow = chstBoxBody(d, h, 360, 300);
     const caption = h.str(d.caption, "", 160);

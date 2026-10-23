@@ -56,7 +56,7 @@ The server is configured with environment variables:
 | `ACARD_PASSWORD` | for LAN | `a long passphrase` | Turns on the sign-in page. **The server refuses to listen on a non-loopback address without it.** |
 | `ACARD_ALLOWED_HOSTS` | for LAN | `192.168.0.10,notes.lan` | Comma-separated host names clients use in the address bar. Requests with any other `Host` header are rejected (DNS-rebinding protection). `*` accepts any name. |
 | `ACARD_AGENT_TOKEN` | for agents | `a random string of 24+ characters` | Lets AI agents and scripts reach `/mcp` and `/api/v1` with `Authorization: Bearer <token>`. Without it, agents cannot reach them on a password-protected server. The server password never works for agents. See [Connect agents](#connect-agents). |
-| `ACARD_LOCAL_API` | no | `0` | `0` turns off the token-free agent access of a server started without a password (this machine only). |
+| `ACARD_LOCAL_API` | no | on | `0` turns off the token-free agent access of a server started without a password (this machine only). |
 | `ACARD_LANG` | no | `en` | Interface language: `en`, `ko` or `zh`. The examples below use English. Unset shows the original Korean interface. |
 
 The `ACARD_` prefix comes from the upstream project and is kept so both share one code base.

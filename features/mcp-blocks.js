@@ -14,8 +14,12 @@
 
   function blockResult(found, helpers) {
     return { page: found.slug, version: found.page.updated, updated: found.page.updated,
-      blocks: found.blocks.map(block => ({ id: block.id, type: block.type, text: block.text,
-        markdown: helpers.blocksToMarkdown([block]) })) };
+      blocks: found.blocks.map(block => {
+        // AI marks: the agent sees which blocks it may only read (lock: keep as is; ref: source material, keep as is).
+        const ai = globalThis.AiMarks.effective(block, found.settings?.ai);
+        return { id: block.id, type: block.type, text: block.text, markdown: helpers.blocksToMarkdown([block]),
+          ...(ai !== "edit" ? { ai } : globalThis.AiMarks.spans(block).length ? { ai: "edit", locked_text: globalThis.AiMarks.keptTexts(block) } : {}) };
+      }) };
   }
 
   function parsedBlocks(helpers, markdown) {
@@ -40,6 +44,8 @@
     if (!(action === "insert" && anchor === null) && (typeof anchor !== "string" || !anchor)) throw new AgentError("블록 ID가 필요해요.");
     const index = anchor === null ? -1 : blocks.findIndex(block => block.id === anchor);
     if (anchor !== null && index < 0) throw new AgentError("없는 블록이에요.", 404);
+    if (action === "delete") markRefusal(found, [anchor]);
+    else if (action === "update" && globalThis.AiMarks.effective(blocks[index], found.settings?.ai) !== "edit") markRefusal(found, [anchor]);
     let affected, imageWarnings = [];
     if (action === "delete") {
       affected = [blocks[index].id];
@@ -60,7 +66,7 @@
       affected = added.map(block => block.id);
     }
     // #36: an update or delete aimed at a paragraph a person edited becomes a suggestion under it instead.
-    const guard = humanGuard(found.blocks, blocks, principal.name);
+    const guard = humanGuard(found.blocks, blocks, principal.name, found.settings?.ai);
     blocks.splice(0, blocks.length, ...guard.blocks);
     // Compare in SQL, not only against the earlier read. Even same-millisecond
     // writes advance the stamp so only one caller can claim a read version.

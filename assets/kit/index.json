@@ -1,0 +1,380 @@
+[
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "chart",
+    "alt": "막대그래프",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "doc",
+    "alt": "문서",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "calendar",
+    "alt": "달력",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "check",
+    "alt": "완료 표시",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "idea",
+    "alt": "아이디어 전구",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "rocket",
+    "alt": "로켓",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "book",
+    "alt": "펼친 책",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "palette",
+    "alt": "팔레트",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "code",
+    "alt": "코드",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "cap",
+    "alt": "학사모",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "briefcase",
+    "alt": "서류 가방",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "target",
+    "alt": "목표",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "users",
+    "alt": "사용자 그룹",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "clock",
+    "alt": "시계",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "star",
+    "alt": "별",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "flag",
+    "alt": "깃발",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "search",
+    "alt": "검색",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "folder",
+    "alt": "폴더",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "link",
+    "alt": "링크",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "chat",
+    "alt": "대화",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "heart",
+    "alt": "하트",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "bolt",
+    "alt": "번개",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "map",
+    "alt": "지도",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "icons.svg",
+    "kind": "icon",
+    "name": "gift",
+    "alt": "선물",
+    "width": 24,
+    "height": 24,
+    "bytes": 6205
+  },
+  {
+    "path": "headers/desk.webp",
+    "kind": "header",
+    "name": "desk",
+    "alt": "노트북과 화분이 놓인 파스텔 책상",
+    "width": 640,
+    "height": 561,
+    "bytes": 44856
+  },
+  {
+    "path": "headers/books.webp",
+    "kind": "header",
+    "name": "books",
+    "alt": "연필과 파스텔 색상의 책 더미",
+    "width": 640,
+    "height": 521,
+    "bytes": 37194
+  },
+  {
+    "path": "headers/design.webp",
+    "kind": "header",
+    "name": "design",
+    "alt": "붓과 연필, 파스텔 색상 견본",
+    "width": 640,
+    "height": 620,
+    "bytes": 36036
+  },
+  {
+    "path": "headers/growth.webp",
+    "kind": "header",
+    "name": "growth",
+    "alt": "위로 향하는 화살표와 성장 막대그래프",
+    "width": 640,
+    "height": 596,
+    "bytes": 37822
+  },
+  {
+    "path": "empty/folder.webp",
+    "kind": "empty",
+    "name": "folder",
+    "alt": "문서를 기다리는 연보라색 폴더",
+    "width": 640,
+    "height": 555,
+    "bytes": 27654
+  },
+  {
+    "path": "empty/search.webp",
+    "kind": "empty",
+    "name": "search",
+    "alt": "문서 위의 파란색 돋보기",
+    "width": 640,
+    "height": 622,
+    "bytes": 32156
+  },
+  {
+    "path": "empty/sleep.webp",
+    "kind": "empty",
+    "name": "sleep",
+    "alt": "잠든 종이비행기",
+    "width": 640,
+    "height": 568,
+    "bytes": 38946
+  },
+  {
+    "path": "empty/inbox.webp",
+    "kind": "empty",
+    "name": "inbox",
+    "alt": "비어 있는 파란색 수신함",
+    "width": 640,
+    "height": 591,
+    "bytes": 25900
+  },
+  {
+    "path": "patterns/dots.svg",
+    "kind": "pattern",
+    "name": "dots",
+    "alt": "작은 점 반복 무늬",
+    "width": 24,
+    "height": 24,
+    "bytes": 157
+  },
+  {
+    "path": "patterns/waves.svg",
+    "kind": "pattern",
+    "name": "waves",
+    "alt": "부드러운 물결 반복 무늬",
+    "width": 48,
+    "height": 24,
+    "bytes": 196
+  },
+  {
+    "path": "patterns/plus.svg",
+    "kind": "pattern",
+    "name": "plus",
+    "alt": "더하기 기호 반복 무늬",
+    "width": 32,
+    "height": 32,
+    "bytes": 205
+  },
+  {
+    "path": "patterns/diagonal.svg",
+    "kind": "pattern",
+    "name": "diagonal",
+    "alt": "대각선 반복 무늬",
+    "width": 24,
+    "height": 24,
+    "bytes": 199
+  },
+  {
+    "path": "covers/study-desk.webp",
+    "kind": "cover",
+    "name": "study-desk",
+    "alt": "파스텔 노트북과 조명이 놓인 공부 책상",
+    "width": 1600,
+    "height": 400,
+    "bytes": 18538
+  },
+  {
+    "path": "covers/research-lab.webp",
+    "kind": "cover",
+    "name": "research-lab",
+    "alt": "현미경과 실험 도구가 놓인 파스텔 연구실",
+    "width": 1600,
+    "height": 400,
+    "bytes": 19990
+  },
+  {
+    "path": "covers/design-studio.webp",
+    "kind": "cover",
+    "name": "design-studio",
+    "alt": "색상 견본과 디자인 도구가 놓인 작업실",
+    "width": 1600,
+    "height": 400,
+    "bytes": 14058
+  },
+  {
+    "path": "covers/office-report.webp",
+    "kind": "cover",
+    "name": "office-report",
+    "alt": "보고서와 차트가 놓인 파스텔 사무 공간",
+    "width": 1600,
+    "height": 400,
+    "bytes": 27612
+  },
+  {
+    "path": "covers/team-project.webp",
+    "kind": "cover",
+    "name": "team-project",
+    "alt": "프로젝트 보드와 협업 도구가 있는 팀 작업 공간",
+    "width": 1600,
+    "height": 400,
+    "bytes": 17596
+  },
+  {
+    "path": "covers/classroom.webp",
+    "kind": "cover",
+    "name": "classroom",
+    "alt": "칠판과 책상이 있는 파스텔 교실",
+    "width": 1600,
+    "height": 400,
+    "bytes": 15214
+  }
+]

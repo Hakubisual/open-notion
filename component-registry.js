@@ -103,9 +103,17 @@ export function listComponents(family) {
   return family ? all.filter((c) => c.family === family) : all;
 }
 
-// The short line agents see in the MCP tool description: names only.
+// The short line agents see in the MCP tool description: basic names in full, each other family folded to
+// prefix-{a,b,c} so the line stays short as families grow.
 export function componentNames() {
-  return listComponents().map((c) => c.id).join(", ");
+  const basic = listComponents("basic").map((c) => c.id);
+  const grouped = UI_FAMILIES.filter((f) => f !== "basic").map((f) => {
+    const ids = listComponents(f).map((c) => c.id);
+    if (!ids.length) return "";
+    const prefix = ids[0].slice(0, ids[0].indexOf("-") + 1);
+    return ids.every((id) => id.startsWith(prefix)) ? prefix + "{" + ids.map((id) => id.slice(prefix.length)).join(",") + "}" : ids.join(", ");
+  }).filter(Boolean);
+  return basic.concat(grouped).join(", ");
 }
 
 // Catalog entries for agents (list_components / GET /api/v1/components): schema, defaults and a ready-to-paste example.

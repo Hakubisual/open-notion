@@ -54,10 +54,12 @@ Requirements: [Bun](https://bun.sh) 1.3+ and, for macOS, Xcode command line tool
 
 ```sh
 git clone https://github.com/Hakubisual/open-notion-acard.git
-cd open-notion-acard/desktop
+cd open-notion-acard
+bun install          # the app the desktop build packs
+cd desktop
 bun install
 bun run dist        # Windows: out/Acard-Local-Setup-<version>.exe
-                    # macOS:   out/Acard-Local-<version>-<arch>.dmg (run on a Mac)
+                    # macOS:   out/Acard-Local-<version>-<arch>.dmg (run on a Mac; built for that Mac's chip)
                     # Linux:   out/Acard-Local-<version>.AppImage (run on Linux)
 ```
 

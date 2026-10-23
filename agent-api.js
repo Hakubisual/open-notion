@@ -380,7 +380,7 @@ export const agentOps = {
     }
     const imageWarnings = await ingest(db, helpers, slug, written);
     // #36: paragraphs a person edited stay as they are; a different text becomes a suggestion under them.
-    const guard = humanGuard(found.blocks, written, principal.name);
+    const guard = humanGuard(found.blocks, written, principal.name, found.settings?.ai, true);
     const blocks = guard.blocks;
     const buttonsDropped = helpers.guardAgentButtons ? await helpers.guardAgentButtons(db, principal, found.blocks, blocks) : 0;
     const title = String(input.title ?? meta.title ?? found.page.title).trim().slice(0, 200) || found.page.title;

@@ -62,6 +62,29 @@ test("on the signed-in landing it points new members and unfinished guides at �
   expect(landingCopy({ enabled: true, active: true, done: true, count: 4 }, false)).toBeNull();
 });
 
+test("on a phone the coach sits under its target with a pointer, goes above when there is no room, and never covers the target or the 피드백 pill", () => {
+  const { spot } = load("/", {}).win.AcardGuide;
+  const rect = (left: number, top: number, width: number, height: number) => ({ left, top, width, height, right: left + width, bottom: top + height });
+  const fbt = rect(274, 537, 100, 32);
+  const overlaps = (a: any, b: any) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  const line = rect(26, 300, 338, 40);
+  const below = spot(line, 340, 158, { w: 390, h: 844 }, [rect(274, 796, 100, 32)]);
+  expect(below).toMatchObject({ side: "below", top: 352 });
+  expect(below.px).toBeGreaterThan(0);
+  for (const [target, vh] of [[rect(26, 351, 338, 40), 585], [rect(26, 420, 338, 40), 585]] as const) {
+    const s = spot(target, 340, 158, { w: 390, h: vh }, [fbt]);
+    expect(s.side).toBe("above");
+    const box = rect(s.left, s.top, 340, 158);
+    expect(overlaps(box, target)).toBe(false);
+    expect(overlaps(box, fbt)).toBe(false);
+    expect(box.top).toBeGreaterThanOrEqual(8);
+    expect(box.right).toBeLessThanOrEqual(382);
+  }
+  const offscreen = spot(rect(26, 1200, 338, 40), 374, 158, { w: 390, h: 844 }, [rect(12, 756, 366, 64)]);
+  expect(offscreen).toMatchObject({ side: "sheet", left: 8, top: 756 - 8 - 158 });
+  expect(spot(null, 374, 158, { w: 390, h: 844 }, []).side).toBe("sheet");
+});
+
 test("the coach is non-modal and never presses publish", () => {
   expect(source).not.toContain("aria-modal");
   expect(source).not.toMatch(/data-publish/);

@@ -109,7 +109,7 @@ backup file.
 
 ### For yourself (one computer)
 
-Download `Acard-Local-Setup-0.3.0.exe` from the
+Download `Acard-Local-Setup-0.3.1.exe` from the
 [latest release](https://github.com/Hakubisual/open-notion-acard/releases/latest), run it, and choose
 **Use on this computer** on the first screen. That is all: the app starts its own small server in the background,
 keeps your notes in `%APPDATA%\Acard Local\data`, and needs no account and no password. Nothing leaves your computer.
@@ -117,7 +117,7 @@ keeps your notes in `%APPDATA%\Acard Local\data`, and needs no account and no pa
 > **Windows SmartScreen:** the installer is not code-signed yet, so Windows may say *"Windows protected your PC"*.
 > Click **More info → Run anyway**, or build the app yourself.
 
-On macOS and Linux, build the app from source: `cd desktop && bun install && bun run dist`.
+On macOS and Linux, build the app from source: `bun install && cd desktop && bun install && bun run dist`.
 
 Prefer no app at all? Run the server directly and use your browser:
 

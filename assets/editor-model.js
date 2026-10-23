@@ -53,11 +53,13 @@
       ["color", "background"].forEach(function (name) { if (colors.indexOf(run[name]) > 0) out[name] = run[name]; });
       if (run.mention && run.mention.type === "page" && typeof run.mention.slug === "string") out.mention = { type: "page", slug: run.mention.slug };
       if (run.mention && run.mention.type === "date" && /^\d{4}-\d{2}-\d{2}$/.test(run.mention.date)) out.mention = { type: "date", date: run.mention.date };
+      if (run.ai === "lock" || run.ai === "ref") out.ai = run.ai;
       return out;
     });
   }
   function escape(value) { return String(value).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-  function richHtml(input, fallback) {
+  // withAi: the editor draws AI-marked runs (data-ai) so readRich keeps them; readers and shares never get the attribute.
+  function richHtml(input, fallback, withAi) {
     return richText(input, fallback).map(function (run) {
       var html = escape(run.text).replace(/\n/g, "<br>");
       [["bold", "strong"], ["italic", "em"], ["underline", "u"], ["strike", "s"], ["code", "code"]].forEach(function (pair) {
@@ -66,6 +68,7 @@
       var attrs = [];
       if (run.color) attrs.push('data-color="' + run.color + '"');
       if (run.background) attrs.push('data-background="' + run.background + '"');
+      if (withAi && run.ai) attrs.push('data-ai="' + run.ai + '"');
       if (attrs.length) html = "<span " + attrs.join(" ") + ">" + html + "</span>";
       if (run.mention && run.mention.type === "page") html = '<a data-page="' + escape(run.mention.slug) + '" href="/' + encodeURIComponent(run.mention.slug) + '/">' + html + "</a>";
       else if (run.mention && run.mention.type === "date") html = '<time datetime="' + run.mention.date + '">' + html + "</time>";
@@ -85,6 +88,7 @@
       if (node.tagName === "A") next.href = node.getAttribute("href");
       if (node.dataset.color) next.color = node.dataset.color;
       if (node.dataset.background) next.background = node.dataset.background;
+      if (node.dataset.ai) next.ai = node.dataset.ai;
       if (node.dataset.page) next.mention = { type: "page", slug: node.dataset.page };
       if (node.tagName === "TIME") next.mention = { type: "date", date: node.getAttribute("datetime") };
       Array.from(node.childNodes).forEach(function (child) { walk(child, next); });

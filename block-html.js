@@ -2,7 +2,6 @@ import { equationHtml } from "./equation-html.js";
 import { visualBlockHtml } from "./visual-html.js";
 import { partBlockHtml, partSuggestLine } from "./part-html.js";
 import { renderComponentBlock, fallbackCardHtml, componentOwnCss, familyCss, getComponent, COMPONENT_BASE_CSS } from "./component-registry.js";
-import { checkTree, renderTreeHtml, PLUGIN_UI_CSS } from "./plugin-ui.js";
 import "./components/index.js";
 import "./assets/editor-model.js";
 
@@ -10,27 +9,6 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-// issue 144: a plugin block. Signed-in readers get a placeholder the lazy plugins runtime fills with a sandboxed frame;
-// shared and published pages (ctx.page.readOnly) and every visitor without plugins get the editor-approved snapshot as
-// static HTML (no script, controls disabled) or a short note. Plugin code never runs on a public page.
-const PLUGIN_ID = /^[a-z][a-z0-9-]{1,39}$/;
-const PLUGIN_MADE_BY = "플러그인이 만든 화면 ·";
-function pluginBlockHtml(block, ctx, once) {
-  const meta = block.meta || {};
-  const plugin = PLUGIN_ID.test(String(meta.plugin || "")) ? String(meta.plugin) : "";
-  const part = /^[a-z][a-z0-9-]{0,39}$/.test(String(meta.block || "")) ? String(meta.block) : "";
-  const style = once.plugin ? "" : (once.plugin = true, "<style>" + PLUGIN_UI_CSS.replace(/:root/g, ".pl-static") + "</style>");
-  const checked = meta.snapshot ? checkTree(meta.snapshot.tree ?? meta.snapshot) : { tree: null };
-  const name = escapeHtml(String((meta.snapshot && meta.snapshot.name) || plugin || "플러그인"));
-  const snapshot = checked.tree ? '<div class="pl-static">' + renderTreeHtml(checked.tree, { static: true }) + '<p class="pl-prov">' + escapeHtml(PLUGIN_MADE_BY) + " " + name + "</p></div>" : "";
-  const live = ctx && ctx.page && !ctx.page.readOnly && ctx.plugins === true;
-  const inner = live
-    ? '<div class="pl-host">' + (snapshot || '<div class="pl-skeleton"></div>') + "</div>"
-    : snapshot || '<p class="pl-note">플러그인 블록 · Acard 에서 열면 보여요</p>';
-  if (live && !ctx.pluginsLoaded) ctx.pluginsLoaded = true;
-  return style + '<figure class="pl-block" data-plugin="' + plugin + '" data-block="' + part + '">' + inner + (meta.caption ? "<figcaption>" + escapeHtml(String(meta.caption)) + "</figcaption>" : "") + "</figure>" +
-    (live && ctx.pluginsLoaded === true && !ctx.pluginsScript ? (ctx.pluginsScript = true, '<script src="/lazy/plugins.js?v=__PLUGINS_JS__" async></script>') : "");
-}
 
 function blockInline(block) {
   if (block.meta && Array.isArray(block.meta.richText) && globalThis.EditorModel) return evidenceTags(globalThis.EditorModel.richHtml(wikiRuns(block.meta.richText), block.text));
@@ -591,10 +569,6 @@ export function renderBlocks(blocks, ctx, headingContext) {
         break;
       }
       case "db_ref": out.push(block.meta && block.meta.html ? block.meta.html.replace(/loading="eager" fetchpriority="high"/g, 'loading="lazy"') : '<div class="db"><p class="dbempty">연결된 데이터베이스를 불러오지 못했어요.</p></div>'); break;
-      case "plugin": {
-        out.push(pluginBlockHtml(block, ctx, colorOnce));
-        break;
-      }
       case "component": {
         const uiCss = uiStyle(String((block.meta && block.meta.ui) || ""));
         if (uiCss) out.push(uiCss);
