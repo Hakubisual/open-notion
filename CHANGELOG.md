@@ -2,6 +2,37 @@
 
 All notable changes to this project. Dates are UTC.
 
+## 0.3.0 - 2026-10-24
+
+### Added
+
+- **Acard Local runs on its own.** The desktop app (`Acard-Local-Setup-0.3.0.exe`) now has two choices on its first
+  screen: **Use on this computer** starts a built-in local server (data in `%APPDATA%\Acard Local\data`, port 47811 or
+  the first free one up to 47830, no account, no password), and **Connect to a team server** works as before. The
+  **Server** menu switches between them (`Ctrl/Cmd+Shift+S`). If you saved a server address in v0.2, the app keeps
+  connecting to it. The app's language follows the operating system (Korean, Chinese, otherwise English).
+- Token-free MCP and REST for agents on your own computer: `http://127.0.0.1:47811/mcp` and `/api/v1`. Set
+  `ACARD_LOCAL_API=0` to turn it off.
+- `ACARD_AGENT_TOKEN` for team servers: agents reach `/mcp` and `/api/v1` with `Authorization: Bearer <token>`.
+  Without it, agents cannot reach them on a password-protected server; a person's password never works for agents.
+- The local server serves `/AGENTS.md`, `/llms.txt` and `/api/v1/openapi.json`.
+
+### Removed
+
+- The AI buttons: ask your notes, photo to text and AI shortcuts. Existing photo-text blocks still show.
+- The seeded agent rules page. `get_agent_skills` now only reads a page named `agent-skills` if a person wrote one;
+  an existing page stays a normal page.
+- The project auto-record sidebar and the first-run agent tools.
+- The CLI `hooks` and `setup` commands and the agent add-on downloads. The CLI keeps `pull`, `push`, `mcp` and
+  `whoami`.
+- The cloud account section in "My data". It is off unless `ACARD_CLOUD_URL` is set.
+
+### Docs
+
+- Two install paths: [for yourself](docs/install-user.md) (one computer, the desktop app) and
+  [for a team](docs/install-server.md) (one server; members [join it](docs/install-client.md)).
+- README in all three languages: new "Connect your AI agent" section for local and team servers.
+
 ## v0.2.0 - 2026-10-23
 
 ### Renamed: OpenNotion is now Acard

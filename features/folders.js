@@ -14,6 +14,12 @@
   const COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
   const JOURNAL_ROOT = "agent-journal";
   const PREFS_KEY = "folders:prefs";
+  // #16: how the sidebar groups the workspace, one choice per workspace (= per person): 프로젝트별 tree, 태그별, 날짜별.
+  const VIEW_KEY = "folders:view", VIEWS = ["project", "tags", "date"];
+  async function sidebarView(db) {
+    const row = await db.prepare("SELECT value FROM meta WHERE key = ?").bind(VIEW_KEY).first();
+    return row && VIEWS.includes(String(row.value)) ? String(row.value) : "project";
+  }
   // A member workspace gets a new D1-shaped adapter on every request, so the schema is remembered by its store key
   // (as gate/_worker.js ensureSchema does); otherwise every request re-ran the CREATE ... IF NOT EXISTS list as
   // round trips to the workspace Durable Object before its first read (#17).
@@ -466,20 +472,25 @@
   }
 
   async function folderTree(db) {
-    const [rows, tagRes, prefs, tags] = await Promise.all([
+    const [rows, tagRes, prefs, tags, view, folderRows] = await Promise.all([
       db.prepare("SELECT p.slug, p.title, p.parent, p.ord, p.kind, p.updated, s.icon, s.favorite FROM pages p LEFT JOIN editor_page_settings s ON s.page = p.slug WHERE p.kind != 'db_row' AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = p.slug) ORDER BY p.ord, p.title").all(),
       db.prepare("SELECT page, tag FROM page_tags").all(),
       db.prepare("SELECT value FROM meta WHERE key = ?").bind(PREFS_KEY).first(),
       db.acardVisible ? [] : listTags(db),
+      db.acardVisible ? "project" : sidebarView(db),
+      // page_view belongs to features/page-view.js; a workspace without it yet just has no folder marks.
+      db.prepare("SELECT page, mode FROM page_view").all().catch(() => ({ results: [] })),
     ]);
+    const modeOf = new Map((folderRows.results ?? []).map((r) => [String(r.page), String(r.mode)]));
     let pages = rows.results ?? [];
     if (db.acardVisible) pages = pages.filter((r) => db.acardVisible.has(String(r.slug))).map((r) => (r.parent && !db.acardVisible.has(String(r.parent)) ? { ...r, parent: null, shared: true } : r));
     const tagRowsAll = tagRes.results ?? [];
     const byPage = new Map();
     for (const r of tagRowsAll) (byPage.get(String(r.page)) || byPage.set(String(r.page), []).get(String(r.page))).push(String(r.tag));
     return {
-      pages: pages.map((p) => ({ slug: p.slug, title: p.title, parent: p.parent ?? null, ord: Number(p.ord), kind: p.kind, updated: Number(p.updated), icon: p.icon ?? null, favorite: Number(p.favorite) === 1, tags: (byPage.get(String(p.slug)) || []).sort(), ...(p.shared ? { shared: true } : {}) })),
+      pages: pages.map((p) => ({ slug: p.slug, title: p.title, parent: p.parent ?? null, ord: Number(p.ord), kind: p.kind, updated: Number(p.updated), icon: p.icon ?? null, favorite: Number(p.favorite) === 1, tags: (byPage.get(String(p.slug)) || []).sort(), ...(modeOf.has(String(p.slug)) ? { view: modeOf.get(String(p.slug)) } : {}), ...(p.shared ? { shared: true } : {}) })),
       tags,
+      view,
       prefs: prefs ? JSON.parse(String(prefs.value)) : {},
       journalRoot: JOURNAL_ROOT,
     };
@@ -538,6 +549,15 @@
         const value = JSON.stringify({ v, open: Array.isArray(body.open) ? body.open.map(String).slice(0, 2000) : [], collapsed: Array.isArray(body.collapsed) ? body.collapsed.map(String).slice(0, 20) : [], closed: Array.isArray(body.closed) ? body.closed.map(String).slice(0, 2000) : [] });
         await db.batch([db.prepare("DELETE FROM meta WHERE key = ?").bind(PREFS_KEY), db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").bind(PREFS_KEY, value)]);
         return json({ ok: true });
+      }
+      if (path === "/api/folders/view" && method === "GET") return json({ view: db.acardVisible ? "project" : await sidebarView(db) });
+      if (path === "/api/folders/view" && method === "PUT") {
+        // A guest's view DB is someone else's workspace: the choice is the owner's to make.
+        if (db.acardVisible) return json({ error: "내 작업 공간에서만 바꿀 수 있어요." }, 403);
+        const view = String((await request.json().catch(() => ({}))).view || "");
+        if (!VIEWS.includes(view)) return json({ error: "view 는 project, tags, date 중 하나예요." }, 400);
+        await db.batch([db.prepare("DELETE FROM meta WHERE key = ?").bind(VIEW_KEY), db.prepare("INSERT INTO meta (key, value) VALUES (?, ?)").bind(VIEW_KEY, view)]);
+        return json({ ok: true, view });
       }
       if (path === "/api/folders/undo" && method === "POST") return json(await undo(db, (await request.json().catch(() => ({}))).batch));
       if (path === "/api/folders/activity" && method === "GET") return json({ activity: await activity(db) });

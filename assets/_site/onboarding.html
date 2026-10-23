@@ -16,7 +16,7 @@
 <main class="auth onb">
   <button class="onb-back" id="back" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg><span data-i18n="onb.back">Back</span></button>
   <div class="auth-box" id="box">
-    <div class="auth-logo"><svg class="wordmark" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></div>
+    <div class="auth-logo"><svg class="wordmark" viewBox="0 0 375.59 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></div>
     <div class="steps"><span id="step-no">1 / 3</span><div class="bars"><i class="on"></i><i id="bar2"></i><i id="bar3"></i></div></div>
 
     <form class="onb-step" id="step1" novalidate>
@@ -49,6 +49,7 @@
         <label class="use"><input type="checkbox" name="preset" value="notes"><span class="use-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span><b data-i18n="onb.p.notes">x</b><span data-i18n="onb.p.notesSub">x</span><em class="tick"></em></label>
         <label class="use"><input type="checkbox" name="preset" value="progress"><span class="use-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V12M10 20V8M15 20v-5M20 20V5"/></svg></span><b data-i18n="onb.p.progress">x</b><span data-i18n="onb.p.progressSub">x</span><em class="tick"></em></label>
       </div>
+      <p><a class="skip" id="import" href="/import" data-i18n="onb.import">Coming from Notion or Obsidian? Import</a></p>
       <button class="btn btn-primary btn-wide" type="submit" data-i18n="onb.start">Get started</button>
       <button class="skip" id="skip" type="button" data-i18n="onb.skip">Skip</button>
       <div class="msg" role="status"></div>
@@ -63,12 +64,12 @@
       <p class="unverified" id="unverified" hidden data-i18n="onb.s3.unverified">Not tested yet</p>
       <div class="wait" id="wait" aria-live="polite"><span class="pulse"></span><span id="wait-text" data-i18n="onb.s3.waiting">Waiting for connection</span></div>
       <p class="stuck" id="stuck" hidden data-i18n="onb.s3.stuck">x</p>
-      <a class="btn btn-skip" id="skip3" href="/?welcome=1" data-i18n="onb.s3.skipStart">Skip</a>
-      <div class="done" id="done" hidden aria-live="polite"><svg class="check" viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"/><path d="m15 27 7 7 15-16"/></svg><b id="done-text"></b><p id="done-sub" data-i18n="onb.s3.doneSub">Your agent will ask you something</p><ul class="made" id="made"></ul><a class="btn btn-primary btn-wide" href="/?welcome=1" data-i18n="onb.s3.go">Go to home</a></div>
+      <a class="btn btn-skip" id="skip3" href="/home/?welcome=1" data-i18n="onb.s3.skipStart">Skip</a>
+      <div class="done" id="done" hidden aria-live="polite"><svg class="check" viewBox="0 0 52 52"><circle cx="26" cy="26" r="24"/><path d="m15 27 7 7 15-16"/></svg><b id="done-text"></b><p id="done-sub" data-i18n="onb.s3.doneSub">Your agent will ask you something</p><ul class="made" id="made"></ul><a class="btn btn-primary btn-wide" href="/home/?welcome=1" data-i18n="onb.s3.go">Go to home</a></div>
       <div class="tips" id="tips" hidden><b data-i18n="onb.s3.tipsTitle">Not connecting?</b><ul><li data-i18n="onb.s3.tip1">x</li><li data-i18n="onb.s3.tip2">x</li><li data-i18n="onb.s3.tip3">x</li></ul></div>
       <div class="lockline" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
       <p class="privacy" data-i18n="onb.s3.privacy">x</p>
-      <a class="skip" id="later" href="/?welcome=1" data-i18n="onb.s3.later">Later</a>
+      <a class="skip" id="later" href="/home/?welcome=1" data-i18n="onb.s3.later">Later</a>
     </section>
   </div>
 <nav class="lang-switch" aria-label="Language" data-i18n-attr="aria-label:lang.label"><a href="?lang=en" data-lang="en" lang="en">EN</a><a href="?lang=ko" data-lang="ko" lang="ko">한국어</a><a href="?lang=zh" data-lang="zh" lang="zh-CN">中文</a></nav>

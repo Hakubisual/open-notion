@@ -2,6 +2,9 @@
 export function route(request, origin) {
   const url = new URL(request.url);
   if (url.origin !== origin || request.method !== "GET") return null;
+  // The reader's explicit refresh (?acard-revalidate=<now>) is a one-off network read; routing it would store one more
+  // HTML copy per click under a unique key that the slug LRU never evicts.
+  if (url.searchParams.has("acard-revalidate")) return null;
   const path = url.pathname;
   if (/^\/(?:__gate|__logout|api\/agents|mcp|sse|oauth|[ps](?:\/|$))/.test(path)) return null;
   const key = origin + path + url.search;
@@ -69,6 +72,13 @@ export function shellRefs(html) {
   return [...html.matchAll(/<(?:script|link)\b[^>]*?(?:src|href)=["'](\/[\w.-]+\.(?:js|css)\?v=[^"']+)["']/gi)].map(m => m[1]);
 }
 
+async function syncImported(response) {
+  const count = value => typeof value === "number" ? value : Infinity;
+  const result = await response.clone().json();
+  return count(result.imported) > 0 || count(result.updated) > 0
+    || (result.databases != null && (count(result.databases.imported) > 0 || count(result.databases.rows) > 0));
+}
+
 export function createOfflineWorker(platform, config) {
   const { caches, origin } = platform;
   const nameFor = (kind, id) => "acard-" + kind + "-" + config.version + "-" + id;
@@ -107,8 +117,10 @@ export function createOfflineWorker(platform, config) {
   async function observe(response, request, epoch, clientId) {
     // A late response from before a logout/account switch cannot change the current identity either.
     if (epoch !== generation) return false;
-    const path = new URL(request.url).pathname;
-    const privateRequest = route(request, origin) || /^\/(?:api|edit)\//.test(path) || request.mode === "navigate" || config.shell.includes(path + new URL(request.url).search);
+    const url = new URL(request.url), path = url.pathname;
+    // The reader's ?acard-revalidate refresh is not routed (never cached) but is still a private page read.
+    const reader = route(request, origin) || url.searchParams.has("acard-revalidate");
+    const privateRequest = reader || /^\/(?:api|edit)\//.test(path) || request.mode === "navigate" || config.shell.includes(path + url.search);
     // Credentialless manifest/icon failures do not describe the member session.
     if (response.status === 401 && privateRequest && request.credentials !== "omit") {
       await bounded(wipe(), undefined);
@@ -116,7 +128,7 @@ export function createOfflineWorker(platform, config) {
       return false;
     }
     const id = identity(response.headers.get("x-acard-id"));
-    if (id || route(request, origin)) await bounded(identify(id, clientId), undefined);
+    if (id || reader) await bounded(identify(id, clientId), undefined);
     return true;
   }
   async function touch(cache, info, id) {
@@ -185,7 +197,11 @@ export function createOfflineWorker(platform, config) {
       const response = await platform.fetch(request);
       if (!(await observe(response, request, epoch, clientId))) return response;
       // Telemetry posts (Cloudflare RUM, beta events) fire on every load and change no content.
-      const contentWrite = /^\/(?:api|edit)\//.test(url.pathname) && !/^\/api\/(?:beta|agent)\//.test(url.pathname);
+      // A plugin saving its own storage changes no page (issue 144); installs, switches and removals do (CSS, blocks).
+      let contentWrite = /^\/(?:api|edit)\//.test(url.pathname) && !/^\/api\/(?:beta|agent)\//.test(url.pathname) && !/^\/api\/plugins\/[a-z][a-z0-9-]{1,39}\/storage$/.test(url.pathname);
+      // The editor posts /api/sync on every open and for members it imports nothing: only a sync that reports an import
+      // changes content. The answer is read from a clone; an unreadable or incomplete one counts as a write.
+      if (response.ok && contentWrite && url.pathname === "/api/sync") contentWrite = await bounded(syncImported(response), true);
       // A refresh started before this write would put the old tree back (folder fold lost on reload, #14): fence it.
       if (response.ok && contentWrite) generation++;
       if (response.ok && contentWrite) {

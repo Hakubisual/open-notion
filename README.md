@@ -102,38 +102,93 @@ More detail, including the block and database model and how sync and backups wor
 - **Fast**: no front-end framework; the build fails if the editor or reader grows past its size budget.
 - **Three languages**: English, Korean and Simplified Chinese interface.
 
-## Quick start
+## Install
+
+There are two ways to run Acard. Pick the one that fits; you can move your data between them later with a
+backup file.
+
+### For yourself (one computer)
+
+Download `Acard-Local-Setup-0.3.0.exe` from the
+[latest release](https://github.com/Hakubisual/open-notion-acard/releases/latest), run it, and choose
+**Use on this computer** on the first screen. That is all: the app starts its own small server in the background,
+keeps your notes in `%APPDATA%\Acard Local\data`, and needs no account and no password. Nothing leaves your computer.
+
+> **Windows SmartScreen:** the installer is not code-signed yet, so Windows may say *"Windows protected your PC"*.
+> Click **More info → Run anyway**, or build the app yourself.
+
+On macOS and Linux, build the app from source: `cd desktop && bun install && bun run dist`.
+
+Prefer no app at all? Run the server directly and use your browser:
 
 ```sh
 git clone https://github.com/Hakubisual/open-notion-acard.git
 cd open-notion-acard
-bun install
-bun run build
-
-# this machine only
+bun install && bun run build
 ACARD_DATA_DIR=./data ACARD_APP_DIR=./dist ACARD_LANG=en bun local/main.ts
 # open http://127.0.0.1:47811/
 ```
 
-To share it on your network, add `ACARD_HOST=0.0.0.0`, `ACARD_PASSWORD=...` and `ACARD_ALLOWED_HOSTS=<server-ip>`.
-The [server guide](docs/install-server.md) covers Windows and Linux step by step: services, firewall, backups,
-updates and HTTPS. Other devices connect with a browser or the desktop app ([client guide](docs/install-client.md)).
+Step by step, with backups, updates and uninstalling: [docs/install-user.md](docs/install-user.md).
 
-## Desktop app: Acard Local
+### For a team (one server)
 
-Download `Acard-Local-Setup-<version>.exe` from the [latest release](https://github.com/Hakubisual/open-notion-acard/releases/latest). On first start it asks
-for your server address, checks that an Acard server answers there, and opens it in its own window. It installs
-next to the hosted Acard app without touching it.
+One person sets up a server on the office LAN, a home lab or a VPN, with a password:
+[docs/install-server.md](docs/install-server.md) covers Windows and Linux step by step (service, firewall, backups,
+updates, HTTPS). Everyone else opens the server address in a browser, or installs Acard Local and chooses
+**Connect to a team server**: [docs/install-client.md](docs/install-client.md).
 
-> **Windows SmartScreen:** the installer is not code-signed yet, so Windows may say *"Windows protected your PC"*.
-> Click **More info → Run anyway**, or build the app yourself from `desktop/` (see the client guide).
+## Connect your AI agent
+
+Acard has an MCP endpoint and a REST API built in, so Codex, Claude Code or any MCP client can read and write your
+pages.
+
+### On your own computer
+
+When Acard runs on your computer (the desktop app with **Use on this computer**, or `bun local/main.ts`), agents on the
+same computer connect without a token or an account, and nothing leaves the PC:
+
+```sh
+codex mcp add acard --url http://127.0.0.1:47811/mcp
+claude mcp add --transport http acard http://127.0.0.1:47811/mcp
+```
+
+Any other MCP client:
+
+```json
+{ "mcpServers": { "acard": { "url": "http://127.0.0.1:47811/mcp" } } }
+```
+
+- REST API: `http://127.0.0.1:47811/api/v1`, described at `http://127.0.0.1:47811/api/v1/openapi.json`.
+- Agent guide: `http://127.0.0.1:47811/AGENTS.md` and `http://127.0.0.1:47811/llms.txt`.
+- CLI (pull pages to Markdown files and push them back):
+  `npx -y --package=http://127.0.0.1:47811/acard-cli.tgz acard pull ./notes`. Commands: `pull`, `push`, `mcp`,
+  `whoami`; the default server is the local one.
+
+If the app chose another port because 47811 was busy, use that port instead. Set `ACARD_LOCAL_API=0` to turn the
+token-free local access off.
+
+### On a team server
+
+A team server never lets agents in with a person's password. Set `ACARD_AGENT_TOKEN` (24 characters or more) on the
+server, and give agents that token as a bearer token:
+
+```sh
+export ACARD_AGENT_TOKEN=...   # the same value as on the server
+codex mcp add acard --url http://<server>:47811/mcp --bearer-token-env-var ACARD_AGENT_TOKEN
+```
+
+Other clients send the header `Authorization: Bearer <token>`. The CLI reads `ACARD_URL` and `ACARD_TOKEN`. Without
+`ACARD_AGENT_TOKEN`, agents cannot reach `/mcp` or `/api/v1` on a password-protected server. Details:
+[docs/install-server.md](docs/install-server.md#connect-agents).
 
 ## Not included
 
 This repository is the self-hosted core. Features that depend on the hosted service are not part of it: AI writing
 and polishing, the chat agent and its work journal, email and Google accounts, the admin console and billing. Small
 neutral stubs (`gate/hosted-*.ts`, `features/ai-service.js`, `local/edition.ts`) take their place so the core
-builds and runs on its own. If you would rather not run a server, use the
+builds and runs on its own. The writing guide and its triggers, AI writing and auto-organize are hosted-only too.
+Your own agents still connect to your own server (see above). If you would rather not run a server, use the
 [hosted version](https://acard.dev).
 
 ## Project layout

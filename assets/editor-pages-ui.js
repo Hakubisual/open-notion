@@ -1,4 +1,4 @@
-(function(d,w){function c(h){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}w.acardFont=function(f){(f=="serif"||f=="report")&&c("/fonts/serif.css");f=="report"&&c("/tokens-report.css")};w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
+(function(d,w){function c(h){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}w.acardFont=function(f){f=="serif"&&c("/fonts/serif.css")};w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
 (function () {
   "use strict";
   window.mountEditorPages = function (context) {
@@ -63,7 +63,7 @@
     var favoriteButton = button(more, "즐겨찾기", function () { return patch({ favorite: !settings.favorite }); });
     button(bar, "페이지 설정", function () {
       open("페이지 설정");
-      [["너비", "width", [["default", "좁게"], ["normal", "보통"], ["full", "넓게"]]], ["글꼴", "font", [["default", "기본"], ["serif", "명조"], ["mono", "고정폭"], ["report", "연구 보고서"]]]].forEach(function (field) {
+      [["너비", "width", [["default", "좁게"], ["normal", "보통"], ["full", "넓게"]]], ["글꼴", "font", [["default", "기본"], ["serif", "명조"], ["mono", "고정폭"], ["report", "연구 보고서 (식·그림 번호)"]]]].forEach(function (field) {
         var label = document.createElement("label"); label.textContent = field[0];
         var select = document.createElement("select");
         field[2].forEach(function (pair) { var option = document.createElement("option"); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option); });

@@ -353,6 +353,7 @@
         var first = state.connect.clients.filter(function (c) { return c.status === "verified"; })[0] || state.connect.clients[0];
         state.clientId = first ? first.id : null;
       }
+      renderGrades();
       renderPicker();
       renderDetail();
       renderEndpoints();
@@ -447,6 +448,7 @@
       if (m.kind === "file" && m.path) mh.appendChild(el("code", { className: "ag-path", text: m.path }));
       mh.appendChild(copyButton(function () { return substituted(code); }, true));
       wrap.appendChild(mh);
+      if (m.note) wrap.appendChild(el("p", { className: "ag-hint ag-method-note", text: m.note }));
       wrap.appendChild(codeBlock(code));
       detail.appendChild(wrap);
     });
@@ -477,6 +479,30 @@
       fill.appendChild(label);
       detail.appendChild(fill);
     }
+  }
+
+  // 앱마다 되는 정도: agent-docs.js appGrades 가 각 앱의 grade 로 실려 온다 (rank = 표 순서).
+  function renderGrades() {
+    var table = $("app-grades");
+    if (!table) return;
+    clear(table);
+    var rows = [];
+    state.connect.clients.forEach(function (c) {
+      var g = c.grade;
+      if (g && typeof g.rank === "number" && !rows[g.rank]) rows[g.rank] = g;
+    });
+    rows = rows.filter(Boolean);
+    table.closest(".ag-grades-wrap").hidden = !rows.length;
+    if (!rows.length) return;
+    table.appendChild(el("tr", {}, ["앱", "자동으로 불림", "제안으로 불림", "지침만"].map(function (h) { return el("th", { scope: "col", text: h }); })));
+    rows.forEach(function (g) {
+      var tr = el("tr", {}, [el("th", { scope: "row", text: g.app })]);
+      if (g.unknown) tr.appendChild(el("td", { colspan: "3", className: "ag-grade-none", text: g.unknown }));
+      else [g.auto, g.suggest, g.guide].forEach(function (v) {
+        tr.appendChild(el("td", { className: v ? "ag-grade-on" : "ag-grade-none", text: v || "-" }));
+      });
+      table.appendChild(tr);
+    });
   }
 
   // ===== 4. 다른 방법 =====
@@ -521,13 +547,6 @@
     } else {
       docs.hidden = true;
     }
-  }
-
-  // ===== 5. 개인 지침 한 줄 (예전 /connect 페이지에 있던 것) =====
-  var rule = $("mcp-rule");
-  if (rule) {
-    rule.value = "Acard 커넥터가 연결돼 있으면 묻지 말고 모든 대화를 기록해: 대화를 시작할 때 journal_start, 매 답변 뒤에 journal_log로 1-3문장 요약, 남길 만한 내용은 Acard 노트 페이지를 만들거나 고쳐서 정리해.";
-    $("mcp-rule-copy").addEventListener("click", function () { copyText(rule.value, this); });
   }
 
   // ===== 6. 고급: 채팅 응답 속도 (개발자용, 펼칠 때만 부른다) =====

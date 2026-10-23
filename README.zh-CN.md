@@ -94,36 +94,87 @@ flowchart LR
 - **快速**：不依赖前端框架；编辑器或阅读器超出体积预算时构建会失败。
 - **三种语言**：英文、韩文和简体中文界面。
 
-## 快速开始
+## 安装
+
+Acard 有两种安装方式，按需选择即可。以后想换，用备份文件把数据搬过去就行。
+
+### 个人安装（一台电脑）
+
+从[最新发布](https://github.com/Hakubisual/open-notion-acard/releases/latest)下载 `Acard-Local-Setup-0.3.0.exe`，
+运行后在首屏选择 **在这台电脑上使用**。这样就完成了：应用会在后台启动自己的小服务器，笔记保存在
+`%APPDATA%\Acard Local\data`，不需要账号，也不需要密码，数据不会离开这台电脑。
+
+> **Windows SmartScreen：** 安装程序暂未进行代码签名，Windows 可能提示 *"Windows 已保护你的电脑"*。
+> 点击 **更多信息 → 仍要运行**，或者自行构建应用。
+
+macOS 和 Linux 请从源码构建：`cd desktop && bun install && bun run dist`。
+
+不想装应用、只用浏览器？直接运行服务器：
 
 ```sh
 git clone https://github.com/Hakubisual/open-notion-acard.git
 cd open-notion-acard
-bun install
-bun run build
-
-# 仅本机使用
+bun install && bun run build
 ACARD_DATA_DIR=./data ACARD_APP_DIR=./dist ACARD_LANG=zh bun local/main.ts
 # 打开 http://127.0.0.1:47811/
 ```
 
-要在局域网内共享，再加上 `ACARD_HOST=0.0.0.0`、`ACARD_PASSWORD=...` 和 `ACARD_ALLOWED_HOSTS=<服务器 IP>`。
-[服务器安装指南](docs/install-server.md)（英文）逐步介绍 Windows 和 Linux 上的服务注册、防火墙、备份、更新和 HTTPS。
-其他设备用浏览器或桌面应用连接（[客户端指南](docs/install-client.md)，英文）。
+包括备份、更新和卸载在内的分步说明：[docs/install-user.md](docs/install-user.md)（英文）。
 
-## 桌面应用：Acard Local
+### 团队服务器安装
 
-从[最新发布](https://github.com/Hakubisual/open-notion-acard/releases/latest)下载 `Acard-Local-Setup-<版本>.exe`。首次启动时它会询问服务器地址，确认该地址上有
-Acard 服务器响应后，在独立窗口中打开。它与托管版 Acard 应用分开安装，互不影响。
+由一个人在办公室局域网、家庭实验室或 VPN 中架设一台带密码的服务器。Windows 和 Linux 上的服务注册、防火墙、备份、
+更新和 HTTPS 见[服务器安装指南](docs/install-server.md)（英文）。其他人用浏览器打开服务器地址，或者安装 Acard Local
+并选择 **连接到团队服务器**（[客户端指南](docs/install-client.md)，英文）。
 
-> **Windows SmartScreen：** 安装程序暂未进行代码签名，Windows 可能提示 *"Windows 已保护你的电脑"*。
-> 点击 **更多信息 → 仍要运行**，或者在 `desktop/` 中自行构建（见客户端指南）。
+## 连接 AI 智能体
+
+Acard 内置 MCP 端点和 REST API，Codex、Claude Code 或任何 MCP 客户端都能读写你的页面。
+
+### 在自己的电脑上
+
+Acard 在你的电脑上运行时（桌面应用选择了 **在这台电脑上使用**，或者运行了 `bun local/main.ts`），同一台电脑上的
+智能体无需令牌、无需账号即可连接，数据不会离开这台电脑：
+
+```sh
+codex mcp add acard --url http://127.0.0.1:47811/mcp
+claude mcp add --transport http acard http://127.0.0.1:47811/mcp
+```
+
+其他 MCP 客户端在配置 JSON 中写入：
+
+```json
+{ "mcpServers": { "acard": { "url": "http://127.0.0.1:47811/mcp" } } }
+```
+
+- REST API：`http://127.0.0.1:47811/api/v1`，接口说明在 `http://127.0.0.1:47811/api/v1/openapi.json`。
+- 智能体说明：`http://127.0.0.1:47811/AGENTS.md` 和 `http://127.0.0.1:47811/llms.txt`。
+- CLI（把页面拉取为 Markdown 文件，再推送回去）：
+  `npx -y --package=http://127.0.0.1:47811/acard-cli.tgz acard pull ./notes`。命令有 `pull`、`push`、`mcp`、
+  `whoami`，默认连接本机服务器。
+
+如果 47811 端口被占用、应用换了别的端口，请改用那个端口。设置 `ACARD_LOCAL_API=0` 可关闭免令牌的本机访问。
+
+### 在团队服务器上
+
+团队服务器不会让智能体使用人的登录密码。请在服务器上设置 `ACARD_AGENT_TOKEN`（至少 24 个字符），再把这个值作为
+bearer 令牌交给智能体：
+
+```sh
+export ACARD_AGENT_TOKEN=...   # 与服务器上的值相同
+codex mcp add acard --url http://<服务器>:47811/mcp --bearer-token-env-var ACARD_AGENT_TOKEN
+```
+
+其他客户端发送请求头 `Authorization: Bearer <令牌>`；CLI 读取 `ACARD_URL` 和 `ACARD_TOKEN`。没有设置
+`ACARD_AGENT_TOKEN` 时，智能体无法访问设有密码的服务器上的 `/mcp` 和 `/api/v1`。
+详见[服务器安装指南](docs/install-server.md#connect-agents)（英文）。
 
 ## 不包含的内容
 
 本仓库是自托管核心。依赖托管服务的功能不在其中：AI 写作与润色、聊天智能体及其工作日志、邮箱与 Google 账号、
 管理控制台和计费。这些位置由小型中性桩代码（`gate/hosted-*.ts`、`features/ai-service.js`、`local/edition.ts`）
-代替，核心可以独立构建和运行。如果不想自己运行服务器，可以使用[托管版 Acard](https://acard.dev)。
+代替，核心可以独立构建和运行。写作指南及其触发器、AI 写作和自动整理同样只在托管版中提供；你自己的智能体照常连接你自己的服务器（见上文）。
+如果不想自己运行服务器，可以使用[托管版 Acard](https://acard.dev)。
 
 ## 参与贡献
 

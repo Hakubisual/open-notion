@@ -3,8 +3,14 @@
 // Edits to different blocks or fields are combined. When the same block was changed differently on both sides (or
 // changed on one side and deleted on the other), the page edited last wins as a whole and the other side's full page is
 // returned as `copy`, which the caller saves as a "(충돌 사본)" page, so no content is lost.
+// A database page carries its definition (properties, views, templates, rules, form) and a row page its cells and
+// outgoing relation links; they merge per item id and per property id. When the same item or cell was changed
+// differently on both sides, the side edited last wins without a copy and `clash` is set so the caller can report it.
 
 export type SyncBlock = { id: string; type: string; text: string; checked: number; indent: number; meta: string | null };
+type Item = Record<string, unknown>;
+export type SyncDatabase = Item & { id: string; props: Item[]; views: Item[]; templates: Item[]; rules?: Item[]; forms?: Item | null };
+export type SyncRow = { id: string; database_id: string; props: string | null; ord: number; created: number; updated: number; relations: Item[] };
 export type SyncDoc = {
   page: { slug: string; title: string; parent: string | null; ord: number; kind: string; updated: number };
   blocks: SyncBlock[];
@@ -12,9 +18,11 @@ export type SyncDoc = {
   settings: Record<string, unknown> | null;
   view: Record<string, unknown> | null;
   tags: string[];
+  database?: SyncDatabase;
+  row?: SyncRow;
 };
 export type Side = { deleted: boolean; doc: SyncDoc | null };
-export type MergeResult = { deleted: boolean; doc: SyncDoc | null; copy: SyncDoc | null; winner: "local" | "remote" | "merged" };
+export type MergeResult = { deleted: boolean; doc: SyncDoc | null; copy: SyncDoc | null; winner: "local" | "remote" | "merged"; clash: boolean };
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const blockBody = (b: SyncBlock | undefined) => (b ? [b.type, b.text, Number(b.checked) ? 1 : 0, Number(b.indent) || 0, b.meta ?? null] : null);
@@ -24,6 +32,52 @@ function pick<T>(base: T, local: T, remote: T, localNewer: boolean): T {
   if (same(local, remote) || same(remote, base)) return local;
   if (same(local, base)) return remote;
   return localNewer ? local : remote;
+}
+
+type Clash = { hit: boolean };
+function choose<T>(base: T, local: T, remote: T, localNewer: boolean, clash: Clash): T {
+  if (same(local, remote) || same(remote, base)) return local;
+  if (same(local, base)) return remote;
+  clash.hit = true;
+  return localNewer ? local : remote;
+}
+
+function mergeById<T>(base: T[] | undefined, local: T[], remote: T[], key: (x: T) => string, localNewer: boolean, clash: Clash): T[] {
+  const index = (list: T[] | undefined) => new Map((list ?? []).map((x) => [key(x), x]));
+  const b = index(base), l = index(local), r = index(remote);
+  return [...new Set([...l.keys(), ...r.keys()])].map((id) => choose(b.get(id), l.get(id), r.get(id), localNewer, clash)).filter((x): x is T => x !== undefined);
+}
+
+const parsed = (text: string | null | undefined): Item | null => { try { const v = JSON.parse(text ?? "null"); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch { return null; } };
+
+function mergeRow(b: SyncRow | undefined, l: SyncRow | undefined, r: SyncRow | undefined, localNewer: boolean, clash: Clash): SyncRow | undefined {
+  if (!l || !r) return l ?? r;
+  if (l.id !== r.id) return choose(b, l, r, localNewer, clash);
+  const base = b && b.id === l.id ? b : undefined;
+  const bp = parsed(base?.props) ?? {}, lp = parsed(l.props), rp = parsed(r.props);
+  const props = lp && rp
+    ? JSON.stringify(Object.fromEntries([...new Set([...Object.keys(lp), ...Object.keys(rp)])].map((k) => [k, choose(bp[k], lp[k], rp[k], localNewer, clash)]).filter(([, v]) => v !== undefined)))
+    : choose(base?.props, l.props, r.props, localNewer, clash);
+  const groups = (list: Item[] | undefined) => [...(list ?? []).reduce((m, x) => m.set(String(x.prop_id), [...(m.get(String(x.prop_id)) ?? []), x]), new Map<string, Item[]>())].map(([prop, links]) => ({ prop, links }));
+  const relations = mergeById(groups(base?.relations), groups(l.relations), groups(r.relations), (g) => g.prop, localNewer, clash).flatMap((g) => g.links)
+    .sort((x, y) => String(x.prop_id).localeCompare(String(y.prop_id)) || String(x.dst_row).localeCompare(String(y.dst_row)));
+  return { id: l.id, database_id: l.database_id, props, ord: choose(base?.ord, l.ord, r.ord, localNewer, clash) ?? l.ord, created: choose(base?.created, l.created, r.created, localNewer, clash) ?? l.created, updated: Math.max(l.updated, r.updated), relations };
+}
+
+function mergeDatabase(b: SyncDatabase | undefined, l: SyncDatabase | undefined, r: SyncDatabase | undefined, localNewer: boolean, clash: Clash): SyncDatabase | undefined {
+  if (!l || !r) return l ?? r;
+  if (l.id !== r.id) return choose(b, l, r, localNewer, clash);
+  const base = b && b.id === l.id ? b : undefined;
+  const lists = new Set(["props", "views", "templates", "rules", "forms"]);
+  const out: Item = {};
+  for (const k of new Set([...Object.keys(l), ...Object.keys(r)])) if (!lists.has(k)) out[k] = k === "updated" ? Math.max(Number(l[k]) || 0, Number(r[k]) || 0) : choose(base?.[k], l[k], r[k], localNewer, clash);
+  const byId = (k: "props" | "views" | "templates") => mergeById(base?.[k], l[k], r[k], (x) => String(x.id), localNewer, clash);
+  const merged = { ...out, id: l.id, props: byId("props"), views: byId("views"), templates: byId("templates") } as SyncDatabase;
+  if (l.rules && r.rules) merged.rules = mergeById(base?.rules, l.rules, r.rules, (x) => String(x.id), localNewer, clash);
+  else if (l.rules ?? r.rules) merged.rules = l.rules ?? r.rules;
+  if (l.forms !== undefined && r.forms !== undefined) merged.forms = choose(base?.forms, l.forms, r.forms, localNewer, clash) ?? null;
+  else if ((l.forms ?? r.forms) !== undefined) merged.forms = l.forms ?? r.forms;
+  return merged;
 }
 
 function mergeBlocks(base: SyncBlock[] | null, local: SyncBlock[], remote: SyncBlock[]): SyncBlock[] | null {
@@ -61,16 +115,17 @@ function mergeBlocks(base: SyncBlock[] | null, local: SyncBlock[], remote: SyncB
 }
 
 export function mergePage(base: Side | null, local: Side, remote: Side): MergeResult {
-  const localNewer = (local.doc?.page.updated ?? 0) > (remote.doc?.page.updated ?? 0);
-  if (local.deleted && remote.deleted) return { deleted: true, doc: remote.doc ?? local.doc, copy: null, winner: "remote" };
+  const stamp = (d: SyncDoc | null) => Math.max(d?.page.updated ?? 0, d?.row?.updated ?? 0, Number(d?.database?.updated) || 0);
+  const localNewer = stamp(local.doc) > stamp(remote.doc);
+  if (local.deleted && remote.deleted) return { deleted: true, doc: remote.doc ?? local.doc, copy: null, winner: "remote", clash: false };
   // A deleted page loses to an edit on the other side: the edit wins and the page comes back.
-  if (remote.deleted) return { deleted: false, doc: local.doc, copy: null, winner: "local" };
-  if (local.deleted) return { deleted: false, doc: remote.doc, copy: null, winner: "remote" };
+  if (remote.deleted) return { deleted: false, doc: local.doc, copy: null, winner: "local", clash: false };
+  if (local.deleted) return { deleted: false, doc: remote.doc, copy: null, winner: "remote", clash: false };
   const l = local.doc!, r = remote.doc!, b = base && !base.deleted ? base.doc : null;
   const blocks = mergeBlocks(b ? b.blocks : null, l.blocks, r.blocks);
   if (!blocks) {
     const [win, lose] = localNewer ? [l, r] : [r, l];
-    return { deleted: false, doc: win, copy: lose, winner: localNewer ? "local" : "remote" };
+    return { deleted: false, doc: win, copy: lose, winner: localNewer ? "local" : "remote", clash: false };
   }
   const field = <K extends keyof SyncDoc["page"]>(k: K) => pick(b?.page[k], l.page[k], r.page[k], localNewer);
   const doc: SyncDoc = {
@@ -81,5 +136,10 @@ export function mergePage(base: Side | null, local: Side, remote: Side): MergeRe
     view: pick(b?.view ?? null, l.view, r.view, localNewer),
     tags: pick(b?.tags ?? [], l.tags, r.tags, localNewer),
   };
-  return { deleted: false, doc, copy: null, winner: "merged" };
+  const clash: Clash = { hit: false };
+  const database = mergeDatabase(b?.database, l.database, r.database, localNewer, clash);
+  const row = mergeRow(b?.row, l.row, r.row, localNewer, clash);
+  if (database) doc.database = database;
+  if (row) doc.row = row;
+  return { deleted: false, doc, copy: null, winner: "merged", clash: clash.hit };
 }

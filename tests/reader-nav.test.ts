@@ -100,8 +100,9 @@ function navigation(identity = "member-a", loadedAssets: string[] = []) {
   const scriptEvents = events();
   const nav = primitives();
   let main: any, focused = 0, selection = false;
-  const node = (text: string): any => ({ text, style: {}, dataset: {}, cloneNode: () => node(text), querySelector: () => null, querySelectorAll: () => [], replaceWith(next: any) { main = next; }, focus() { focused++; document.activeElement = this; }, appendChild(el: any) { initScripts.push(el.textContent); } });
+  const node = (text: string, attrs: string[] = []): any => ({ text, outerHTML: text, style: {}, dataset: {}, hasAttribute: (name: string) => attrs.includes(name), cloneNode: () => node(text), querySelector: () => null, querySelectorAll: () => [], replaceWith(next: any) { main = next; }, focus() { focused++; document.activeElement = this; }, appendChild(el: any) { initScripts.push(el.textContent); } });
   main = node("one");
+  const keepMain = () => { main = node(main.text, ["data-live-keep"]); };
   function parsed(name: string, id = identity, assetList: string[] = []) {
     return {
       body: { classList: { contains: () => true } }, title: name,
@@ -132,6 +133,7 @@ function navigation(identity = "member-a", loadedAssets: string[] = []) {
     nextScript() { return new Promise<any>(resolve => { scriptEvents.addEventListener("script", (event: any) => resolve(event.script)); }); },
     get main() { return main; }, get focused() { return focused; },
     select(value: boolean) { selection = value; },
+    keepMain,
     respond(index: number, name: string, options: { status?: number; id?: string; assets?: string[] } = {}) {
       const id = options.id ?? identity, status = options.status ?? 200;
       docs.set(name, parsed(name, id, options.assets));
@@ -173,14 +175,68 @@ test("history restores cached content synchronously, restores scroll, then reval
   expect(f.history.pushes).toHaveLength(1);
 });
 
-test("401, 403, 404, identity mismatch and missing assets leave via full navigation and hide private content", async () => {
-  for (const options of [{ status: 401 }, { status: 403 }, { status: 404 }, { id: "member-b" }, { assets: ["/new.js"] }]) {
+test("401, 403, 404 and identity mismatch leave via full navigation and hide private content", async () => {
+  for (const options of [{ status: 401 }, { status: 403 }, { status: 404 }, { id: "member-b" }]) {
     const f = navigation(), go = f.window.AcardReader.navigate("/two/");
     f.respond(0, "two", options); await go;
     expect(f.assigned).toEqual(["https://notes.example.com/two/"]);
     expect(f.main.text).toBe("one"); expect(f.main.style.visibility).toBe("hidden");
     expect((f.side.style as any).visibility).toBe("hidden");
   }
+});
+
+test("a same-identity page that only needs unloaded assets leaves via full navigation without hiding the current page", async () => {
+  const f = navigation(), go = f.window.AcardReader.navigate("/two/");
+  f.respond(0, "two", { assets: ["/new.js"] }); await go;
+  expect(f.assigned).toEqual(["https://notes.example.com/two/"]);
+  expect(f.main.text).toBe("one");
+  expect(f.main.style.visibility).toBeUndefined();
+  expect((f.side.style as any).visibility).toBeUndefined();
+  const r = navigation(), refresh = r.window.AcardReader.refresh();
+  r.respond(0, "one again", { assets: ["/new.js"] }); await refresh;
+  expect(r.assigned).toEqual(["https://notes.example.com/one/"]);
+  expect(r.main.style.visibility).toBeUndefined();
+});
+
+test("an unchanged revalidation after a cache hit does not swap or re-initialize the page again", async () => {
+  const f = navigation();
+  let fresh = 0;
+  f.document.addEventListener("acard:page-fresh", () => { fresh++; });
+  const go = f.window.AcardReader.navigate("/two/"); f.respond(0, "two"); await go;
+  expect(fresh).toBe(1);
+  const back = f.window.AcardReader.navigate("/one/");
+  expect(f.main.text).toBe("one"); expect(fresh).toBe(2);
+  f.respond(1, "one"); await back;
+  expect(fresh).toBe(2); expect(f.main.text).toBe("one");
+  const again = f.window.AcardReader.navigate("/two/");
+  expect(fresh).toBe(3);
+  f.respond(2, "two changed"); await again;
+  expect(fresh).toBe(4); expect(f.main.text).toBe("two changed");
+});
+
+test("prefetch budget is per page shown: a completed navigation restores the eight-link allowance", async () => {
+  const f = navigation();
+  for (let i = 0; i < 9; i++) f.window.AcardReader.prefetch(`/p${i}/`);
+  expect(f.requests).toHaveLength(8);
+  const go = f.window.AcardReader.navigate("/p0/"); f.respond(0, "p0"); await go;
+  for (let i = 8; i < 20; i++) f.window.AcardReader.prefetch(`/p${i}/`);
+  expect(f.requests).toHaveLength(16);
+});
+
+test("sidebar prefetch budget resets on each reader navigation", () => {
+  const folders = readFileSync(new URL("../assets/features/lazy/folders.js", import.meta.url), "utf8");
+  const block = folders.slice(folders.indexOf('  document.addEventListener("acard:navigated"'), folders.indexOf("  // Service-worker sync"));
+  const document: any = { ...events(), body: {}, head: { append() {} }, getElementById: () => null };
+  const warmed: string[] = [];
+  const pre = runInNewContext(block + "\npre;", {
+    document, location: { pathname: "/one/" }, editor: false, host: { querySelectorAll: () => [] }, headTags() {}, current: "one",
+    window: { AcardReader: { prefetch: (u: string) => { warmed.push(u); return true; } } }, setTimeout, clearTimeout, Math, JSON, Object, encodeURIComponent,
+  });
+  for (let i = 0; i < 9; i++) pre(`/p${i}/`);
+  expect(warmed).toHaveLength(8);
+  document.fire("acard:navigated", { detail: { slug: "p0" } });
+  for (let i = 8; i < 20; i++) pre(`/p${i}/`);
+  expect(warmed).toHaveLength(16);
 });
 
 test("first database navigation paints the server page and loads only missing database scripts in order", async () => {
@@ -237,6 +293,13 @@ test("fresh refresh preserves scroll and does not replace a selection", async ()
   f.select(false); f.window.scrollY = 480;
   const refresh = f.window.AcardReader.refresh(); f.respond(0, "new"); await refresh;
   expect(f.main.text).toBe("new"); expect(f.scrolls.at(-1)).toBe(480); expect(f.focused).toBe(0);
+});
+
+test("a live refresh leaves a page whose main keeps its own state (data-live-keep, the import screen) alone", async () => {
+  const f = navigation(); f.keepMain();
+  await f.window.AcardReader.refresh();
+  expect(f.requests).toHaveLength(0);
+  expect(f.main.text).toBe("one");
 });
 
 test("a superseded response cannot replace or redirect the current page", async () => {

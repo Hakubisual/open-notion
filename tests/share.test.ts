@@ -226,6 +226,12 @@ describe("sharing", () => {
     expect(page.text).toContain("root body");
     expect(page.text).not.toContain(SECRET_TEXT);
     expect(page.text).toContain('<meta property="og:title" content="Acard">');
+    // #118: the preview image URL carries the og.png content hash the build put in ACARD_STATIC_VERSIONS.
+    (globalThis as any).ACARD_STATIC_VERSIONS = { "og.png": "og118abc" };
+    try {
+      const versioned = (await call("GET", url)).text;
+      for (const key of ['property="og:image"', 'name="twitter:image"']) expect(versioned).toContain("<meta " + key + ' content="https://notes.example.com/og.png?v=og118abc">');
+    } finally { delete (globalThis as any).ACARD_STATIC_VERSIONS; }
     expect(page.text).not.toMatch(/<meta (?:property|name)="(?:og|twitter):[a-z]+" content="[^"]*(?:Shared root|root body)/);
     expect(page.text).not.toContain('rel="canonical"');
     expect(page.text).toContain(url + "/child/");
@@ -351,6 +357,30 @@ describe("sharing", () => {
       env.DB = db;
     }
     expect((await call("GET", url)).status).toBe(200);
+    await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "invited" } });
+  });
+
+  test("a plugin block reaches link visitors only as its checked static snapshot, under the same page CSP (issue 144)", async () => {
+    const before = (await asOwner("GET", "/api/page/root")).data.blocks;
+    const csp0 = (await call("GET", (await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } })).data.link.url)).headers.get("content-security-policy");
+    const plugin = { id: "pl1", type: "plugin", text: '{"n":3}', meta: { plugin: "qa-counter", block: "counter", html: "<script>alert(1)</script>", snapshot: { name: "<img src=x onerror=alert(1)>", tree: [{ t: "stat", label: "합계", value: "9" }, { t: "html", html: "<script>steal()</script>" }, { t: "text", text: "<script>x()</script>" }, { t: "button", label: "다시", action: "again" }] } } };
+    expect((await asOwner("PUT", "/api/page/root", { body: { blocks: [...before, plugin] } })).status).toBe(200);
+    const stored = (await asOwner("GET", "/api/page/root")).data.blocks.find((b: any) => b.id === "pl1");
+    expect(Object.keys(stored.meta).sort()).toEqual(["block", "plugin", "snapshot"]);
+    expect(JSON.stringify(stored.meta.snapshot)).not.toContain('"t":"html"');
+    const url = (await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "link", role: "read" } })).data.link.url as string;
+    const page = await call("GET", url);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-security-policy")).toBe(csp0);
+    const fig = /<figure class="pl-block"[\s\S]*?<\/figure>/.exec(page.text)?.[0] ?? "";
+    expect(fig).toContain('data-plugin="qa-counter"');
+    expect(fig).toContain('<span class="pl-stat-v">9</span>');
+    expect(fig).toContain(" disabled");
+    expect(fig).not.toMatch(/<script|<iframe|<img/);
+    expect(fig).toContain("&lt;script&gt;x()&lt;/script&gt;");
+    expect(fig).not.toContain("steal()");
+    expect(page.text).not.toContain("/lazy/plugins.js");
+    expect((await asOwner("PUT", "/api/page/root", { body: { blocks: before } })).status).toBe(200);
     await asOwner("PUT", "/api/page/root/access/general", { body: { mode: "invited" } });
   });
 
@@ -518,9 +548,9 @@ describe("sharing", () => {
     expect((await call("POST", "/api/db/" + source + "/rows/" + sourceRow.id + "/button/" + button.id, { cookie: guest, body: {} })).status).toBe(401);
     expect((await call("POST", "/api/db/" + source + "/templates", { cookie: guest, body: { name: "Link private", props: { [rel.property.id]: [privateRow.id] } } })).status).toBe(401);
     expect((await call("PATCH", "/api/db/" + target + "/properties/" + note.id, { cookie: guest, body: { type: "number" } })).status).toBe(401);
-    expect((await call("PATCH", "/api/db/" + source + "/properties/" + rel.property.id, { cookie: guest, body: { config: { database: target, synced: false } } })).status).toBe(200);
-    expect((await asOwner("GET", "/api/db/" + source)).data.properties.find((p: any) => p.id === rel.property.id).config.synced).toBe(false);
-    expect((await call("PATCH", "/api/db/" + source + "/properties/" + rel.property.id, { cookie: guest, body: { config: { database: target, synced: true } } })).status).toBe(401);
+    // #107: turning two-way off unlinks the private row too, so it needs edit on every linked row.
+    expect((await call("PATCH", "/api/db/" + source + "/properties/" + rel.property.id, { cookie: guest, body: { config: { database: target, synced: false } } })).status).toBe(401);
+    expect((await asOwner("GET", "/api/db/" + source)).data.properties.find((p: any) => p.id === rel.property.id).config.synced).toBe(true);
     expect(await targetRows()).toEqual(before);
     expect((await asOwner("GET", "/api/db/" + source)).data.templates).toEqual([]);
 
@@ -788,6 +818,121 @@ describe("sharing", () => {
     for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
   });
 
+  // #107 (gate-review-4 N3): a guest-seeded database stored button actions without the save-time check, so an owner press
+  // wrote into a database the guest cannot see.
+  test("a guest-seeded database keeps no button action aimed at a database the guest cannot edit (#107)", async () => {
+    const fx = await sweepFixture("seed-button");
+    const hidden = (await asOwner("POST", "/api/db", { body: { title: "Hidden seed", slug: "wp-hid-seed", parent: "other", page: true } })).data.slug;
+    const made = await g("POST", "/api/pages", { title: "Seeded", slug: "wp-seeded", parent: "root", kind: "db", properties: [{ id: "title", name: "Title", type: "title" }, { id: "go", name: "Go", type: "button", config: { actions: [{ type: "create_row", database: hidden, values: {} }] } }] });
+    expect(made.status).toBe(200);
+    const seeded = (await asOwner("GET", "/api/db/" + made.data.slug)).data;
+    const button = seeded.properties.find((p: any) => p.name === "Go");
+    expect(button.config.actions).toEqual([]);
+    const row = (await asOwner("POST", "/api/db/" + made.data.slug + "/rows", { body: { props: {} } })).data.row;
+    expect((await asOwner("POST", "/api/db/" + made.data.slug + "/rows/" + row.id + "/button/" + button.id, { body: {} })).status).toBe(400);
+    expect((await asOwner("GET", "/api/db/" + hidden)).data.rows).toEqual([]);
+    for (const slug of [made.data.slug, hidden, fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+    await asOwner("DELETE", "/api/page/" + made.data.slug);
+    expect((await asOwner("DELETE", "/api/page/" + made.data.slug + "/permanent")).status).toBe(200);
+    owner.query("DELETE FROM editor_trash WHERE page = ?").run(made.data.slug);
+  });
+
+  // #107 (gate-review-4 N3): a button a guest wrote ran with the owner's permission when the owner pressed it, so a guest
+  // could arm a link to a row it may not edit. A press now runs with the narrower of the presser's and the author's permission.
+  test("an owner pressing a guest-authored button gets no more than the guest could do; the owner's own button still works (#107)", async () => {
+    const fx = await sweepFixture("guest-button");
+    const linked = () => privLinks(fx).length;
+    const before = linked();
+    const guestButton = await g("POST", "/api/db/" + fx.source + "/properties", { name: "Guest link", type: "button", config: { actions: [{ type: "update_row", values: { [fx.rel]: [fx.priv.id] } }] } });
+    expect(guestButton.status).toBe(200);
+    const pressed = await asOwner("POST", "/api/db/" + fx.source + "/rows/" + fx.blank.id + "/button/" + guestButton.data.property.id, { body: {} });
+    expect(pressed.status).toBe(401);
+    expect(linked()).toBe(before);
+    // A block button the guest wrote on a page: create_row linking the private row.
+    const page = "wp-guest-block";
+    expect((await asOwner("POST", "/api/pages", { body: { title: page, slug: page, parent: "root" } })).status).toBe(200);
+    expect((await g("PUT", "/api/page/" + page, { blocks: [{ id: "gb", type: "button", text: "add", meta: { actions: [{ type: "create_row", database: fx.source, values: { [fx.rel]: [fx.priv.id] } }] } }] })).status).toBe(200);
+    expect((await asOwner("POST", "/api/page/" + page + "/button/gb", { body: {} })).status).toBe(401);
+    expect(linked()).toBe(before);
+    // The guest may run its own button on rows it may edit, and so may the owner pressing it.
+    const openButton = (await g("POST", "/api/db/" + fx.source + "/properties", { name: "Guest open", type: "button", config: { actions: [{ type: "update_row", values: { [fx.rel]: [fx.open.id] } }] } })).data.property.id;
+    expect((await asOwner("POST", "/api/db/" + fx.source + "/rows/" + fx.blank.id + "/button/" + openButton, { body: {} })).status).toBe(200);
+    // Owner-authored control: the same link from the owner's own button goes through.
+    const ownerButton = (await asOwner("POST", "/api/db/" + fx.source + "/properties", { body: { name: "Owner link", type: "button", config: { actions: [{ type: "update_row", values: { [fx.rel]: [fx.priv.id] } }] } } })).data.property.id;
+    expect((await asOwner("POST", "/api/db/" + fx.source + "/rows/" + fx.blank.id + "/button/" + ownerButton, { body: {} })).status).toBe(200);
+    expect(linked()).toBe(before + 2); // one edge each way
+    await asOwner("DELETE", "/api/page/" + page);
+    expect((await asOwner("DELETE", "/api/page/" + page + "/permanent")).status).toBe(200);
+    owner.query("DELETE FROM editor_trash WHERE page = ?").run(page);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // #107: when the guest who wrote a button can no longer be checked (session ended), an owner press writes nothing.
+  test("an owner press of a button whose guest author's session ended writes nothing (#107)", async () => {
+    const fx = await sweepFixture("gone-author");
+    const guest = await freshGuest("button-author@example.com");
+    const button = (await call("POST", "/api/db/" + fx.source + "/properties", { cookie: guest.cookie, body: { name: "Memo it", type: "button", config: { actions: [{ type: "update_row", values: { [fx.srcNote]: "pressed" } }] } } })).data.property.id;
+    expect((await asOwner("POST", "/api/db/" + fx.source + "/rows/" + fx.blank.id + "/button/" + button, { body: {} })).status).toBe(200);
+    expect((await asOwner("DELETE", "/api/page/root/access/rules/" + guest.rule)).status).toBe(200);
+    owner.query("UPDATE share_sessions SET revoked = 1 WHERE token_hash = ?").run(guest.hash);
+    const memo = () => JSON.parse((owner.query("SELECT props FROM db_rows WHERE id = ?").get(fx.src.id) as any).props)[fx.srcNote];
+    const was = memo();
+    const res = await asOwner("POST", "/api/db/" + fx.source + "/rows/" + fx.src.id + "/button/" + button, { body: {} });
+    expect(res.status).toBe(403);
+    expect(memo()).toBe(was);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // #107 (gate-review-4 N2): turning a two-way relation off without dropPair, or deleting one side, removes the links of
+  // rows in the other database; it was judged by that database's role only.
+  test("a guest cannot unlink a private row by turning two-way off or deleting the paired property; it can once it may edit that row (#107)", async () => {
+    const fx = await sweepFixture("turn-off");
+    const before = privLinks(fx);
+    expect(before.length).toBeGreaterThan(0);
+    expect((await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { config: { database: fx.target, synced: false } })).status).toBe(401);
+    expect((await g("DELETE", "/api/db/" + fx.source + "/properties/" + fx.rel)).status).toBe(401);
+    expect((await g("DELETE", "/api/db/" + fx.target + "/properties/" + fx.pair)).status).toBe(401);
+    expect(privLinks(fx)).toEqual(before);
+    await invite(fx.priv.page, "sweep-full@example.com", "edit");
+    expect((await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { config: { database: fx.target, synced: false } })).status).toBe(200);
+    expect(privLinks(fx)).toEqual([]);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
+  // #106: an agent's per-page rule on a row page (or on a row a two-way relation would change) now applies to row writes
+  // through the agent API and MCP, like the share-guest path.
+  test("agent row writes follow per-row-page agent rules, including rows a two-way relation changes (#106)", async () => {
+    const fx = await sweepFixture("agent-rows");
+    const made = await asOwner("POST", "/api/agents/tokens", { body: { name: "row-writer", scopes: ["read", "write"] } });
+    const bearer = made.data.token;
+    const level = (slug: string, value: string) => asOwner("PUT", "/api/page/" + slug + "/access/agents", { body: { token: made.data.record.id, level: value } });
+    expect((await level(fx.priv.page, "read")).status).toBe(200);
+    const rowProps = (id: string) => JSON.parse((owner.query("SELECT props FROM db_rows WHERE id = ?").get(id) as any).props);
+    const v1 = (method: string, path: string, body: unknown) => call(method, "/api/v1/databases/" + path, { bearer, body });
+    // The read-only row itself.
+    const direct = await v1("PATCH", fx.target + "/rows/" + fx.priv.id, { props: { [fx.note]: "agent" } });
+    expect(direct.status).toBe(403);
+    expect(rowProps(fx.priv.id)[fx.note]).toBe("private");
+    const mcp = await worker.fetch(new Request("https://notes.example.com/mcp", { method: "POST", headers: { authorization: "Bearer " + bearer, accept: "application/json, text/event-stream", "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "update_database_row", arguments: { database: fx.target, row: fx.priv.id, props: { [fx.note]: "mcp" } } } }) }), env, {});
+    const mcpText = await mcp.text();
+    expect(mcpText).toContain('"isError":true');
+    expect(mcpText).toContain("권한");
+    expect(rowProps(fx.priv.id)[fx.note]).toBe("private");
+    // A writable row whose two-way link would change the read-only row, by update and by a new row.
+    const links = privLinks(fx);
+    expect((await v1("PATCH", fx.source + "/rows/" + fx.blank.id, { props: { [fx.rel]: [fx.priv.id] } })).status).toBe(403);
+    expect((await v1("PATCH", fx.source + "/rows/" + fx.src.id, { props: { [fx.rel]: [fx.open.id] } })).status).toBe(403);
+    expect((await v1("POST", fx.source + "/rows", { props: { [fx.rel]: [fx.priv.id] } })).status).toBe(403);
+    expect(privLinks(fx)).toEqual(links);
+    // Rows the token may write still work.
+    expect((await v1("PATCH", fx.target + "/rows/" + fx.open.id, { props: { [fx.note]: "agent" } })).status).toBe(200);
+    expect(rowProps(fx.open.id)[fx.note]).toBe("agent");
+    expect((await v1("PATCH", fx.source + "/rows/" + fx.blank.id, { props: { [fx.rel]: [fx.open.id] } })).status).toBe(200);
+    expect((await v1("POST", fx.source + "/rows", { props: { [fx.srcNote]: "new" } })).status).toBe(201);
+    await asOwner("DELETE", "/api/agents/tokens/" + made.data.record.id);
+    for (const slug of [fx.source, fx.target]) await asOwner("DELETE", "/api/db/" + slug);
+  });
+
   // Gate re-review of b5283a1: a relation value stored as one string (not an array) skipped the template check, and the
   // owner tick normalised it into a link to the private row.
   test("a guest template with a single-string relation value is checked like an array and the tick links nothing (#86)", async () => {
@@ -942,7 +1087,8 @@ describe("sharing", () => {
 
   test("a guest who turns a relation into text and saves a template value links nothing once the owner turns it back (#86 b9-relation-text-relation)", async () => {
     const fx = await sweepFixture("b9-back");
-    expect((await g("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { type: "text" })).status).toBe(200);
+    // #107: the guest itself may not turn this relation off (it unlinks the private row), so the owner turns it into text.
+    expect((await asOwner("PATCH", "/api/db/" + fx.source + "/properties/" + fx.rel, { body: { type: "text" } })).status).toBe(200);
     const posted = await g("POST", "/api/db/" + fx.source + "/templates", { name: "Back", props: { [fx.rel]: fx.priv.id } });
     expect(posted.status).toBe(200);
     expect((await g("PATCH", "/api/db/" + fx.source + "/templates/" + posted.data.template.id, { recurrence: daily })).status).toBe(200);
@@ -1558,6 +1704,68 @@ describe("sharing", () => {
     await asOwner("PUT", "/api/page/root/access/settings", { body: { publishSubpages: false, allowIndex: false, siteTitle: "" } });
   });
 
+  test("#124 [[title]] links on a published page point inside the publish URL; a page outside it stays plain text", async () => {
+    const blocks = [{ id: "w1", type: "paragraph", text: "see [[shared child#Part two|the child]] and [[other]]" }];
+    const before = (await asOwner("GET", "/api/page/root")).data;
+    const base = before.page.updated;
+    expect((await asOwner("PUT", "/api/page/root", { body: { blocks, base_updated: base } })).status).toBe(200);
+    const url = (await asOwner("POST", "/api/page/root/access/publish")).data.url as string;
+    await asOwner("PUT", "/api/page/root/access/settings", { body: { publishSubpages: true, allowIndex: false, siteTitle: "" } });
+    const page = await call("GET", url);
+    expect(page.text).toContain('href="' + url + '/child/#part-two"');
+    expect(page.text).toContain(">the child</a>");
+    expect(page.text).not.toContain('href="/other/');
+    expect(page.text).not.toContain(url + "/other");
+    expect((await asOwner("DELETE", "/api/page/root/access/publish")).status).toBe(200);
+    const now = (await asOwner("GET", "/api/page/root")).data.page.updated;
+    expect((await asOwner("PUT", "/api/page/root", { body: { blocks: before.blocks, base_updated: now } })).status).toBe(200);
+    await asOwner("PUT", "/api/page/root/access/settings", { body: { publishSubpages: false, allowIndex: false, siteTitle: "" } });
+  });
+  test("#124 a published page with search allowed lists itself and its readable sub-pages in <url>/sitemap.xml; otherwise 404", async () => {
+    const made = await asOwner("POST", "/api/page/root/access/publish");
+    const url = made.data.url as string;
+    expect((await call("GET", url + "/sitemap.xml")).status).toBe(404);
+    await asOwner("PUT", "/api/page/root/access/settings", { body: { publishSubpages: false, allowIndex: true, siteTitle: "" } });
+    const only = await call("GET", url + "/sitemap.xml");
+    expect(only.status).toBe(200);
+    expect(only.headers.get("content-type")).toContain("application/xml");
+    expect([...only.text.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1])).toEqual(["https://notes.example.com" + url]);
+    expect((await call("GET", url)).text).toContain('<link rel="sitemap" type="application/xml" href="' + url + '/sitemap.xml">');
+    await asOwner("PUT", "/api/page/root/access/settings", { body: { publishSubpages: true, allowIndex: true, siteTitle: "" } });
+    const all = [...(await call("GET", url + "/sitemap.xml")).text.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+    expect(all).toContain("https://notes.example.com" + url + "/child");
+    expect(all.every((loc) => loc.startsWith("https://notes.example.com" + url))).toBe(true);
+    const link = await asOwner("POST", "/api/page/root/access/link", { body: { role: "read" } });
+    const linkUrl = String(link.data?.link?.url ?? "");
+    if (linkUrl) expect((await call("GET", linkUrl + "/sitemap.xml")).status).toBe(404);
+    expect((await asOwner("DELETE", "/api/page/root/access/publish")).status).toBe(200);
+    expect((await call("GET", url + "/sitemap.xml")).status).toBe(404);
+    if (link.data?.link?.id) await asOwner("DELETE", "/api/page/root/access/rules/" + link.data.link.id);
+    await asOwner("PUT", "/api/page/root/access/settings", { body: { publishSubpages: false, allowIndex: false, siteTitle: "" } });
+  });
+  test("#116 the owner's share theme fixes the published page's theme; system keeps the viewer's setting", async () => {
+    const url = (await asOwner("POST", "/api/page/root/access/publish")).data.url as string;
+    const htmlTag = (text: string) => /<html[^>]*>/.exec(text)![0];
+    expect(htmlTag((await call("GET", url)).text)).toBe('<html lang="ko">');
+    expect((await asOwner("GET", "/api/page/root/access")).data.settings.theme).toBe("system");
+    expect((await asOwner("PUT", "/api/page/root/access/settings", { body: { theme: "sepia" } })).status).toBe(400);
+    expect((await asOwner("PUT", "/api/page/root/access/settings", { body: { theme: "dark" } })).status).toBe(200);
+    const dark = (await call("GET", url)).text;
+    expect(htmlTag(dark)).toBe('<html lang="ko" data-theme="dark">');
+    expect(dark).toContain('<meta name="color-scheme" content="dark">');
+    // The viewer's toggle still switches a fixed dark page to light.
+    expect(dark).toContain('html[data-theme="dark"]:has(#sv-tt:checked):not(#sv-none){color-scheme:light;');
+    expect((await asOwner("GET", "/api/page/root/access")).data.settings.theme).toBe("dark");
+    // Another setting leaves the theme alone.
+    await asOwner("PUT", "/api/page/root/access/settings", { body: { siteTitle: "" } });
+    expect(htmlTag((await call("GET", url)).text)).toBe('<html lang="ko" data-theme="dark">');
+    await asOwner("PUT", "/api/page/root/access/settings", { body: { theme: "light" } });
+    expect(htmlTag((await call("GET", url)).text)).toBe('<html lang="ko" data-theme="light">');
+    await asOwner("PUT", "/api/page/root/access/settings", { body: { theme: "system" } });
+    expect(htmlTag((await call("GET", url)).text)).toBe('<html lang="ko">');
+    expect((await asOwner("DELETE", "/api/page/root/access/publish")).status).toBe(200);
+  });
+
   test("shared subpage cards strip inline markdown, escape and truncate plain text, and fetch one paragraph per page", async () => {
     for (const [slug, parent] of [["cards-root", null], ["cards-a", "cards-root"], ["cards-b", "cards-root"], ["cards-empty", "cards-root"]]) {
       expect((await asOwner("POST", "/api/pages", { body: { slug, title: slug, parent } })).status).toBe(200);
@@ -1778,6 +1986,17 @@ describe("sharing", () => {
     const shown = await call("GET", url);
     expect(shown.text).toContain("읽기 전용");
     expect(shown.text).not.toContain("/s/o/l/");
+    // The read link offers the owner-approved edit request instead (Discord follow-up to 114).
+    expect(shown.text).toContain('href="/s/o/r/' + page + '?role=edit">편집 권한 요청</a>');
+    const askEdit = await call("GET", "/s/o/r/" + page + "?role=edit");
+    expect(askEdit.status).toBe(200);
+    expect(askEdit.text).toContain('<option value="edit" selected>편집 허용</option>');
+    const askPlain = await call("GET", "/s/o/r/" + page);
+    expect(askPlain.text).toContain('<option value="edit">편집 허용</option>');
+    expect(askPlain.text).not.toContain(" selected");
+    const badEmail = await call("POST", "/s/o/r/" + page, { form: { email: "nope", role: "edit" } });
+    expect(badEmail.status).toBe(400);
+    expect(badEmail.text).toContain('<option value="edit" selected>편집 허용</option>');
     const snapshot = () => JSON.stringify([owner.query("SELECT * FROM blocks WHERE page = ?").all(page), owner.query("SELECT count(*) AS n FROM share_invites").get(), owner.query("SELECT count(*) AS n FROM share_sessions").get()]);
     const before = snapshot();
     expect((await call("GET", "/s/o/l/" + token)).status).toBe(404);
@@ -1827,7 +2046,7 @@ describe("sharing", () => {
     }
     const samples = [
       "/import", "/import/",
-      "/api/sync", "/api/upload", "/api/media-usage", "/api/media/" + OTHER_MEDIA, "/api/link-preview?url=https://x.test", "/api/media/import", "/api/page/other/attachments", "/api/import", "/api/import/md", "/api/export?slug=other",
+      "/api/sync", "/api/upload", "/api/media-usage", "/api/media/" + OTHER_MEDIA, "/api/link-preview?url=https://x.test", "/api/media/import", "/api/page/other/attachments", "/api/import", "/api/import/md", "/api/import/batches", "/api/import/batches/impx0001", "/api/import/batches/impx0001/chunk", "/api/export?slug=other",
       "/api/export?scope=all", "/api/tree", "/api/search?q=zebra", "/api/backlinks?slug=other", "/api/pages", "/api/page/other", "/api/page/other/rename",
       "/api/page/other/move", "/api/page/other/blocks", "/api/page/other/settings", "/api/page/other/comments", "/api/page/other/comments/oc",
       "/api/page/other/history", "/api/page/other/history/h1/restore", "/api/page/other/trash", "/api/page/other/restore", "/api/page/other/permanent",
@@ -1836,16 +2055,17 @@ describe("sharing", () => {
       "/api/page/other/access/rules/r1", "/api/page/other/access/requests/" + "a".repeat(32), "/api/editor/trash", "/api/editor/trash/empty", "/api/editor/templates", "/api/db", "/api/db/list",
       "/api/db/other", "/api/db/other/rows", "/api/db/other/rows/r1", "/api/db/other/properties", "/api/db/other/views", "/api/db/other/templates",
       "/api/db/other/rules", "/api/db/other/rules/x", "/api/db/other/form", "/api/forms/f1", "/api/forms/f1/submit", "/api/templates", "/api/templates/welcome",
-      "/api/ai/polish", "/api/ai/write", "/api/ai/ask", "/api/ai/photo-text", "/api/quick-note", "/api/home/starter", "/api/home/summary", "/api/first-run", "/api/projects", "/api/projects/settings", "/api/projects/backfill", "/api/projects/other/drafts", "/api/projects/other/drafts/apply", "/api/v1/memo", "/api/v1/pages/other/blocks", "/api/v1/agent-skills", "/api/v1/media", "/form/f1",
+      "/api/ai/polish", "/api/ai/write", "/api/ai/ask", "/api/quick-note", "/api/home/starter", "/api/home/summary", "/api/first-run", "/api/projects", "/api/projects/settings", "/api/projects/backfill", "/api/projects/other/drafts", "/api/projects/other/drafts/apply", "/api/v1/memo", "/api/v1/pages/other/blocks", "/api/v1/agent-skills", "/api/v1/media", "/form/f1",
       "/api/agent", "/api/agent/status", "/api/agent/chat", "/api/agent/sessions", "/api/agent/chat/other", "/api/agent/pages/other/sessions",
       "/api/agent/pages/other/rule", "/api/agent/sessions/s1/step", "/api/agent/suggestions/g1/accept",
       "/api/agent/warm", "/api/agent/latency", "/api/agent/chat-suggestions/g1/apply",
       "/api/journal/sessions", "/api/journal/sessions/j1", "/api/journal/memory/x", "/api/journal/digest", "/api/journal/agents",
-      "/api/folders/tree", "/api/folders/prefs", "/api/folders/undo", "/api/folders/activity", "/api/folders/bulk", "/api/folders/suggest", "/api/folders/suggest/apply",
+      "/api/folders/tree", "/api/folders/prefs", "/api/folders/view", "/api/folders/undo", "/api/folders/activity", "/api/folders/bulk", "/api/folders/suggest", "/api/folders/suggest/apply",
       "/api/parts", "/api/parts/kit", "/api/parts/kit/share", "/api/parts/themes", "/api/parts/themes/kit", "/api/parts/themes/kit/share", "/p/" + "A".repeat(43) + "/acard-part.json", "/api/tags", "/api/tags/merge", "/api/tags/x", "/api/tags/x/pages", "/api/page/other/tags", "/api/v1/folders/tags", "/api/v1/folders/move",
       "/api/page-view/migrate", "/api/page-view/undo", "/api/v1/page-view/migrate", "/api/v1/pages/other/view", "/api/page/other/view",
       "/api/v1/journal/start", "/api/v1/journal/log", "/api/v1/journal/end", "/api/v1/journal/memory", "/api/v1/journal/visual", "/api/v1/doc-guides/split", "/api/v1/components", "/api/v1/components/stat",
-      "/other/", "/edit/other/", "/print/other/", "/media/" + OTHER_MEDIA, "/api/media/" + OTHER_MEDIA + "/meta", "/p/" + "A".repeat(43), "/s/i/" + "A".repeat(43), "/s/l/" + "A".repeat(43), "/s/logout", "/s/r/other",
+      "/api/guide", 
+      "/other/", "/edit/other/", "/print/other/", "/media/" + OTHER_MEDIA, "/api/media/" + OTHER_MEDIA + "/meta", "/p/" + "A".repeat(43), "/p/" + "A".repeat(43) + "/sitemap.xml", "/api/graph", "/api/graph?around=other&depth=2", "/graph", "/graph/", "/s/i/" + "A".repeat(43), "/s/l/" + "A".repeat(43), "/s/logout", "/s/r/other",
     ];
     const uncovered = [...[...literals].filter((path) => !samples.some((sample) => sample.split("?")[0] === path)), ...patterns.filter((re) => !samples.some((sample) => re.test(sample.split("?")[0]))).map(String)];
     expect(uncovered).toEqual([]);

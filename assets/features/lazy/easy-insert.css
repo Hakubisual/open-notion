@@ -53,3 +53,15 @@
 .sx-sheet .sx-list{padding:var(--space-2) var(--space-3)}
 .sx-sheet .sx-list::before{content:"";display:block;width:36px;height:4px;margin:var(--space-1) auto var(--space-2);border-radius:var(--radius-pill);background:var(--color-border)}
 .sx-sheet .sx-list button{min-height:48px}
+/* #38 parts: wide thumbnail tiles in the 부품 / 내 부품 groups, the live part as the desktop preview. */
+.slash-x :is(.sx-part,.sx-mine) .ico{width:52px;height:34px;background:var(--color-surface-soft)}
+.acp-thumb{width:40px;height:30px;fill:none}
+.acp-thumb .t-soft{fill:var(--color-surface);stroke:var(--color-border)}
+.acp-thumb .t-ln{stroke:var(--color-text-dim);stroke-width:1.3;stroke-linecap:round;opacity:.7}
+.acp-thumb .t-acc{fill:var(--color-accent)}
+.acp-thumb .t-bar{fill:var(--color-info-fg);opacity:.55}
+.acp-thumb .t-hi{fill:var(--color-warning-fg);stroke:var(--color-warning-fg)}
+.acp-thumb .t-ok{fill:var(--color-success-fg)}
+.acp-thumb .t-w{stroke-width:2;stroke-linecap:round}
+.sx-pv-ui.sx-pv-part{width:100%;padding:var(--space-2);transform:none}
+.sx-pv-part .acv-fig{margin:0!important}

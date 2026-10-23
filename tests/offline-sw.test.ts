@@ -66,7 +66,7 @@ test("only page HTML, page API, tree and exact shell URLs are cacheable", () => 
     expect(route(req(path), origin)).not.toBeNull();
     expect(shouldCache(req(path), html(), origin)).toBe(true);
   }
-  for (const path of ["/__gate", "/__logout", "/api/agents", "/api/agents/x", "/mcp", "/mcp/", "/sse", "/oauth/login", "/oauth/", "/p/token", "/p/", "/api/search", "/edit/one", "/edit/", "/print/one/", "/notes-seed.json"]) {
+  for (const path of ["/__gate", "/__logout", "/api/agents", "/api/agents/x", "/mcp", "/mcp/", "/sse", "/oauth/login", "/oauth/", "/p/token", "/p/", "/api/search", "/edit/one", "/edit/", "/print/one/", "/notes-seed.json", "/one/?acard-revalidate=1", "/?acard-revalidate=1"]) {
     expect(route(req(path), origin)).toBeNull();
     expect(shouldCache(req(path), html(), origin)).toBe(false);
   }

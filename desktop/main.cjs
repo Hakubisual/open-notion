@@ -1,10 +1,18 @@
-// Acard Local desktop client. Shows connect.html until a server address is saved, then loads that server in the window.
-// The window only navigates inside the saved server; other links open in the system browser.
+// Acard Local runs a bundled server or connects to a team's existing server.
+// The window only navigates inside the active origin; other links open in the system browser.
 const { app, BrowserWindow, Menu, shell, ipcMain } = require("electron");
+const { spawn } = require("node:child_process");
+const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const TITLE = "Acard Local";
+// Electron resolves Windows known folders independently of an APPDATA override.
+if (process.platform === "win32" && process.env.APPDATA) {
+  app.setPath("appData", path.resolve(process.env.APPDATA));
+  app.setPath("userData", path.join(app.getPath("appData"), TITLE));
+}
 const configFile = () => path.join(app.getPath("userData"), "server.json");
 
 // Up to v0.1 this app had another name and kept its settings, sign-in cookie and storage in %APPDATA%/<old name>
@@ -24,8 +32,16 @@ function migrateOldProfile() {
     fs.copyFileSync(path.join(legacy, "server.json"), path.join(target, "server.json"));
   }
 }
-const readServer = () => { try { return JSON.parse(fs.readFileSync(configFile(), "utf8")).server || null; } catch { return null; } };
-const writeServer = (server) => fs.writeFileSync(configFile(), JSON.stringify({ server }));
+const readConfig = () => {
+  try {
+    const config = JSON.parse(fs.readFileSync(configFile(), "utf8"));
+    return { ...config, mode: config.mode || (config.server ? "server" : null) };
+  } catch { return {}; }
+};
+const writeConfig = (config) => {
+  fs.mkdirSync(app.getPath("userData"), { recursive: true });
+  fs.writeFileSync(configFile(), JSON.stringify(config));
+};
 
 function normalize(input) {
   let text = String(input || "").trim();
@@ -46,16 +62,102 @@ async function probe(origin) {
 }
 
 let win = null;
+let activeOrigin = null;
+let server = null;
+let opening = null;
+let quitting = false;
 const inside = (url, origin) => !!origin && (url === origin || url.startsWith(origin + "/"));
+const connectURL = pathToFileURL(path.join(__dirname, "connect.html")).href;
+const isConnect = (url) => url.split("?")[0] === connectURL;
+const resources = (...parts) => path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, "stage"), ...parts);
 
-function showConnect(error) {
-  win.loadFile(path.join(__dirname, "connect.html"), { query: { server: readServer() || "", error: error || "" } });
+function showConnect(error, team = false) {
+  const locale = app.getLocale().toLowerCase();
+  const lang = locale.startsWith("ko") ? "ko" : locale.startsWith("zh") ? "zh" : "en";
+  win.loadFile(path.join(__dirname, "connect.html"), { query: { server: readConfig().server || "", error: error || "", team: team ? "1" : "", lang } });
 }
 
-function showServer() {
-  const origin = readServer();
-  if (!origin) return showConnect();
-  win.loadURL(origin + "/").catch(() => showConnect("Could not open " + origin + "."));
+async function freePort() {
+  for (let port = 47811; port <= 47830; port++) {
+    const free = await new Promise((resolve, reject) => {
+      const listener = net.createServer();
+      listener.once("error", (error) => error.code === "EADDRINUSE" || error.code === "EACCES" ? resolve(false) : reject(error));
+      listener.listen(port, "127.0.0.1", () => listener.close(() => resolve(true)));
+    });
+    if (free) return port;
+  }
+  throw new Error("No local port is available between 47811 and 47830.");
+}
+
+function stopServer() {
+  const child = server;
+  if (!child) return Promise.resolve();
+  server = null;
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => child.kill(), 3000);
+    child.once("exit", () => { clearTimeout(timer); resolve(); });
+    child.stdin.end();
+  });
+}
+
+async function startServer() {
+  const port = await freePort();
+  const locale = app.getLocale().toLowerCase();
+  const exe = process.env.ACARD_LOCAL_SERVER_EXE || resources("server", "acard-server" + (process.platform === "win32" ? ".exe" : ""));
+  const child = server = spawn(exe, [], {
+    env: { ...process.env, ACARD_DATA_DIR: path.join(app.getPath("userData"), "data"), ACARD_APP_DIR: resources("app"),
+      ACARD_PORT: String(port), ACARD_LANG: locale.startsWith("ko") ? "ko" : locale.startsWith("zh") ? "zh" : "en",
+      ACARD_CLOUD_URL: "", ACARD_HOST: "127.0.0.1", ACARD_PASSWORD: "" },
+    stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+  });
+  let tail = "";
+  child.stdin.on("error", () => {}); // A server that exits early can close stdin before shutdown.
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      error ? reject(new Error(error + "\n\nServer output:\n" + (tail || "(no output)"))) : resolve();
+    };
+    const timer = setTimeout(() => finish("The local server did not become ready within 20 seconds."), 20000);
+    child.stdout.on("data", (chunk) => {
+      tail = (tail + chunk).slice(-8000);
+      if (/(^|\n)READY [^\r\n]+[\r\n]/.test(tail)) finish();
+    });
+    child.stderr.on("data", (chunk) => { tail = (tail + chunk).slice(-8000); });
+    child.once("error", (error) => finish("Could not start the local server: " + error.message));
+    child.once("exit", (code) => finish("The local server exited with code " + code + "."));
+  });
+  fs.writeFileSync(path.join(app.getPath("userData"), "local.json"), JSON.stringify({ port }));
+  return "http://127.0.0.1:" + port;
+}
+
+function openMode(config) {
+  if (opening) return opening;
+  opening = (async () => {
+    try {
+      if (config.mode === "local") {
+        if (!server) activeOrigin = await startServer();
+      } else {
+        await stopServer();
+        activeOrigin = config.server;
+      }
+      if (!quitting) await win.loadURL(activeOrigin + "/");
+    } catch (error) {
+      await stopServer();
+      activeOrigin = null;
+      if (!quitting) showConnect(String(error.message || error));
+    } finally { opening = null; }
+  })();
+  return opening;
+}
+
+function useLocal() {
+  if (opening) return opening;
+  writeConfig({ mode: "local" });
+  return openMode({ mode: "local" });
 }
 
 function createWindow() {
@@ -69,26 +171,34 @@ function createWindow() {
     win.setTitle(title && !title.includes(TITLE) ? title + " - " + TITLE : TITLE);
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (inside(url, readServer())) return { action: "allow" };
+    if (inside(url, activeOrigin)) { win.loadURL(url); return { action: "deny" }; }
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (event, url) => {
-    if (url.startsWith("file:") || inside(url, readServer())) return;
+    if (isConnect(url) || inside(url, activeOrigin)) return;
     event.preventDefault();
     if (/^https?:/i.test(url)) shell.openExternal(url);
   });
   win.webContents.on("did-fail-load", (_e, code, description, url, isMainFrame) => {
     if (isMainFrame && code !== -3 && !url.startsWith("file:")) showConnect("Could not reach the server (" + description + ").");
   });
-  showServer();
+  const config = readConfig();
+  if (config.mode === "local" || config.mode === "server" && config.server) openMode(config);
+  else showConnect();
 }
 
-ipcMain.handle("acard:connect", async (_event, input) => {
+ipcMain.handle("acard:local", (event) => {
+  if (event.sender !== win.webContents || !isConnect(event.senderFrame.url)) return;
+  return useLocal();
+});
+ipcMain.handle("acard:connect", async (event, input) => {
+  if (event.sender !== win.webContents || !isConnect(event.senderFrame.url)) return { ok: false, error: "Open the Server menu to change modes." };
   try {
+    if (opening) throw new Error("Wait for the current server to finish starting.");
     const origin = await probe(normalize(input));
-    writeServer(origin);
-    showServer();
+    writeConfig({ mode: "server", server: origin });
+    await openMode({ mode: "server", server: origin });
     return { ok: true, origin };
   } catch (error) {
     return { ok: false, error: String(error.message || error) };
@@ -99,6 +209,7 @@ const esc = (text) => text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;
 
 // The page is blocked in sendSync until returnValue is set, so every exit path must answer exactly once.
 ipcMain.on("acard:prompt", (event, message, value) => {
+  if (!inside(event.senderFrame.url, activeOrigin)) { event.returnValue = null; return; }
   const dialog = new BrowserWindow({
     parent: BrowserWindow.fromWebContents(event.sender), modal: true, width: 420, height: 190, resizable: false,
     minimizable: false, maximizable: false, title: TITLE, autoHideMenuBar: true, show: false,
@@ -124,9 +235,11 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(isMac ? [{ role: "appMenu" }] : []),
     { label: "Server", submenu: [
-      { label: "Change server…", accelerator: "CmdOrCtrl+Shift+S", click: () => showConnect() },
+      { label: "Use on this computer", click: () => useLocal() },
+      { label: "Connect to a team server…", click: () => showConnect("", true) },
+      { label: "Change server…", accelerator: "CmdOrCtrl+Shift+S", click: () => showConnect("", true) },
       { label: "Reload", accelerator: "CmdOrCtrl+R", click: () => win && win.webContents.reload() },
-      { label: "Sign out", click: () => { const o = readServer(); if (o) win.loadURL(o + "/__local/logout"); } },
+      { label: "Sign out", click: () => { if (activeOrigin) win.loadURL(activeOrigin + "/__local/logout"); } },
       { type: "separator" },
       isMac ? { role: "close" } : { role: "quit" },
     ] },
@@ -145,3 +258,10 @@ app.whenReady().then(() => {
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+app.on("before-quit", (event) => {
+  if (!server && !opening) return;
+  event.preventDefault();
+  if (quitting) return;
+  quitting = true;
+  (async () => { await opening; await stopServer(); app.quit(); })();
+});

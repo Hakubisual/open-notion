@@ -12,6 +12,19 @@
     }
   ];
 
+  // Seoul has no daylight saving, so a fixed +9h offset is exact.
+  const fillVars = (text, title) => {
+    const now = new Date(Date.now() + 9 * 3600000).toISOString();
+    const vars = { date: now.slice(0, 10), today: now.slice(0, 10), time: now.slice(11, 16), title };
+    return String(text).replace(/\{\{(date|today|time|title)\}\}/g, (all, key) => vars[key]);
+  };
+  const fillBlock = (block, title) => {
+    const value = block.type === "component" ? JSON.stringify(title).slice(1, -1) : title;
+    const meta = typeof block.meta === "string" ? JSON.parse(block.meta) : block.meta;
+    if (meta && Array.isArray(meta.richText)) meta.richText = meta.richText.map((run) => ({ ...run, text: fillVars(run.text, title) }));
+    return { text: fillVars(block.text, value), meta: meta ? JSON.stringify(meta) : null };
+  };
+
   registerFeature({
     services: {
       homeWelcome: async (db) => {
@@ -22,7 +35,25 @@
     schema: async (db) => {
       await db.prepare("CREATE TABLE IF NOT EXISTS feature_templates_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)").run();
     },
-    api: async ({ path, method, request, env, db, helpers }) => {
+    api: async ({ path, method, request, env, db, url, helpers }) => {
+      const fromTemplate = method === "POST" && /^\/api\/page\/([^/]+)\/from-template\/?$/.exec(path);
+      if (fromTemplate) {
+        let slug;
+        try { slug = decodeURIComponent(fromTemplate[1]); } catch { slug = null; }
+        const before = slug && await db.prepare("SELECT title FROM pages WHERE slug = ?").bind(slug).first();
+        const response = await handleApi(request, env, db, url, false);
+        if (!response.ok || !before) return response;
+        const page = await db.prepare("SELECT title FROM pages WHERE slug = ?").bind(slug).first();
+        const title = fillVars(page.title, before.title);
+        const rows = (await db.prepare("SELECT id, type, text, meta FROM blocks WHERE page = ?").bind(slug).all()).results || [];
+        const changed = rows.map((row) => ({ row, filled: fillBlock(row, title) })).filter(({ row, filled }) => filled.text !== String(row.text) || (row.meta != null && filled.meta !== JSON.stringify(typeof row.meta === "string" ? JSON.parse(row.meta) : row.meta)));
+        if (title === page.title && !changed.length) return response;
+        await db.batch([
+          db.prepare("UPDATE pages SET title = ? WHERE slug = ?").bind(title, slug),
+          ...changed.map(({ row, filled }) => db.prepare("UPDATE blocks SET text = ?, meta = ? WHERE page = ? AND id = ?").bind(filled.text, filled.meta, slug, row.id)),
+        ]);
+        return response;
+      }
       if (path === "/api/templates" && method === "GET") {
         const asset = await env.ASSETS.fetch(new Request(new URL("/templates-seed.json", request.url)));
         if (!asset.ok) return helpers.json({ error: "템플릿을 불러오지 못했어요." }, 503);

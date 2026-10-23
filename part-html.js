@@ -6,6 +6,7 @@
 // Used by block-html.js (reader), the editor's lazy parts chunk, features/share.js (published/link frames) and
 // features/parts.js (MCP list_parts / set_part_data validation).
 
+import { FRAME_BASE_CSP } from "./sandbox-policy.js";
 export const PART_MAX_BYTES = 64 * 1024;
 export const PART_ID = /^[a-z][a-z0-9-]{1,39}$/;
 
@@ -228,7 +229,7 @@ const PART_BOOT = 'var R=document.documentElement,D=document.getElementById("acp
 function partJson(text) { return String(text).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026"); }
 function partEsc(value) { return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
 
-export const PART_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:";
+export const PART_CSP = FRAME_BASE_CSP;
 
 export function partSrcdoc(partId, dataText, inline, themeId = "", themeCss = "") {
   const data = parsePartData(dataText);

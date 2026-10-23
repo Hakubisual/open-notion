@@ -96,37 +96,88 @@ flowchart LR
 - **빠름**: 프런트엔드 프레임워크가 없고, 편집기·리더가 크기 예산을 넘으면 빌드가 실패합니다.
 - **3개 언어**: 영어·한국어·중국어 간체 화면.
 
-## 빠르게 시작하기
+## 설치
+
+설치 방법은 두 가지입니다. 상황에 맞는 쪽을 고르세요. 나중에 바꾸고 싶으면 백업 파일로 데이터를 옮기면 됩니다.
+
+### 내 컴퓨터에 설치
+
+[최신 릴리스](https://github.com/Hakubisual/open-notion-acard/releases/latest)에서 `Acard-Local-Setup-0.3.0.exe` 를 받아
+실행하고, 첫 화면에서 **이 컴퓨터에서 사용** 을 고르세요. 그걸로 끝입니다. 앱이 뒤에서 작은 서버를 직접 띄우고, 노트는
+`%APPDATA%\Acard Local\data` 에 저장합니다. 계정도 비밀번호도 필요 없고, 어떤 데이터도 이 컴퓨터 밖으로 나가지 않습니다.
+
+> **Windows SmartScreen:** 설치 파일에 아직 코드 서명이 없어 *"Windows의 PC 보호"* 창이 뜰 수 있습니다.
+> **추가 정보 → 실행** 을 누르거나, 앱을 직접 빌드하세요.
+
+macOS·Linux 에서는 소스로 빌드합니다: `cd desktop && bun install && bun run dist`.
+
+앱 없이 브라우저로만 쓰고 싶다면 서버를 바로 실행하세요.
 
 ```sh
 git clone https://github.com/Hakubisual/open-notion-acard.git
 cd open-notion-acard
-bun install
-bun run build
-
-# 이 컴퓨터에서만
+bun install && bun run build
 ACARD_DATA_DIR=./data ACARD_APP_DIR=./dist ACARD_LANG=ko bun local/main.ts
 # http://127.0.0.1:47811/ 접속
 ```
 
-사내망에 공유하려면 `ACARD_HOST=0.0.0.0`, `ACARD_PASSWORD=...`, `ACARD_ALLOWED_HOSTS=<서버 IP>` 를 더하세요.
-Windows·Linux 서비스 등록, 방화벽, 백업, 업데이트, HTTPS 는 [서버 설치 안내](docs/install-server.md)(영문)에 단계별로
-있습니다. 다른 기기는 브라우저나 데스크톱 앱으로 접속합니다([접속 안내](docs/install-client.md), 영문).
+백업·업데이트·삭제까지 단계별 안내: [docs/install-user.md](docs/install-user.md)(영문).
 
-## 데스크톱 앱: Acard Local
+### 팀 서버로 설치
 
-[최신 릴리스](https://github.com/Hakubisual/open-notion-acard/releases/latest)에서 `Acard-Local-Setup-<버전>.exe` 를 받으세요. 처음 켜면 서버 주소를 묻고,
-그 주소에서 Acard 서버가 응답하는지 확인한 뒤 전용 창으로 엽니다. 호스팅판 Acard 앱과 따로 설치되어 서로 영향을 주지
-않습니다.
+한 사람이 사무실 LAN·홈랩·VPN 안에 비밀번호를 건 서버를 하나 세웁니다. Windows·Linux 서비스 등록, 방화벽, 백업, 업데이트,
+HTTPS 는 [서버 설치 안내](docs/install-server.md)(영문)에 있습니다. 나머지 사람은 브라우저로 서버 주소를 열거나, Acard
+Local 을 설치해 **팀 서버에 연결** 을 고르면 됩니다([접속 안내](docs/install-client.md), 영문).
 
-> **Windows SmartScreen:** 설치 파일에 아직 코드 서명이 없어 *"Windows의 PC 보호"* 창이 뜰 수 있습니다.
-> **추가 정보 → 실행** 을 누르거나, `desktop/` 에서 직접 빌드하세요(접속 안내 참고).
+## AI 에이전트 연결
+
+Acard 에는 MCP 엔드포인트와 REST API 가 들어 있어서 Codex, Claude Code 같은 MCP 클라이언트가 페이지를 읽고 쓸 수 있습니다.
+
+### 내 컴퓨터에서
+
+Acard 가 내 컴퓨터에서 돌고 있으면(데스크톱 앱의 **이 컴퓨터에서 사용**, 또는 `bun local/main.ts`) 같은 컴퓨터의
+에이전트는 토큰이나 계정 없이 바로 붙습니다. 데이터는 PC 밖으로 나가지 않습니다.
+
+```sh
+codex mcp add acard --url http://127.0.0.1:47811/mcp
+claude mcp add --transport http acard http://127.0.0.1:47811/mcp
+```
+
+다른 MCP 클라이언트는 설정 JSON 에 이렇게 적습니다.
+
+```json
+{ "mcpServers": { "acard": { "url": "http://127.0.0.1:47811/mcp" } } }
+```
+
+- REST API: `http://127.0.0.1:47811/api/v1`, 명세는 `http://127.0.0.1:47811/api/v1/openapi.json`.
+- 에이전트용 안내: `http://127.0.0.1:47811/AGENTS.md`, `http://127.0.0.1:47811/llms.txt`.
+- CLI(페이지를 마크다운 파일로 내려받고 다시 올리기):
+  `npx -y --package=http://127.0.0.1:47811/acard-cli.tgz acard pull ./notes`. 명령은 `pull`, `push`, `mcp`, `whoami`
+  이고 기본 서버는 이 컴퓨터의 서버입니다.
+
+47811 포트가 이미 쓰이고 있어서 앱이 다른 포트를 골랐다면 그 포트로 바꿔 쓰세요. 토큰 없는 로컬 접근을 끄려면
+`ACARD_LOCAL_API=0` 을 설정합니다.
+
+### 팀 서버에서
+
+팀 서버는 사람의 비밀번호로 에이전트를 들여보내지 않습니다. 서버에 `ACARD_AGENT_TOKEN`(24자 이상)을 설정하고, 에이전트에는
+그 값을 bearer 토큰으로 줍니다.
+
+```sh
+export ACARD_AGENT_TOKEN=...   # 서버와 같은 값
+codex mcp add acard --url http://<서버>:47811/mcp --bearer-token-env-var ACARD_AGENT_TOKEN
+```
+
+다른 클라이언트는 `Authorization: Bearer <토큰>` 헤더를 보내고, CLI 는 `ACARD_URL` 과 `ACARD_TOKEN` 을 읽습니다.
+`ACARD_AGENT_TOKEN` 이 없으면 비밀번호가 걸린 서버의 `/mcp`, `/api/v1` 에 에이전트가 접근할 수 없습니다.
+자세한 내용: [서버 설치 안내](docs/install-server.md#connect-agents)(영문).
 
 ## 포함되지 않은 것
 
 이 레포는 셀프호스트 핵심입니다. 호스팅 서비스에 기대는 기능은 들어 있지 않습니다: AI 글쓰기·다듬기, 채팅 에이전트와
 작업 기록, 이메일·구글 계정, 관리 콘솔, 결제. 그 자리는 작은 중립 스텁(`gate/hosted-*.ts`, `features/ai-service.js`,
-`local/edition.ts`)이 채워 핵심만으로 빌드·실행됩니다. 서버를 직접 돌리기 싫다면 [호스팅판
+`local/edition.ts`)이 채워 핵심만으로 빌드·실행됩니다. 글쓰기 가이드와 그 트리거, AI 글쓰기,
+자동 정리도 호스팅판에만 있습니다. 내 에이전트는 그대로 내 서버에 연결됩니다(위 참고). 서버를 직접 돌리기 싫다면 [호스팅판
 Acard](https://acard.dev) 를 쓰세요.
 
 ## 기여

@@ -2,6 +2,7 @@
   if (window.AcardLive || !window.WebSocket) return;
   var editor = /^\/edit\//.test(location.pathname);
   var slug = decodeURIComponent((location.pathname.match(/^\/(?:edit\/)?([^/]+)\/?$/) || [])[1] || "index");
+  if (slug === "home") slug = "index";
   var last = Number(sessionStorage.getItem("acard-live-id") || 0);
   var socket = null, retry = 0, timer = null, hideTimer = null, lastInput = 0, bar = null, pending = false;
   var identity = (document.querySelector('meta[name="acard-id"]') || {}).content || "";

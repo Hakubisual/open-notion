@@ -149,7 +149,11 @@
       if (/^H[1-6]$/.test(tag)) return push(textBlock("heading" + Math.min(3, Number(tag[1])), runsOf(node, {}, [])));
       if (tag === "UL" || tag === "OL") return list(node, depth);
       if (tag === "BLOCKQUOTE") return push(Object.assign(textBlock("quote", runsOf(node, {}, [])), {}));
-      if (tag === "ASIDE") return push(textBlock("callout", runsOf(node, {}, []), { meta: { tone: "note" } }));
+      if (tag === "ASIDE" || (tag === "FIGURE" && /(^|\s)callout(\s|$)/.test(node.className || ""))) {
+        var icon = node.querySelector(".icon");
+        var bodyEl = tag === "FIGURE" ? (node.lastElementChild || node) : node;
+        return push(textBlock("callout", runsOf(bodyEl, {}, []), { meta: icon && icon.textContent.trim() ? { tone: "note", icon: icon.textContent.trim() } : { tone: "note" } }));
+      }
       if (tag === "PRE") {
         var lang = /language-([\w-]+)/.exec((node.querySelector("code") || node).className || "");
         return push({ type: "code", text: node.textContent.replace(/\n$/, ""), meta: lang ? { lang: lang[1] } : null });
@@ -237,6 +241,7 @@
     ev.preventDefault(); ev.stopImmediatePropagation();
     pasteInto(at, host, html, plain);
   }
+  var MARKDOWN_SIGNS = /(^|\n)(> \[!|- \[[ xX]\] |\x60{3}|---\n)|\*\*\S|\[\[[^\]\n]+\]\]|\[[^\]\n]+\]\([^)\s]+\)|==\S/;
   function pasteInto(at, host, html, plain) {
     if (at.block.type === "code") return document.execCommand("insertText", false, plain);
     var info = caret();
@@ -245,6 +250,15 @@
       info.range.insertNode(a); host.dispatchEvent(new Event("input", { bubbles: true })); return;
     }
     if (/^https?:\/\/\S+$/.test(plain.trim()) && (!info || info.collapsed)) offerImage(at, plain.trim());
+    // issue 134: markdown from Obsidian or an AI chat (callouts, [[links]], **bold**, front matter) goes through the
+    // import reader in the lazy paste-md chunk; a short plain paste stays instant.
+    if (!html && MARKDOWN_SIGNS.test(plain) && editor.lazy) {
+      editor.lazy("paste-md").then(function (api) {
+        var pasted = api.pasteBlocks(plain, (state().pages || []).map(function (p) { return { slug: p.slug, title: p.title }; }));
+        if (pasted.length) insertBlocks(at, pasted); else document.execCommand("insertText", false, plain);
+      }, function () { insertBlocks(at, textBlocks(plain)); });
+      return;
+    }
     var blocks = html ? htmlBlocks(new DOMParser().parseFromString(html, "text/html").body) : textBlocks(plain);
     if (!blocks.length) return document.execCommand("insertText", false, plain.replace(/\r?\n+/g, " "));
     if (blocks.length === 1 && /^(paragraph|heading[123]|bulleted|numbered|quote)$/.test(blocks[0].type) && (at.block.text || blocks[0].type === "paragraph")) {

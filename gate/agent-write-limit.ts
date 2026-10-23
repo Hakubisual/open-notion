@@ -15,9 +15,9 @@ type Stub = { agentWrite(token: string, perMinute: number, perDay: number): Prom
 type Namespace = { idFromName(name: string): unknown; get(id: unknown): unknown };
 export type WriteLimitEnv = { readonly WORKSPACE?: Namespace; readonly SUPABASE_URL?: string; readonly SUPABASE_SERVICE_ROLE_KEY?: string; readonly OWNER_USER_ID?: string };
 
-const READ_TOOLS = new Set(["whoami", "list_pages", "read_page", "list_databases", "read_database", "list_decisions", "get_agent_skills", "list_components", "acard_first_run", "list_tags", "read_blocks", "list_parts"]);
+const READ_TOOLS = new Set(["whoami", "list_pages", "read_page", "list_databases", "read_database", "list_decisions", "get_agent_skills", "list_components", "list_tags", "read_blocks", "list_parts"]);
 
-// MCP: every tools/call except the read tools above counts (journal_* and memo_add included: they write too). Other JSON-RPC
+// MCP: every tools/call except the read tools above counts (journal_* included: they write too). Other JSON-RPC
 // methods (initialize, tools/list) never count. A batch counts each call.
 export function mcpWriteCalls(body: unknown): number {
   const list = Array.isArray(body) ? body : [body];

@@ -64,6 +64,9 @@
 .home-widgets input { width: 18px; height: 18px; accent-color: var(--accent); }
 .home-widgets button { width: 34px; height: 34px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); color: inherit; cursor: pointer; font-size: var(--fs-16); }
 .home-widgets button:disabled { opacity: .35; cursor: default; }
+.home-widgets .opt { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line-2); border-radius: 10px; padding: 10px 14px; font-size: var(--fs-17); cursor: pointer; }
+.home-widgets .opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.home-widgets .opt small { display: block; color: var(--fg-dim); font-size: var(--fs-13); }
 .ai-usage { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); }
 .ai-usage h2 { margin: 0 0 8px; font-size: var(--fs-17); }
 .ai-usage p { margin: 0 0 4px; font-size: var(--fs-16); }
@@ -188,3 +191,8 @@
 #step3 .stuck[hidden], #step3 .btn-skip[hidden] { display: none; }
 #step3 .btn-skip { display: flex; justify-content: center; width: min(320px, 100%); margin: 14px auto 0; padding: 12px 20px; border: 1px solid var(--line-2); border-radius: 10px; background: transparent; color: var(--ink, inherit); font-size: var(--fs-16); font-weight: 600; text-decoration: none; }
 #step3 .btn-skip:hover { background: var(--accent-soft); }
+.plan-includes { list-style: none; margin: 8px auto 6px; padding: 0; display: grid; gap: 6px; width: fit-content; max-width: 100%; text-align: left; font-size: var(--fs-16); }
+.plan-includes li { position: relative; padding-left: 24px; }
+.plan-includes li::before { content: ""; position: absolute; left: 3px; top: .38em; width: 10px; height: 5px; border-left: 2px solid var(--accent); border-bottom: 2px solid var(--accent); transform: rotate(-45deg); }
+.plan-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
+.plan-actions .btn { height: 44px; padding: 0 16px; font-size: var(--fs-16); }

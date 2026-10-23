@@ -1,8 +1,9 @@
 (function () {
   var editor = window.AcardEditor;
   if (!editor) return;
+  var root = document.getElementById("doc");
   function mount() {
-    document.querySelectorAll(".dbtools:not([data-db-rules])").forEach(function (bar) {
+    root.querySelectorAll(".dbtools:not([data-db-rules])").forEach(function (bar) {
       bar.dataset.dbRules = "1";
       var host = bar.closest("[data-dbref]"), slug = host ? host.dataset.dbref : editor.slug;
       var button = document.createElement("button");
@@ -18,5 +19,5 @@
       bar.appendChild(button);
     });
   }
-  editor.on("ready", function () { mount(); new MutationObserver(mount).observe(document.body, { childList: true, subtree: true }); });
+  editor.on("ready", function () { mount(); new MutationObserver(mount).observe(root, { childList: true, subtree: true }); });
 })();

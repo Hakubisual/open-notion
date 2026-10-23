@@ -1,0 +1,16 @@
+.reader .shell > main.graph-main { padding-top: 44px; max-width: none; }
+.graph-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.graph-heading h1 { margin: 0; font-size: var(--fs-32); line-height: var(--lh-tight); letter-spacing: var(--ls-heading); font-weight: 750; }
+.graph-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--color-text-dim); font-size: var(--fs-14); }
+.graph-tools label { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; cursor: pointer; }
+#graph-q { min-height: 36px; width: 200px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; }
+#graph-q:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.graph-status { margin: 0 0 8px; min-height: 1.4em; color: var(--color-text-dim); font-size: var(--fs-12); }
+.graph-canvas { display: block; width: 100%; height: calc(100vh - 220px); min-height: 360px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); touch-action: none; }
+@media (max-width: 899px) {
+  .reader .shell > main.graph-main { padding-top: 16px; }
+  .graph-heading h1 { font-size: var(--fs-21); }
+  .graph-tools { width: 100%; }
+  #graph-q { flex: 1 1 100%; width: auto; }
+  .graph-canvas { height: calc(100vh - 260px); min-height: 300px; }
+}

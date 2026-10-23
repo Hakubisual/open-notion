@@ -31,7 +31,8 @@
     if (!snapshot || snapshot.page.updated !== body.base_updated) return conflict();
     const old = new Map(snapshot.blocks.map(block => [block.id, block]));
     if (body.deletes.some(id => !old.has(id))) return json({ error: "없는 블록이에요." }, 400);
-    const upserts = await guardButtonBlocks(db, current.blocks, humanMarkSaves(current.blocks, normaliseBlocks(body.upserts), Date.now(), await humanAgentPage(db, slug)));
+    const buttons = new Set();
+    const upserts = await guardButtonBlocks(db, current.blocks, humanMarkSaves(current.blocks, normaliseBlocks(body.upserts), Date.now(), await humanAgentPage(db, slug)), buttons);
     const blocks = new Map(current.blocks.map(block => [block.id, block]));
     for (const id of body.deletes) blocks.delete(id);
     for (const block of upserts) blocks.set(block.id, block);
@@ -77,6 +78,8 @@
     for (const dst of beforeLinks) if (!afterLinks.has(dst)) statements.push(db.prepare(`DELETE FROM links WHERE src = ? AND dst = ? AND ${guard}`).bind(slug, dst, version));
     for (const dst of afterLinks) if (!beforeLinks.has(dst)) statements.push(db.prepare(`INSERT OR IGNORE INTO links (src, dst) SELECT ?, ? WHERE ${guard}`).bind(slug, dst, version));
     statements.push(db.prepare(`UPDATE pages SET title = ?, updated = ?, source = 'editor', hash = ? WHERE slug = ? AND ${guard}`).bind(title, updated, hash, slug, version));
+    // issue 107: who saved each new button action list (a press later runs with no more than that person's permission).
+    for (const id of buttons) statements.push(buttonSaverStatement(db, blockButtonKey(slug, id), { sql: guard, binds: [version] }));
     const result = await db.batch(statements);
     if (!Number(result[0]?.meta?.changes)) return conflict();
     if (body.title !== undefined) await syncPageTitleToRow(db, slug, title);

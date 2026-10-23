@@ -1,7 +1,8 @@
 import { equationHtml } from "./equation-html.js";
 import { visualBlockHtml } from "./visual-html.js";
 import { partBlockHtml, partSuggestLine } from "./part-html.js";
-import { renderComponentBlock, fallbackCardHtml, componentCss } from "./component-registry.js";
+import { renderComponentBlock, fallbackCardHtml, componentOwnCss, familyCss, getComponent, COMPONENT_BASE_CSS } from "./component-registry.js";
+import { checkTree, renderTreeHtml, PLUGIN_UI_CSS } from "./plugin-ui.js";
 import "./components/index.js";
 import "./assets/editor-model.js";
 
@@ -9,9 +10,77 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
+// issue 144: a plugin block. Signed-in readers get a placeholder the lazy plugins runtime fills with a sandboxed frame;
+// shared and published pages (ctx.page.readOnly) and every visitor without plugins get the editor-approved snapshot as
+// static HTML (no script, controls disabled) or a short note. Plugin code never runs on a public page.
+const PLUGIN_ID = /^[a-z][a-z0-9-]{1,39}$/;
+const PLUGIN_MADE_BY = "플러그인이 만든 화면 ·";
+function pluginBlockHtml(block, ctx, once) {
+  const meta = block.meta || {};
+  const plugin = PLUGIN_ID.test(String(meta.plugin || "")) ? String(meta.plugin) : "";
+  const part = /^[a-z][a-z0-9-]{0,39}$/.test(String(meta.block || "")) ? String(meta.block) : "";
+  const style = once.plugin ? "" : (once.plugin = true, "<style>" + PLUGIN_UI_CSS.replace(/:root/g, ".pl-static") + "</style>");
+  const checked = meta.snapshot ? checkTree(meta.snapshot.tree ?? meta.snapshot) : { tree: null };
+  const name = escapeHtml(String((meta.snapshot && meta.snapshot.name) || plugin || "플러그인"));
+  const snapshot = checked.tree ? '<div class="pl-static">' + renderTreeHtml(checked.tree, { static: true }) + '<p class="pl-prov">' + escapeHtml(PLUGIN_MADE_BY) + " " + name + "</p></div>" : "";
+  const live = ctx && ctx.page && !ctx.page.readOnly && ctx.plugins === true;
+  const inner = live
+    ? '<div class="pl-host">' + (snapshot || '<div class="pl-skeleton"></div>') + "</div>"
+    : snapshot || '<p class="pl-note">플러그인 블록 · Acard 에서 열면 보여요</p>';
+  if (live && !ctx.pluginsLoaded) ctx.pluginsLoaded = true;
+  return style + '<figure class="pl-block" data-plugin="' + plugin + '" data-block="' + part + '">' + inner + (meta.caption ? "<figcaption>" + escapeHtml(String(meta.caption)) + "</figcaption>" : "") + "</figure>" +
+    (live && ctx.pluginsLoaded === true && !ctx.pluginsScript ? (ctx.pluginsScript = true, '<script src="/lazy/plugins.js?v=__PLUGINS_JS__" async></script>') : "");
+}
+
 function blockInline(block) {
-  if (block.meta && Array.isArray(block.meta.richText) && globalThis.EditorModel) return evidenceTags(globalThis.EditorModel.richHtml(block.meta.richText, block.text));
+  if (block.meta && Array.isArray(block.meta.richText) && globalThis.EditorModel) return evidenceTags(globalThis.EditorModel.richHtml(wikiRuns(block.meta.richText), block.text));
   return inline(block.text);
+}
+
+// [[대상]], [[대상|별칭]], [[대상#제목]]: 대상은 슬러그가 먼저, 아니면 휴지통 밖 페이지 제목(대소문자·공백 무시, 최근 수정 우선).
+// 제목 목록(index)이 없으면 공백 없는 대상만 슬러그로 본다. renderBlocks 가 ctx.pages 로 한 번 만들어 wikiPages 에 둔다.
+export const WIKI_LINK = /\[\[([^[\]\n]+)\]\]/g;
+let wikiPages = null;
+const wikiKey = (text) => String(text ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+
+export function wikiIndex(pages) {
+  const slugs = new Set(), titles = new Map(), stamps = new Map();
+  for (const page of pages || []) {
+    const slug = String(page.slug), key = wikiKey(page.title), stamp = Number(page.updated) || 0;
+    slugs.add(slug);
+    if (key && (!titles.has(key) || stamp > stamps.get(key))) { titles.set(key, slug); stamps.set(key, stamp); }
+  }
+  return { slugs, titles };
+}
+
+export function wikiTarget(raw, index) {
+  const bar = raw.indexOf("|");
+  const head = bar < 0 ? raw : raw.slice(0, bar);
+  const hash = head.indexOf("#");
+  const name = (hash < 0 ? head : head.slice(0, hash)).trim();
+  const heading = hash < 0 ? "" : head.slice(hash + 1).trim();
+  const alias = bar < 0 ? "" : raw.slice(bar + 1).trim();
+  if (!name) return null;
+  const slug = index && index.slugs.has(name) ? name : (index && index.titles.get(wikiKey(name))) || (/\s/.test(name) ? null : name);
+  if (!slug) return null;
+  return { slug, href: "/" + slug + "/" + (heading ? "#" + headingSlug(heading) : ""), text: alias || name };
+}
+
+function wikiRuns(runs) {
+  return runs.flatMap((run) => {
+    if (!run || typeof run.text !== "string" || run.href || run.mention || run.code || !run.text.includes("[[")) return [run];
+    const out = [];
+    let offset = 0;
+    for (const match of run.text.matchAll(WIKI_LINK)) {
+      const link = wikiTarget(match[1], wikiPages);
+      if (!link) continue;
+      if (match.index > offset) out.push({ ...run, text: run.text.slice(offset, match.index) });
+      out.push({ ...run, text: link.text, href: link.href });
+      offset = match.index + match[0].length;
+    }
+    if (offset < run.text.length) out.push({ ...run, text: run.text.slice(offset) });
+    return out;
+  });
 }
 
 // Evidence labels (research report style): the text [MEASURED], [CLAIMED] or [ESTIMATED] draws as a colored tag. The stored
@@ -20,20 +89,24 @@ const EVIDENCE = /\[(MEASURED|CLAIMED|ESTIMATED)\]/g;
 export function evidenceTags(html) {
   return String(html).replace(EVIDENCE, (_, kind) => '<span class="ev ev-' + kind.toLowerCase() + '">' + kind + "</span>");
 }
-// Tag look on every page (the tag can appear anywhere); report pages restyle the rest. Inline with the first tag of a page.
-export const EVIDENCE_CSS = ".ev{display:inline-block;font-family:var(--font-mono);font-size:var(--fs-11);font-weight:500;letter-spacing:.06em;border-radius:var(--radius-pill);padding:0 var(--space-2);vertical-align:1px;white-space:nowrap;line-height:1.7}" +
-  ".ev-measured{background:var(--rp-measured-bg,var(--color-success-bg));color:var(--rp-measured-fg,var(--color-success-fg))}.ev-claimed{background:var(--rp-claimed-bg,var(--color-warning-bg));color:var(--rp-claimed-fg,var(--color-warning-fg))}.ev-estimated{background:var(--rp-estimated-bg,var(--color-info-bg));color:var(--rp-estimated-fg,var(--color-info-fg))}";
+// Tag look on every page (the tag can appear anywhere), in the page's own font and the success/warning/info tones.
+// Inline with the first tag of a page.
+export const EVIDENCE_CSS = ".ev{display:inline-block;font-size:var(--fs-11);font-weight:600;letter-spacing:.03em;border-radius:var(--radius-pill);padding:0 var(--space-2);vertical-align:1px;white-space:nowrap;line-height:1.7}" +
+  ".ev-measured{background:var(--color-success-bg);color:var(--color-success-fg)}.ev-claimed{background:var(--color-warning-bg);color:var(--color-warning-fg)}.ev-estimated{background:var(--color-info-bg);color:var(--color-info-fg)}";
 
 export function inline(text) {
   const source = String(text);
   // Tokenize before escaping: destinations and code are opaque, never input to emphasis replacements.
-  const tokens = /`(?<code>[^`]+)`|\[\[(?<slug>[^\]\s]+)\]\]|\[(?<label>[^\]]+)\]\((?<href>(?:\/|#|https?:)[^)\s]+)\)|(?<url>https?:\/\/[^\s<>]+)|\*\*(?<bold>[^*]+)\*\*|(?<![\p{L}\p{N}_*])\*(?!\s)(?<star>[^*\n]*?[^\s*])\*(?![\p{L}\p{N}_*])|(?<![\p{L}\p{N}_])_(?!\s)(?<under>[^_\n]*?[^\s_])_(?![\p{L}\p{N}_])/gu;
+  const tokens = /`(?<code>[^`]+)`|\[\[(?<wiki>[^[\]\n]+)\]\]|\[(?<label>[^\]]+)\]\((?<href>(?:\/|#|https?:)[^)\s]+)\)|(?<url>https?:\/\/[^\s<>]+)|\*\*(?<bold>[^*]+)\*\*|(?<![\p{L}\p{N}_*])\*(?!\s)(?<star>[^*\n]*?[^\s*])\*(?![\p{L}\p{N}_*])|(?<![\p{L}\p{N}_])_(?!\s)(?<under>[^_\n]*?[^\s_])_(?![\p{L}\p{N}_])/gu;
   let html = "", offset = 0;
   for (const match of source.matchAll(tokens)) {
     html += escapeHtml(source.slice(offset, match.index));
-    const { code, slug, label, href, url, bold, star, under } = match.groups;
+    const { code, wiki, label, href, url, bold, star, under } = match.groups;
     if (code !== undefined) html += "<code>" + escapeHtml(code) + "</code>";
-    else if (slug !== undefined) html += '<a href="/' + escapeHtml(slug) + '/">' + escapeHtml(slug) + "</a>";
+    else if (wiki !== undefined) {
+      const link = wikiTarget(wiki, wikiPages);
+      html += link ? '<a href="' + escapeHtml(link.href) + '">' + escapeHtml(link.text) + "</a>" : escapeHtml(match[0]);
+    }
     else if (href !== undefined) html += globalThis.EditorModel.safeHref(href) ? '<a href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener"' : "") + ">" + inline(label) + "</a>" : inline(label);
     else if (url !== undefined) html += escapeHtml(url);
     else if (bold !== undefined) html += "<strong>" + inline(bold) + "</strong>";
@@ -109,29 +182,16 @@ const BLOCK_COLOR_STYLE = "<style>" + BLOCK_COLOR_CSS + "</style>";
 // Heading 4 (notion-parity C16) rides inline the same way: the reader first-screen CSS had no bytes left.
 export const HEADING4_CSS = "article h5,.blocks h5{font-size:var(--fs-15);font-weight:650;line-height:1.45;margin:20px 0 4px}.blocks .tocblock .lvl5{padding-left:54px}";
 const HEADING4_STYLE = "<style>" + HEADING4_CSS + "</style>";
-// Research report page style (owner 2026-10-22, reference: a paper-like report page). A page whose setting font is "report"
-// gets these rules inline (reader, shared link, print), scoped to .rp so no other page changes. Built from blocks every page
-// already has: the date line above the title is the byline, the first paragraph is the lede, a quote is the original question,
-// a stat-row is the tile grid, every equation block is numbered (1)(2)..., a captioned figure is numbered 그림 1, 2 ...
-// Colors come from tokens.css --rp-* (light + dark).
+// Research report page style (font "report"). Owner 2026-10-23: a report page looks like any other Acard page (same fonts,
+// background, width, byline place, tiles, tables). It only adds numbering, inline in the reader and the shared link and
+// scoped to .rp: every equation block is numbered (1)(2)..., a captioned figure is numbered 그림 1, 2 ...
+// The evidence tags (EVIDENCE_CSS) draw on every page.
 const RP = ".rp";
 export const REPORT_CSS = [
-  RP + "{--bg:var(--rp-bg);--surface:var(--rp-surface);--fg:var(--rp-ink);--fg-dim:var(--rp-ink2);--line:var(--rp-rule);--accent:var(--rp-accent);--content-width:980px;background:var(--rp-bg);color:var(--rp-ink);font-family:var(--rp-sans);counter-reset:rp-eq rp-fig}",
-  "body:has(" + RP + "){background:var(--rp-bg)}",
-  RP + " :is(h1,.sv-title,.title-input){font-family:var(--rp-serif);font-weight:500;font-size:clamp(var(--fs-32),5vw,var(--fs-56));line-height:1.15;letter-spacing:-.02em}",
-  RP + " .blocks :is(h2,h3,h4){font-family:var(--rp-serif);font-weight:500;letter-spacing:-.015em}" + RP + " .blocks>h2{font-size:var(--fs-32)}" + RP + " .blocks>h3{font-size:var(--fs-28);line-height:1.2;margin:var(--space-16) 0 var(--space-4)}" + RP + " .blocks>h4{font-size:var(--fs-21)}",
-  RP + " .blocks a{color:var(--rp-accent)}" + RP + " .blocks p{line-height:1.7}",
-  RP + " .byline," + RP + " .sv-meta{font-family:var(--font-mono);font-size:var(--fs-12);letter-spacing:.08em;text-transform:uppercase;color:var(--rp-accent)}",
-  RP + " .blocks>p:first-of-type{font-family:var(--font-mono);font-size:var(--fs-12);letter-spacing:.08em;text-transform:uppercase;color:var(--rp-accent);margin-bottom:var(--space-2)}" + RP + " .blocks>p:nth-of-type(2){font-size:var(--fs-19);color:var(--rp-ink2)}",
-  RP + " .blocks blockquote{font-family:var(--font-mono);font-size:var(--fs-13);background:var(--rp-surface);border:1px solid var(--rp-rule);border-radius:var(--rp-radius);padding:var(--space-3) var(--space-4);color:var(--rp-ink2);font-style:normal}",
-  RP + " .blocks blockquote+span+p,"+ RP + " .blocks blockquote+p{color:var(--rp-muted);font-size:var(--fs-13)}",
-  RP + " .ui-statrow-item{background:var(--rp-surface);border-color:var(--rp-rule);border-radius:var(--radius-sm);box-shadow:none}" + RP + " .ui-statrow-label{font-family:var(--font-mono);font-size:var(--fs-11);letter-spacing:.06em;text-transform:uppercase;color:var(--rp-muted)}" + RP + " .ui-statrow-value{font-family:var(--rp-serif);font-weight:500;font-size:var(--fs-28)}" + RP + " .ui-statrow-note{color:var(--rp-ink2);font-size:var(--fs-13)}",
-  RP + " .mathblock{position:relative;counter-increment:rp-eq;background:none;padding:var(--space-2) 3.2em;margin:var(--space-2) 0}" + RP + " .mathblock::after{content:'(' counter(rp-eq) ')';position:absolute;right:0;top:50%;transform:translateY(-50%);font-size:var(--fs-13);color:var(--rp-muted);font-style:normal;font-variant-numeric:tabular-nums}",
-  RP + " figure.acv-fig{background:var(--rp-surface)!important;border:1px solid var(--rp-rule)!important;border-radius:var(--radius-sm)!important}" + RP + " figure:has(figcaption){counter-increment:rp-fig}" + RP + " figure figcaption{text-align:left;opacity:1!important;color:var(--rp-ink2);font-size:var(--fs-13)}" + RP + " figure figcaption::before{content:'\\ADF8\\B9BC  ' counter(rp-fig) '. ';color:var(--rp-ink)}",
-  RP + " .stable{background:var(--rp-surface);border-color:var(--rp-rule)}" + RP + " .stable :is(th,td){background:transparent;border-color:var(--rp-rule)}" + RP + " .stable th{font-size:var(--fs-12);letter-spacing:.04em;font-weight:600;color:var(--rp-ink2)}",
-  RP + " .blocks hr{border:0;border-top:1px solid var(--rp-rule2);margin:var(--space-16) 0 var(--space-5)}" + RP + " .blocks hr~p{color:var(--rp-muted);font-size:var(--fs-13)}",
-  RP + " .callout{background:var(--rp-surface);border:1px solid var(--rp-rule)}",
-  "@media (max-width:720px){" + RP + " .blocks>h3{font-size:var(--fs-24)}}@media (max-width:500px){" + RP + " .mathblock{padding-inline:2.4em}}",
+  RP + "{counter-reset:rp-eq rp-fig}",
+  RP + " .mathblock{position:relative;counter-increment:rp-eq;padding-inline:3.2em}" + RP + " .mathblock::after{content:'(' counter(rp-eq) ')';position:absolute;right:var(--space-4);top:50%;transform:translateY(-50%);font-size:var(--fs-13);color:var(--fg-dim);font-style:normal;font-variant-numeric:tabular-nums}",
+  RP + " figure:has(figcaption){counter-increment:rp-fig}" + RP + " figure figcaption::before{content:'\\ADF8\\B9BC  ' counter(rp-fig) '. ';font-weight:600}",
+  "@media (max-width:500px){" + RP + " .mathblock{padding-inline:2.4em}}",
 ].join("");
 export const isReportPage = (settings) => Boolean(settings && settings.font === "report");
 // Toggle headings (notion-parity C7): the heading sits beside the toggle arrow inside its summary.
@@ -227,6 +287,10 @@ function columnTemplate(widths, n) {
 const KNOWN_EMPTY = new Set(["paragraph", "subpage", "photo-text"]);
 
 export function renderBlocks(blocks, ctx, headingContext) {
+  if (!headingContext && ctx && Array.isArray(ctx.pages) && wikiPages === null) {
+    wikiPages = ctx.wikiPages || (ctx.wikiPages = wikiIndex(ctx.pages));
+    try { return renderBlocks(blocks, ctx); } finally { wikiPages = null; }
+  }
   // Old text-only columns draw as column blocks (notion-parity C13); a nested call already has converted input.
   if (!headingContext && globalThis.ColumnsModel) blocks = globalThis.ColumnsModel.columnsFromLegacy(blocks);
   const out = [];
@@ -240,8 +304,18 @@ export function renderBlocks(blocks, ctx, headingContext) {
   // One color <style> per page: ctx carries it across calls (intro + body), colorOnce across child calls without a ctx.
   const colorOnce = headingContext && headingContext.colorOnce ? headingContext.colorOnce : { done: false };
   const h4Style = () => { if (colorOnce.h4 || (ctx && ctx.heading4Css)) return ""; colorOnce.h4 = true; if (ctx) ctx.heading4Css = true; return HEADING4_STYLE; };
-  // ds10: one <style> with every component's rules per page, inline because published pages drop <link>s.
-  const uiStyle = () => { if (colorOnce.ui || (ctx && ctx.componentCss)) return ""; colorOnce.ui = true; if (ctx) ctx.componentCss = true; return "<style>" + componentCss() + "</style>"; };
+  // ds10: component rules ride inline (published pages drop <link>s): the shared base once per page, then each
+  // component's own rules once, just before its first block. ctx carries both across calls (intro + body).
+  const uiSeen = colorOnce.uiIds || (colorOnce.uiIds = (ctx && ctx.componentIds) || new Set());
+  if (ctx) ctx.componentIds = uiSeen;
+  const uiStyle = (id) => {
+    let css = "";
+    if (!colorOnce.ui && !(ctx && ctx.componentCss)) { colorOnce.ui = true; if (ctx) ctx.componentCss = true; css += COMPONENT_BASE_CSS; }
+    const fam = id && getComponent(id) ? getComponent(id).family : "";
+    if (fam && !uiSeen.has("family:" + fam)) { uiSeen.add("family:" + fam); css += familyCss(fam); }
+    if (id && !uiSeen.has(id)) { uiSeen.add(id); css += componentOwnCss(id); }
+    return css ? "<style>" + css + "</style>" : "";
+  };
   const colorStyle = () => { if (colorOnce.done || (ctx && ctx.blockColorCss)) return ""; colorOnce.done = true; if (ctx) ctx.blockColorCss = true; return BLOCK_COLOR_STYLE; };
   for (const block of headingContext ? [] : blocks) {
     if (block.type === "heading1" || block.type === "heading2" || block.type === "heading3" || block.type === "heading4") {
@@ -484,7 +558,7 @@ export function renderBlocks(blocks, ctx, headingContext) {
         }
         if (chain.length) {
           out.push('<nav class="crumbs">' + chain.map((p) =>
-            '<a href="/' + (p.slug === "index" ? "" : encodeURIComponent(p.slug) + "/") + '">' + escapeHtml(p.title) + "</a>"
+            '<a href="/' + (p.slug === "index" ? "home" : encodeURIComponent(p.slug)) + '/">' + escapeHtml(p.title) + "</a>"
           ).join('<span class="sep" aria-hidden="true">›</span>') + "</nav>");
         }
         break;
@@ -517,9 +591,13 @@ export function renderBlocks(blocks, ctx, headingContext) {
         break;
       }
       case "db_ref": out.push(block.meta && block.meta.html ? block.meta.html.replace(/loading="eager" fetchpriority="high"/g, 'loading="lazy"') : '<div class="db"><p class="dbempty">연결된 데이터베이스를 불러오지 못했어요.</p></div>'); break;
+      case "plugin": {
+        out.push(pluginBlockHtml(block, ctx, colorOnce));
+        break;
+      }
       case "component": {
-        // ds10: one <style> with every component's rules per page (inline: published pages drop <link>s).
-        if (!colorOnce.ui && !(ctx && ctx.componentCss)) { colorOnce.ui = true; if (ctx) ctx.componentCss = true; out.push("<style>" + componentCss() + "</style>"); }
+        const uiCss = uiStyle(String((block.meta && block.meta.ui) || ""));
+        if (uiCss) out.push(uiCss);
         out.push(renderComponentBlock(block));
         break;
       }
@@ -738,7 +816,7 @@ export function overviewHtml(blocks) {
 
 export function thumbBarHtml(slug) {
   return '<nav class="thumbbar" aria-label="빠른 이동">' +
-    '<a href="/"' + (slug === "index" ? ' class="on" aria-current="page"' : "") + '><span class="ti" aria-hidden="true">⌂</span>홈</a>' +
+    '<a href="/home/"' + (slug === "index" ? ' class="on" aria-current="page"' : "") + '><span class="ti" aria-hidden="true">⌂</span>홈</a>' +
     '<button type="button" data-open="palette"><span class="ti" aria-hidden="true">⌕</span>검색</button>' +
     '<button type="button" data-new-page><span class="ti" aria-hidden="true">+</span>새 페이지</button>' +
     '<button type="button" data-open="pages"><span class="ti" aria-hidden="true">☰</span>페이지</button></nav>';
@@ -764,7 +842,7 @@ export function navTree(pages, current) {
 }
 
 
-const WORDMARK_SVG = "<svg class=\"wordmark\" viewBox=\"0 0 416.7 100\" role=\"img\" aria-label=\"Acard\" focusable=\"false\"><use href=\"/wordmark-symbol.svg#w\"/></svg>";
+const WORDMARK_SVG = "<svg class=\"wordmark\" viewBox=\"0 0 375.59 100\" role=\"img\" aria-label=\"Acard\" focusable=\"false\"><use href=\"/wordmark-symbol.svg#w\"/></svg>";
 // The logo mark doubles as the "A" of "Acard"; other site names keep the mark + text.
 export function brandMarkHtml(siteName, size) {
   const name = siteName || "Acard";
@@ -778,23 +856,23 @@ export function sideNavHtml(pages, current, siteName) {
   const navIco = (d) => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + d + '"/></svg>';
   const navItem = (act, d, label) => '<button type="button" data-act="' + act + '">' + navIco(d) + label + "</button>";
   const nav = '<div class="side-nav">' +
-    '<a href="/"' + (current === "index" ? ' class="on" aria-current="page"' : "") + ">" + navIco("M4 10.5 12 4l8 6.5V20h-5v-6H9v6H4z") + "홈</a>" +
+    '<a href="/home/"' + (current === "index" ? ' class="on" aria-current="page"' : "") + ">" + navIco("M4 10.5 12 4l8 6.5V20h-5v-6H9v6H4z") + "홈</a>" +
     navItem("all", "M14 3H6v18h12V7zm0 0v4h4M9 12h6m-6 4h6", "모든 페이지") +
     navItem("recent", "M12 7v5l3 2m6-2a9 9 0 1 1-18 0 9 9 0 0 1 18 0", "최근 편집됨") +
     navItem("favorites", "m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z", "즐겨찾기") +
     navItem("trash", "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13m-8 4v5m4-5v5", "휴지통") + "</div>";
-  return '<div class="side-brand"><a class="brand" href="/" aria-label="홈">' + brandMarkHtml(siteName, 26) + "</a>" +
+  return '<div class="side-brand"><a class="brand" href="/home/" aria-label="홈">' + brandMarkHtml(siteName, 26) + "</a>" +
     '<div class="side-tools"><button type="button" class="icon" id="side-more" aria-label="더 보기" title="더 보기" aria-haspopup="menu" aria-expanded="false" aria-controls="side-menu">' + ico("ellipsis") + "</button>" +
     '<ul class="side-menu" id="side-menu" role="menu" hidden>' +
     '<li><button type="button" role="menuitem" data-act="all">모든 페이지</button></li>' +
     '<li><button type="button" role="menuitem" data-act="recent">최근 편집됨</button></li>' +
-    '<li><a role="menuitem" href="/import">노션에서 가져오기</a></li>' +
+    '<li><a role="menuitem" href="/import">노션·옵시디언에서 가져오기</a></li>' +
     '<li><button type="button" role="menuitem" data-act="trash">휴지통</button></li>' +
     '<li><button type="button" role="menuitem" data-act="suggest">✦ 정리 제안</button></li></ul>' +
     '<button class="icon" id="collapse" aria-label="사이드바 접기" aria-expanded="true" title="사이드바 접기">' + ico("layout-panel-left") + "</button></div></div>" +
     '<button type="button" class="side-search" id="palette-open" aria-label="빠른 검색">' + ico("search") + '<span>검색하기</span><kbd class="kbd">Ctrl K</kbd></button>' + nav +
     '<div class="side-ws"><div class="side-ws-head"><span>작업 공간</span><button type="button" class="icon side-add" data-act="new" aria-label="새 페이지" title="새 페이지">' + ico("plus") + "</button></div>" +
-    '<div class="side-root open"><div class="row"><button type="button" class="tw" aria-label="접기">' + ico("chevron-down") + '</button><a href="/"><img src="/logo-16.svg" alt="" width="18" height="18">' + name + "</a></div>" +
+    '<div class="side-root open"><div class="row"><button type="button" class="tw" aria-label="접기">' + ico("chevron-down") + '</button><a href="/home/"><img src="/logo-16.svg" alt="" width="18" height="18">' + name + "</a></div>" +
     navTree(pages, current) + "</div>" +
     '<button type="button" class="side-new" data-act="new">' + ico("plus") + "새 페이지</button></div>";
 }
@@ -822,7 +900,7 @@ export function sideFootHtml() {
 
 export function mobileBarHtml(siteName) {
   return '<header class="mbar"><button class="icon" id="menu" aria-label="메뉴" aria-expanded="false" aria-controls="sidebar">' + ico("layout-panel-left") + "</button>" +
-    '<a class="brand" href="/">' + brandMarkHtml(siteName, 24) + "</a></header>";
+    '<a class="brand" href="/home/">' + brandMarkHtml(siteName, 24) + "</a></header>";
 }
 
 export function sidePanelHtml() {

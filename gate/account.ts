@@ -1,15 +1,16 @@
 import {
   ACCESS_COOKIE, OWNER_WS, clearSessionCookies, readCookies, readSession, sessionCookies, setCookie,
-  storeFor, wipeWorkspace, workspaceIdFor, oauthUserId, type Session, type TenancyEnv,
+  wipeWorkspace, workspaceIdFor, oauthUserId, type Session, type TenancyEnv,
 } from "./tenancy";
 import { isLang, langCookie } from "./i18n";
 
 export type AccountEnv = TenancyEnv & {
-  readonly OUTBOX?: { get(key: string): Promise<string | null>; put(key: string, value: string, options?: unknown): Promise<void>; list(options: { prefix: string }): Promise<{ keys: { name: string }[] }> };
+  readonly OUTBOX?: { get(key: string): Promise<string | null>; put(key: string, value: string, options?: unknown): Promise<void>; delete?(key: string): Promise<void>; list(options: { prefix: string }): Promise<{ keys: { name: string }[] }> };
   readonly SUPABASE_URL?: string;
   readonly SUPABASE_ANON_KEY?: string;
   readonly SUPABASE_SERVICE_ROLE_KEY?: string;
   readonly SEND_EMAIL_HOOK_SECRET?: string;
+  readonly ACARD_GUIDE?: string;
   readonly DEV_OUTBOX_TOKEN?: string;
   readonly SITE_URL?: string;
   readonly GOOGLE_CLIENT_ID?: string;
@@ -19,7 +20,8 @@ export type AccountEnv = TenancyEnv & {
 const VERIFIER = "acard_pkce";
 const NEXT = "acard_next";
 const GAUTH = "acard_gauth";
-const safeNext = (value: string | null | undefined) => (value && value.startsWith("/") && !value.startsWith("//") ? value : "/");
+// A backslash or control character turns "/\evil.test" into "//evil.test" in browsers.
+const safeNext = (value: string | null | undefined) => (value && value.startsWith("/") && !value.startsWith("//") && !/[\\\u0000-\u001f\u007f]/.test(value) ? value : "/");
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Where a new account lands after the email link: the invite screen, or (acard-next-10 #4) back to the OAuth consent the
 // local app opened, so a local-edition user without an invite code finishes connecting. Anything else goes home.
@@ -86,13 +88,22 @@ async function rest(env: AccountEnv, token: string, path: string, init: { method
   return { ok: res.ok, status: res.status, data };
 }
 
+// "This user finished onboarding" (gate/agent-entry.ts routeLoggedIn), kept in OUTBOX KV for a day like beta-access:. A profile
+// write cannot undo onboarded_at (the PATCH below drops it once set) and a lang change rides on the acard_lang cookie set in the
+// same response, so the only write that makes the key wrong is deleting the account.
+export const onboardedKey = (uid: string) => `profile-onboarded:${uid}`;
+
 export async function loadProfile(env: AccountEnv, session: Session): Promise<Profile | null> {
   const r = await rest(env, session.token, `/profiles?id=eq.${session.user.sub}&select=${PROFILE_COLS}`);
   if (!r.ok || !Array.isArray(r.data)) throw new Error(`profile lookup ${r.status}`);
   return r.data[0] ?? null;
 }
 
+// notes.example.com/<word> paths the site itself answers (gate/_worker.js, gate/agent-entry.ts) can never be someone's address.
+const APP_WORDS = new Set(["home", "edit", "print", "import", "guide", "gallery", "compare", "connect", "agents", "oauth", "mcp", "sse", "releases", "reset", "forgot", "index"]);
+
 async function handleStatus(env: AccountEnv, token: string, h: string): Promise<string> {
+  if (APP_WORDS.has(h.trim().toLowerCase())) return "reserved";
   const r = await rest(env, token, "/rpc/handle_status", { body: { h } });
   if (!r.ok || typeof r.data !== "string") throw new Error(`handle_status ${r.status}`);
   return r.data;
@@ -264,7 +275,7 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
     const type = url.searchParams.get("type") ?? "";
     const r = await gotrue(env, "/verify", { body: { type: type === "signup" ? "email" : type, token_hash } });
     if (!r.ok) return redirect("/login?e=link");
-    return redirect(type === "recovery" ? "/reset" : signupNext(url.searchParams.get("next")) ?? "/?welcome=1", sessionCookies(r.data));
+    return redirect(type === "recovery" ? "/reset" : signupNext(url.searchParams.get("next")) ?? "/", sessionCookies(r.data));
   }
 
   if (path === "/api/auth/reset" && post) {
@@ -404,6 +415,11 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
       if (r.data?.code === "23514") return err(400, "handle_invalid", HANDLE_MSG.invalid);
       return err(502, "save_failed", "저장하지 못했어요. 다시 시도해 주세요.");
     }
+    // 시작 가이드 (#140) only for a profile's first onboarding finish; features/welcome-guide.js turns this mark into its state.
+    if (patch.onboarded_at && env.ACARD_GUIDE === "on" && env.OUTBOX) {
+      const ws = workspaceIdFor(me.user.sub, env);
+      if (ws !== OWNER_WS) await env.OUTBOX.put("guide-new:" + ws, "1", { expirationTtl: 60 * 60 * 24 * 30 }).catch(() => undefined);
+    }
     return withCookies(json({ ok: true, profile: r.data[0] }), isLang(body.lang) ? [...me.set, langCookie(body.lang)] : me.set);
   }
 
@@ -414,12 +430,10 @@ export async function accountApi(request: Request, env: AccountEnv, url: URL, oa
     const grants = oauthCleanup ? await oauthCleanup(oauthUserId(ws)) : 0;
     const r = await gotrue(env, `/admin/users/${me.user.sub}`, { method: "DELETE", admin: true });
     if (!r.ok) return err(500, "delete_failed", "계정을 삭제하지 못했어요.");
+    await env.OUTBOX?.delete?.(onboardedKey(me.user.sub)).catch(() => undefined);
     return withCookies(json({ ok: true, wiped: { media: wiped.media, grants } }), clearSessionCookies());
   }
 
   return err(404, "not_found", "not found");
 }
 
-export async function workspaceStats(env: TenancyEnv, ws: string) {
-  return storeFor(env, ws).stats();
-}

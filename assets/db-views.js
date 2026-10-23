@@ -28,7 +28,7 @@
     '.dbv-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border-left:1px solid rgba(127,127,127,.3);border-top:1px solid rgba(127,127,127,.3)}',
     '.dbv-cal-dow{padding:4px;text-align:center;font-weight:600;border-right:1px solid rgba(127,127,127,.3);border-bottom:1px solid rgba(127,127,127,.3)}',
     '.dbv-cal-day{min-height:90px;padding:4px;border-right:1px solid rgba(127,127,127,.3);border-bottom:1px solid rgba(127,127,127,.3);overflow:hidden}',
-    '.dbv-cal-day.dim{opacity:.4}',
+    '.dbv-cal-day.dim{opacity:.4}.dbv-cal-day.over{outline:2px dashed var(--color-accent);outline-offset:-2px}',
     '.dbv-cal-num{font-size:var(--fs-12,12px);color:#888}',
     '.dbv-chip{display:block;width:100%;text-align:left;margin-top:2px;padding:1px 6px;border-radius:4px;border:0;background:rgba(80,140,255,.2);color:inherit;font:inherit;font-size:var(--fs-12,12px);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.dbv-tl{overflow-x:auto;border:1px solid rgba(127,127,127,.3)}',
@@ -422,6 +422,28 @@
     });
     var now = new Date();
     var year = now.getFullYear(), month = now.getMonth();
+    var editable = typeof ctx.setValue === 'function' && !(doc.body && doc.body.dataset && doc.body.dataset.readonly === '1');
+
+    function shift(s, delta) {
+      if (s == null || s === '') return null;
+      var day = parseDay(s);
+      if (day == null) return s;
+      var str = String(s);
+      var rest = /^\d{4}-\d{2}-\d{2}/.test(str) ? str.slice(10) : '';
+      return new Date((day + delta) * DAY).toISOString().slice(0, 10) + rest;
+    }
+
+    function moveTo(id, dayNum) {
+      var row = null;
+      rows(ctx).forEach(function (q) { if (String(q.id) === id) row = q; });
+      if (!row) return;
+      var v = rowValues(ctx, row)[dp.id];
+      var rg = dateRange(v);
+      if (!rg || rg.start === dayNum) return;
+      var delta = dayNum - rg.start;
+      var obj = typeof v === 'object' ? v : { start: v, end: null };
+      ctx.setValue(row.id, dp.id, { start: shift(obj.start, delta), end: shift(obj.end, delta) });
+    }
 
     var nav = mk(doc, 'div', 'dbv-cal-nav');
     var prev = mk(doc, 'button', '', '이전');
@@ -452,10 +474,32 @@
         var inMonth = dt.getUTCMonth() === month;
         var cellEl = mk(doc, 'div', 'dbv-cal-day' + (inMonth ? '' : ' dim'));
         cellEl.appendChild(mk(doc, 'div', 'dbv-cal-num', dt.getUTCDate()));
+        if (editable) (function (el, target) {
+          el.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            if (el.classList) el.classList.add('over');
+          });
+          el.addEventListener('dragleave', function () { if (el.classList) el.classList.remove('over'); });
+          el.addEventListener('drop', function (e) {
+            e.preventDefault();
+            if (el.classList) el.classList.remove('over');
+            var id = e.dataTransfer && e.dataTransfer.getData('text/plain');
+            if (id) moveTo(id, target);
+          });
+        })(cellEl, dayNum);
         (byDay[dayNum] || []).forEach(function (row) {
           var chip = mk(doc, 'button', 'dbv-chip', rowTitle(ctx, row, tp));
           chip.setAttribute('type', 'button');
           chip.addEventListener('click', function () { openRow(ctx, row.id); });
+          if (editable) {
+            chip.setAttribute('draggable', 'true');
+            chip.addEventListener('dragstart', function (e) {
+              if (e.dataTransfer) {
+                e.dataTransfer.setData('text/plain', String(row.id));
+                e.dataTransfer.effectAllowed = 'move';
+              }
+            });
+          }
           cellEl.appendChild(chip);
         });
         grid.appendChild(cellEl);

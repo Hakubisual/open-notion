@@ -1,4 +1,4 @@
-export const DEFAULT_SERVER = "https://notes.example.com";
+export const DEFAULT_SERVER = "http://127.0.0.1:47811";
 
 export class ApiError extends Error {
   constructor(status, error) {

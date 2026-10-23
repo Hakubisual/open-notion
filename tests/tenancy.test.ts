@@ -365,7 +365,11 @@ describe("one site, many workspaces", () => {
     const tree = await call("GET", "/api/tree", { cookie });
     expect(tree.status).toBe(200);
     expect(tree.data.pages).toEqual([]);
-    const home = await call("GET", "/", { cookie });
+    // acard-home-first: "/" is the landing for a signed-in account too; the workspace home is /home/.
+    const landing = await call("GET", "/", { cookie });
+    expect(landing.status).toBe(200);
+    expect(landing.text).toContain("LANDING");
+    const home = await call("GET", "/home/", { cookie });
     expect(home.status).toBe(200);
     expect(home.text).toContain('class="shell"');
     expect(home.text).not.toContain("Owner Secret");

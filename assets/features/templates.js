@@ -24,9 +24,25 @@
       var slash = document.getElementById("slash"), choice = slash.querySelector(".template-slash.sel");
       if (!slash.hidden && choice && event.key === "Enter") { event.preventDefault(); event.stopImmediatePropagation(); choice.click(); }
     }, true);
-    function updateEmpty() { empty.hidden = editor.state.kind !== "note" || editor.state.blocks.some(function (b) { return b.type !== "paragraph" || b.text.trim(); }); }
-    new MutationObserver(updateEmpty).observe(blocks, { childList: true, subtree: true, characterData: true });
-    blocks.addEventListener("input", updateEmpty); updateEmpty();
+    // The button shows only while a note is empty. A keystroke can only make the page empty when the block it edited
+    // became empty, so while the button is hidden the per-keystroke paths (input, characterData) look at that one block
+    // instead of scanning all of them; a structural edit (childList) always re-checks, and hidden is written only when
+    // the answer changes.
+    var hiddenNow = null;
+    function updateEmpty() {
+      var hide = editor.state.kind !== "note" || editor.state.blocks.some(function (b) { return b.type !== "paragraph" || b.text.trim(); });
+      if (hide !== hiddenNow) { hiddenNow = hide; empty.hidden = hide; }
+    }
+    function mayEmpty(target) {
+      if (!hiddenNow) return true;
+      var node = target && target.nodeType === 3 ? target.parentNode : target;
+      var text = node && node.closest ? node.closest(".text") || node : node;
+      return !text || !String(text.textContent || "").trim();
+    }
+    new MutationObserver(function (records) {
+      if (records.some(function (r) { return r.type === "childList" || mayEmpty(r.target); })) updateEmpty();
+    }).observe(blocks, { childList: true, subtree: true, characterData: true });
+    blocks.addEventListener("input", function (event) { if (mayEmpty(event.target)) updateEmpty(); }); updateEmpty();
     var slash = document.getElementById("slash");
     new MutationObserver(function () {
       if (slash.hidden || slash.querySelector(".template-slash")) return;

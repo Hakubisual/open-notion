@@ -3,7 +3,7 @@
   if (!lang || lang === "ko") return;
   // Page content written by the user never goes through the dictionary: reader article, editor blocks, editable areas.
   const SKIP = '#article, #blocks, [contenteditable], [translate="no"], script, style, textarea, code, pre';
-  const CHROME = 'button, [role="tab"], [role="menuitem"], .table-toolbar, .table-tabs, .crumbs, .dbempty, .tempty, .backlinks h2, .byline, .fv-mode, .fv-meta, .fv-new, .fv-time, .fv-badge, .fv-empty';
+  const CHROME = 'button, [role="tab"], [role="menuitem"], .table-toolbar, .table-tabs, .crumbs, .dbempty, .tempty, .backlinks h2, .byline, .fv-mode, .fv-meta, .fv-new, .fv-time, .fv-badge, .fv-empty, .pf';
   const ATTRS = ["placeholder", "title", "aria-label", "alt", "data-tip"];
   const attrBlocked = (el) => el.tagName === "TEXTAREA" && !el.closest('#article, #blocks, [contenteditable], [translate="no"]') ? false : blocked(el);
   const blocked = (el) => { const s = el.closest(SKIP); return !!s && !(el.closest(CHROME) && s.contains(el.closest(CHROME)) && !el.closest('[contenteditable], [translate="no"], textarea')); };

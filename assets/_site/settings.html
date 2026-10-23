@@ -14,9 +14,9 @@
 </head>
 <body>
 <main class="auth onb">
-  <a class="onb-back" href="/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg>돌아가기</a>
+  <a class="onb-back" href="/home/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 6-6 6 6 6"/></svg>돌아가기</a>
   <div class="auth-box">
-    <a class="auth-logo" href="/"><svg class="wordmark" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+    <a class="auth-logo" href="/"><svg class="wordmark" viewBox="0 0 375.59 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
     <form class="onb-step" id="step1" novalidate>
       <h1>프로필 설정</h1>
       <p class="sub" id="me-email"></p>
@@ -41,7 +41,11 @@
       <div class="msg" role="status"></div>
     </form>
     <section class="home-edit" id="home"><h2>홈 꾸미기</h2><p class="hint">홈에 보일 위젯을 켜고 끄고, 화살표로 순서를 바꿔요.</p><ol class="home-widgets" id="home-widgets"></ol><button class="btn btn-primary btn-wide" type="button" id="home-save">홈 저장</button><div class="msg" id="home-msg" role="status"></div></section>
+    <section class="ai-usage" id="guide" hidden aria-live="polite"><h2>시작 가이드</h2><p class="hint" id="guide-state"></p><div class="plan-actions"><button class="btn btn-primary" type="button" id="guide-restart">가이드 다시 보기</button><button class="btn" type="button" id="guide-hide" hidden>가이드 숨기기</button></div><div class="msg" id="guide-msg" role="status"></div></section>
+    <section class="home-edit" id="sidebar-view"><h2>사이드바 보기</h2><p class="hint">작업 공간의 페이지를 어떻게 묶어 보여 줄지 골라요. 페이지 자리는 바뀌지 않아요.</p><div class="home-widgets" id="side-views" role="radiogroup" aria-label="사이드바 보기"><label class="opt"><input type="radio" name="side-view" value="project"><span>프로젝트별 <small>폴더 안에 페이지 (기본)</small></span></label><label class="opt"><input type="radio" name="side-view" value="tags"><span>태그별 <small>태그마다 묶어서</small></span></label><label class="opt"><input type="radio" name="side-view" value="date"><span>날짜별 <small>오늘 · 이번 주 · 이번 달 · 그 전, 고친 날 기준</small></span></label></div><div class="msg" id="side-view-msg" role="status"></div></section>
     <section class="ai-usage" id="media-usage" hidden aria-live="polite"><h2>파일 저장 공간</h2><p id="media-usage-used"></p><div class="media-bar" aria-hidden="true"><i id="media-usage-bar"></i></div><p class="hint" id="media-usage-rule"></p></section>
+    <section class="ai-usage plan-box" id="plan" hidden aria-live="polite"><h2>요금제</h2><p id="plan-state"></p><ul class="plan-includes" id="plan-includes"></ul><p class="hint" id="plan-note"></p><div class="plan-actions" id="plan-actions"></div></section>
+    <section class="ai-usage" id="import"><h2>가져오기</h2><p class="hint">노션이나 옵시디언에서 페이지를 옮겨 와요. 링크·이미지·파일·데이터베이스가 같이 들어와요.</p><a class="btn btn-wide" href="/import">가져오기 열기</a></section>
     <section class="ai-usage" id="my-data"><h2>내 데이터 내려받기</h2><p class="hint">모든 페이지와 이미지를 zip 파일 하나로 받아요. Acard 로컬판에서 그대로 복원할 수 있어요.</p><a class="btn btn-wide" href="/api/cloud/export" download>zip 으로 내려받기</a></section>
     <section class="ai-usage" id="ai-usage" hidden aria-live="polite"><h2>AI 사용량</h2><p id="ai-usage-month"></p><p class="hint" id="ai-usage-day"></p></section>
   </div>

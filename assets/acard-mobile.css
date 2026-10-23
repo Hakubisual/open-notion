@@ -29,9 +29,16 @@ html[data-theme="dark"] .reader .page-head .pageicon img:not(.mark) { filter: in
   }
   .reader .sidebar.open, html.side-collapsed .reader .sidebar.open { visibility: visible; }
   .reader .sidebar.open::after { content: none; }
+  /* #135: the whole drawer scrolls (the foot stays stuck below), so the tree is not squeezed under the project list. */
+  .reader .side-ws { flex: 1 0 auto; min-height: 0; overflow: visible; }
+  .reader .sidebar { scroll-padding-bottom: 72px; }
+  .reader.drawer-open :is(.fbt, .agent-fab, .thumbbar) { display: none; }
+  /* The 피드백 tab floats 90px up (150px with the agent button, beta.js); the last line of a page ends above it. */
+  .reader.has-thumbbar .shell > main { padding-bottom: calc(140px + env(safe-area-inset-bottom)); }
+  .reader.has-thumbbar.has-fab .shell > main { padding-bottom: calc(200px + env(safe-area-inset-bottom)); }
   .reader .drawer-backdrop:not([hidden]) {
     display: block; position: fixed; inset: 0; z-index: 45; width: 100%; height: 100%;
-    padding: 0; border: 0; border-radius: 0; background: rgba(20, 18, 32, .48); cursor: pointer;
+    padding: 0; border: 0; border-radius: 0; background: var(--color-scrim-drawer); cursor: pointer;
   }
   .reader .drawer-close { display: inline-flex; width: 44px; height: 44px; border: 0; border-radius: 10px; font-size: var(--fs-24); }
   .reader .side-brand { padding-right: 0; margin-bottom: 12px; }
@@ -55,8 +62,7 @@ html[data-theme="dark"] .reader .page-head .pageicon img:not(.mark) { filter: in
   .reader .thumbbar { padding-bottom: 6px; }
   /* Issue 103: 44px targets; twisties and the tag chip keep their look and get the hit area from a pseudo-element. */
   .reader :is(#side-more, .side-add, .fd-ib, .fd-more) { width: 44px; height: 44px; min-width: 44px; }
-  .reader :is(.side-root > .row > a, .fd-link, .fd-sh, .seg button, .shd-tab, .shd-help, .ui-btn, .pj-side-set) { min-height: 44px; }
-  .reader .pj-side-set { display: inline-flex; align-items: center; padding: 0 8px; }
+  .reader :is(.side-root > .row > a, .fd-link, .fd-sh, .seg button, .shd-tab, .shd-help, .ui-btn) { min-height: 44px; }
   .reader .shd-tab { min-width: 44px; }
   .reader :is(button.tw, .fd-tw) { position: relative; height: 44px; }
   .reader :is(button.tw, .fd-tw)::before, .reader .fd-addtag::after { content: ""; position: absolute; inset: 0 -4px 0 -18px; }

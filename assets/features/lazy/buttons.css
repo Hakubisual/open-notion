@@ -2,6 +2,7 @@
 .blocks button.btn.act:disabled { opacity: .5; cursor: not-allowed; filter: none; }
 .blocks button.btn.act[aria-busy="true"] { opacity: .7; cursor: progress; }
 .blocks button.btn.act.btn-failed { outline: 2px solid var(--tag-red-fg); outline-offset: 2px; }
+.btn-why { display: inline-block; margin-left: 8px; max-width: 100%; font-size: var(--fs-12); font-weight: 500; line-height: 1.4; color: var(--color-danger-fg); overflow-wrap: anywhere; vertical-align: middle; }
 .blocks .btn-ico { font-size: 1.05em; line-height: 1; }
 .blocks .btn.btn-gray { background: var(--tag-gray-bg); color: var(--tag-gray-fg); }
 .blocks .btn.btn-brown { background: var(--tag-brown-bg); color: var(--tag-brown-fg); }

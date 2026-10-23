@@ -13,7 +13,7 @@ if (!URL) console.log("pg-concurrency: ACARD_PG_TEST_URL is not set, skipping th
 const ROOT = join(import.meta.dir, "..");
 const SCHEMA = "np5_pg_" + Date.now().toString(36);
 const LOCK = /^\s*UPDATE db_relation_locks SET version/i;
-const ACARD_SCHEMA_FILES = ["001-acard-schema.sql", "002-acard-search.sql", "004-acard-agent.sql", "005-acard-journal.sql", "006-acard-folders.sql", "007-acard-chat-agent.sql", "013-acard-projects.sql", "015-acard-organize.sql", "017-acard-parts.sql", "018-acard-part-themes.sql", "019-acard-page-view.sql", "021-acard-db-recurrence.sql", "023-acard-db-relations.sql", "025-acard-db-value-backups.sql", "026-acard-db-template-savers.sql"];
+const ACARD_SCHEMA_FILES = ["001-acard-schema.sql", "002-acard-search.sql", "004-acard-agent.sql", "005-acard-journal.sql", "006-acard-folders.sql", "007-acard-chat-agent.sql", "013-acard-projects.sql", "015-acard-organize.sql", "017-acard-parts.sql", "018-acard-part-themes.sql", "019-acard-page-view.sql", "021-acard-db-recurrence.sql", "023-acard-db-relations.sql", "025-acard-db-value-backups.sql", "026-acard-db-template-savers.sql", "032-acard-db-button-savers.sql"];
 
 type Gate = { armed: boolean; reached: Promise<void>; released: Promise<void>; hit: () => void; release: () => void };
 function gate(): Gate {

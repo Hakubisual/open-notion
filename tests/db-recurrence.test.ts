@@ -33,7 +33,7 @@ test("recurrence is normalised: unknown frequency means none, a bad time zone be
 async function pgCtx() {
   const lite = new PGlite();
   const strip = (sql: string) => sql.replace(/REVOKE[^;]*;/g, "").replace(/GRANT[^;]*;/g, "").replace(/DROP POLICY[^;]*;/g, "").replace(/CREATE POLICY[^;]*;/g, "");
-  for (const file of ["001-acard-schema.sql", "021-acard-db-recurrence.sql", "023-acard-db-relations.sql", "025-acard-db-value-backups.sql", "026-acard-db-template-savers.sql"]) await lite.exec(strip(readFileSync(join(ROOT, "migrations/supabase", file), "utf8")));
+  for (const file of ["001-acard-schema.sql", "021-acard-db-recurrence.sql", "023-acard-db-relations.sql", "025-acard-db-value-backups.sql", "026-acard-db-template-savers.sql", "032-acard-db-button-savers.sql"]) await lite.exec(strip(readFileSync(join(ROOT, "migrations/supabase", file), "utf8")));
   await lite.exec(strip(readFileSync(join(ROOT, "migrations/supabase/002-acard-search.sql"), "utf8")).replace(/CREATE EXTENSION[^;]*;/, "").replace(/CREATE INDEX IF NOT EXISTS page_fts_trgm[^;]*;/, ""));
   await lite.exec("SET search_path = acard");
   const query = (db: { query: PGlite["query"] }) => async (text: string, params: unknown[]) => {

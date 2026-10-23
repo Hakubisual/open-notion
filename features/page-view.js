@@ -12,14 +12,16 @@ const PAGE_VIEW_SCHEMA = [
 const PAGE_VIEW_SHORT = 200;
 const PAGE_VIEW_LONG = 300;
 const pageViewReady = new WeakSet(), pageViewKeys = new Set();
+const pageViewKnown = (db) => pageViewReady.has(db) || (db.acardKey && pageViewKeys.has(db.acardKey));
 async function pageViewSchema(db) {
-  if (pageViewReady.has(db) || (db.acardKey && pageViewKeys.has(db.acardKey))) return;
+  if (pageViewKnown(db)) return;
   for (const sql of PAGE_VIEW_SCHEMA) await db.prepare(sql).run();
   pageViewReady.add(db);
   if (db.acardKey) pageViewKeys.add(db.acardKey);
 }
 async function pageViewRow(db, slug) {
-  await pageViewSchema(db);
+  // No await once the schema is known, so this read leaves in the same round trip as the statements started with it.
+  if (!pageViewKnown(db)) await pageViewSchema(db);
   return db.prepare("SELECT mode, description, set_by FROM page_view WHERE page = ?").bind(slug).first();
 }
 const pageViewText = (blocks) => blocks.reduce((n, b) => n + String(b.text || "").length, 0);
@@ -39,7 +41,8 @@ async function folderGuard(db, slug) {
 (() => {
   const fail = (message, status = 400) => Object.assign(new Error(message), { status });
   const rid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  // escapeHtml is the worker-wide helper (block-html.js); only the null/undefined -> "" step is local.
+  const esc = (s) => escapeHtml(s ?? "");
   const plain = (s) => String(s ?? "").replace(/\[!\w+\]/g, "").replace(/[*_`#>~|]/g, "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\s+/g, " ").trim();
   const clip = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
   const KST = 9 * 3600 * 1000;
@@ -57,12 +60,16 @@ async function folderGuard(db, slug) {
     if (blocks.length === 1 && pageViewText(blocks) <= PAGE_VIEW_SHORT) return plain(blocks[0].text);
     return "";
   }
-  async function resolve(db, page, blocks, reader = false) {
-    const row = await pageViewRow(db, page.slug);
+  // The page_view row, the children and the caller's extra read (`also`, the page_view_moves list) do not depend on each
+  // other, so they leave in one round trip; a reader with a long body only needs the children when the row says folder.
+  async function resolve(db, page, blocks, reader = false, also = null) {
     const bare = blocks.length === 0 || (blocks.length === 1 && ["paragraph", "callout"].includes(blocks[0].type) && pageViewText(blocks) <= PAGE_VIEW_SHORT);
-    const kids = reader && (row?.mode === "article" || (!row && !bare)) ? [] : await liveChildren(db, page.slug);
+    const eager = !reader || bare;
+    const [row, early, got] = await Promise.all([pageViewRow(db, page.slug), eager ? liveChildren(db, page.slug) : null, eager && also ? also() : null]);
+    const [kids, extra] = reader && (row?.mode === "article" || (!row && !bare)) ? [[], null]
+      : early ? [early, got] : await Promise.all([liveChildren(db, page.slug), also ? also() : null]);
     const mode = row ? row.mode : kids.length && bare ? "folder" : "article";
-    return { mode, chosen: Boolean(row), row, kids };
+    return { mode, chosen: Boolean(row), row, kids, extra };
   }
 
   const CSS = '<style>.fv{margin:8px 0 40px}.fv-bar{display:flex;align-items:flex-start;gap:16px;justify-content:space-between;margin:4px 0 24px}.fv-mode{position:relative;display:inline-block}.fv-mode summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--line,#e3e6ec);border-radius:8px;font-size:var(--fs-13);color:var(--fg)}.fv-mode summary::-webkit-details-marker{display:none}.fv-mode summary::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translateY(-2px)}.fv-mode[open] .fv-pop{display:block}.fv-pop{display:none;position:absolute;z-index:20;top:calc(100% + 4px);left:0;min-width:180px;padding:6px;border-radius:10px;background:var(--surface,#fff);box-shadow:var(--shadow-menu,0 8px 24px rgba(0,0,0,.14))}.fv-pop button{display:block;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:6px;background:none;color:var(--fg);font:inherit;font-size:var(--fs-14);cursor:pointer}.fv-pop button:hover,.fv-pop button[aria-pressed=true]{background:var(--accent-soft,#efeaff)}.fv-desc{margin:10px 0 4px;color:var(--fg-dim);font-size:var(--fs-15)}.fv-meta{margin:0;color:var(--fg-dim);font-size:var(--fs-13)}.fv-new{flex:none;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:10px;background:var(--accent-soft,#efeaff);color:var(--accent,#7c5cff);font-weight:600;font-size:var(--fs-14);text-decoration:none}.fv-new:hover{background:var(--accent,#7c5cff);color:var(--on-accent,#fff)}.fv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}.fv-card{display:flex;flex-direction:column;gap:8px;min-width:0;padding:16px 18px;border:1px solid var(--line,#e3e6ec);border-radius:12px;background:var(--surface,#fff);color:var(--fg);text-decoration:none;transition:border-color .15s,box-shadow .15s}.fv-card:hover{border-color:var(--accent,#7c5cff);box-shadow:0 4px 14px rgba(0,0,0,.06)}.fv-head{display:flex;align-items:center;gap:10px;min-width:0}.fv-ic{flex:none;width:28px;height:28px;display:grid;place-items:center;font-size:var(--fs-19);color:var(--fg-dim)}.fv-t{font-weight:700;font-size:var(--fs-16);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fv-badge{flex:none;padding:2px 8px;border-radius:6px;background:var(--accent-soft,#efeaff);color:var(--accent,#7c5cff);font-size:var(--fs-12);font-weight:600}.fv-pre{margin:0;color:var(--fg-dim);font-size:var(--fs-14);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.fv-time{margin-top:auto;color:var(--fg-dim);font-size:var(--fs-12)}.fv-empty{color:var(--fg-dim)}@media (max-width:640px){.fv-bar{flex-direction:column}.fv-grid{grid-template-columns:1fr}}</style>';
@@ -77,9 +84,9 @@ async function folderGuard(db, slug) {
 
   async function folderView(db, page, blocks, guest) {
     if (page.slug === "index" || page.kind !== "note") return null;
-    const v = await resolve(db, page, blocks, true);
+    const v = await resolve(db, page, blocks, true, () => db.prepare("SELECT child FROM page_view_moves WHERE page = ? AND undone = 0").bind(page.slug).all());
     if (v.mode !== "folder") return null;
-    const moved = new Set(((await db.prepare("SELECT child FROM page_view_moves WHERE page = ? AND undone = 0").bind(page.slug).all()).results ?? []).map((r) => String(r.child)));
+    const moved = new Set((v.extra.results ?? []).map((r) => String(r.child)));
     const pre = await previews(db, v.kids.map((k) => String(k.slug)));
     const last = v.kids.reduce((m, k) => Math.max(m, Number(k.updated) || 0), Number(page.updated) || 0);
     const desc = descriptionOf(v.row, blocks);

@@ -39,3 +39,38 @@ test("the checklist share target opens the existing dialog once on arrival", () 
   expect(opened).toBe(1);
   expect(location.href).toBe("https://notes.test/newest/");
 });
+
+const guide = (g: any, data: any = { recent: [{ slug: "note-1", kind: "note" }], checklist: { shareSlug: "note-1" } }) => runInNewContext(renderSource + "\nguideHtml(g, data)", {
+  g, data, icon: () => "", esc: (s: string) => s.replaceAll("&", "&amp;"), href: (s: string) => "/" + encodeURIComponent(s) + "/", localStorage: { getItem: () => "0" },
+});
+const steps = (done: string[]) => Object.fromEntries(["page", "slash", "search", "share", "agent", "import"].map((k) => [k, done.includes(k)]));
+
+test("an active guide shows all four steps at once with real progress, a resume button and 그만보기", () => {
+  const html = guide({ enabled: true, active: true, count: 1, steps: steps(["page"]), done: false, skipped: false });
+  expect(html.match(/class="wg-step"/g)).toHaveLength(4);
+  expect(html).toContain("1 / 4 완료");
+  expect(html).toContain('aria-valuenow="1"');
+  expect(html).toContain("data-guide-skip");
+  expect(html).toContain('data-guide-resume href="/edit/note-1/"');
+  expect(html).not.toContain("home-check-step");
+  expect(html).toContain('href="/settings/agents/"');
+  expect(html).toContain('href="/import"');
+});
+
+test("the share step opens the reader page only, never the auto-opening ?share=1 link", () => {
+  expect(guide({ enabled: true, active: true, count: 0, steps: steps([]) })).toMatch(/data-step="share"[^>]*href="\/note-1\/"/);
+  expect(guide({ enabled: true, active: true, count: 0, steps: steps([]) })).not.toContain("share=1");
+});
+
+test("after 그만보기 home keeps a slim n/4 bar with 이어서 하기 and no way to close it", () => {
+  const html = guide({ enabled: true, active: true, count: 2, steps: steps(["page", "slash"]), skipped: true });
+  expect(html).toContain('class="ui-card wg-bar"');
+  expect(html).toContain("2 / 4 완료");
+  expect(html).toContain("data-guide-resume");
+  expect(html).not.toContain("data-guide-skip");
+});
+
+test("off, hidden, finished or never-started guides give the home back to the old checklist", () => {
+  for (const g of [null, { enabled: false, active: false }, { enabled: true, active: false }, { enabled: true, active: true, done: true, celebrate: false, steps: steps(["page", "slash", "search", "share"]), count: 4 }]) expect(guide(g)).toBe("");
+  expect(guide({ enabled: true, active: true, done: true, celebrate: true, count: 4, steps: steps(["page", "slash", "search", "share"]) })).toContain("data-guide-feedback");
+});

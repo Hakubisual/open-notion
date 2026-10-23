@@ -3,6 +3,21 @@
 (function () {
   if (window.AcardButtons) return;
   var last = Object.create(null);
+  var failTimers = Object.create(null);
+  function fail(key, button, reason) {
+    button.title = reason;
+    button.classList.add("btn-failed");
+    var why = button.nextElementSibling;
+    if (!why || !why.classList.contains("btn-why")) {
+      why = document.createElement("span");
+      why.className = "btn-why";
+      why.setAttribute("role", "status");
+      button.insertAdjacentElement("afterend", why);
+    }
+    why.textContent = reason;
+    clearTimeout(failTimers[key]);
+    failTimers[key] = setTimeout(function () { delete failTimers[key]; button.classList.remove("btn-failed"); if (why.parentNode) why.parentNode.removeChild(why); }, 4000);
+  }
   function press(key, url, button, message) {
     var now = Date.now();
     if (button.disabled || button.dataset.busy || now - (last[key] || 0) < 1000) return Promise.resolve(null);
@@ -13,7 +28,7 @@
     return fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (data) { if (!res.ok) throw new Error(data.error || String(res.status)); return data; }); })
       .then(function (data) { if (data.open) location.assign(data.open); return data; })
-      .catch(function (error) { button.title = error.message; button.classList.add("btn-failed"); setTimeout(function () { button.classList.remove("btn-failed"); }, 2400); return null; })
+      .catch(function (error) { fail(key, button, error.message); return null; })
       .then(function (data) { delete button.dataset.busy; button.removeAttribute("aria-busy"); last[key] = Date.now(); return data; });
   }
   function slug() {

@@ -43,7 +43,7 @@
     await db.batch(statements);
   }
 
-  async function search(db, input, limit) {
+  async function search(db, input, limit, withRows = false) {
     const q = input.trim().normalize("NFC");
     const terms = q.match(/[\p{L}\p{N}\p{M}]+/gu) ?? [];
     if (!terms.length) return [];
@@ -56,26 +56,17 @@
         db.prepare("INSERT OR IGNORE INTO page_fts_dirty (slug) SELECT slug FROM pages"),
       ]);
     }
-    // Bulk reindex: a few round trips per 50 pages instead of ~5 per page. A 100+ page backlog
-    // (bulk copies, imports) made the first search take ~15-20 s on Durable Object and Hyperdrive backends.
     const dirty = (await db.prepare("SELECT slug FROM page_fts_dirty").all()).results ?? [];
-    for (let i = 0; i < dirty.length; i += 50) {
-      const slugs = dirty.slice(i, i + 50).map(row => String(row.slug));
-      const marks = slugs.map(() => "?").join(", ");
-      // Clear before reading, as reindex() does, so later writes leave a fresh dirty mark.
-      await db.prepare(`DELETE FROM page_fts_dirty WHERE slug IN (${marks})`).bind(...slugs).run();
-      const pages = (await db.prepare(`SELECT p.slug, p.title, COALESCE((SELECT group_concat(text, char(10)) FROM (SELECT text FROM blocks WHERE page = p.slug ORDER BY ord) ordered), '') AS body FROM pages p WHERE p.slug IN (${marks}) AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = p.slug)`).bind(...slugs).all()).results ?? [];
-      const statements = [
-        db.prepare(`DELETE FROM page_fts WHERE slug IN (${marks})`).bind(...slugs),
-        db.prepare(`DELETE FROM page_fts_ko WHERE slug IN (${marks})`).bind(...slugs),
-      ];
-      for (const page of pages) {
-        statements.push(db.prepare("INSERT INTO page_fts (slug, title, body) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM editor_trash WHERE page = ?)").bind(page.slug, page.title, page.body, page.slug));
-        statements.push(db.prepare("INSERT INTO page_fts_ko (slug, title, body) SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM editor_trash WHERE page = ?)").bind(page.slug, koreanText(page.title), koreanText(page.body), page.slug));
-      }
-      await db.batch(statements);
+    // Bulk reindex in groups of 400 with a fixed number of statements per group (indexMany): a member workspace counts every
+    // write statement against its daily quota, and a query takes at most 100 bound parameters, so slugs travel as one JSON.
+    const listSql = db.dialect === "pg" ? "SELECT json_array_elements_text(CAST(? AS json))" : "SELECT value FROM json_each(?)";
+    for (let i = 0; i < dirty.length; i += 400) {
+      const slugs = dirty.slice(i, i + 400).map(row => String(row.slug));
+      const pages = (await db.prepare(`SELECT p.slug, p.title, COALESCE((SELECT group_concat(text, char(10)) FROM (SELECT text FROM blocks WHERE page = p.slug ORDER BY ord) ordered), '') AS body FROM pages p WHERE p.slug IN (${listSql}) AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = p.slug)`).bind(JSON.stringify(slugs)).all()).results ?? [];
+      await indexMany(db, pages.map(page => ({ slug: String(page.slug), title: String(page.title ?? ""), body: String(page.body ?? "") })), slugs);
     }
     await db.prepare("INSERT INTO page_fts_state (key, value) VALUES ('version', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    const kinds = withRows ? "(p.kind != 'db_row' OR NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = p.parent))" : "p.kind != 'db_row'";
 
     if (db.dialect === "pg") {
       const where = terms.map(() => "(f.title || ' ' || f.body) ILIKE ?").join(" AND ");
@@ -83,7 +74,7 @@
       const rows = await db.prepare(`SELECT p.slug, p.title, p.parent, p.updated, p.kind,
         substr(f.body, GREATEST(1, strpos(lower(f.body), lower(?)) - 45), 180) AS hit
         FROM page_fts f JOIN pages p ON p.slug = f.slug
-        WHERE ${where} AND p.kind != 'db_row'
+        WHERE ${where} AND ${kinds}
           AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = p.slug)
         ORDER BY (CASE WHEN f.title ILIKE ? THEN 0 ELSE 1 END), p.slug LIMIT ?`)
         .bind(terms[0], ...like, like[0], limit).all();
@@ -99,16 +90,34 @@
       ${korean ? "substr(original.body, max(1, instr(original.body, ?) - 45), 180)" : "snippet(page_fts, 2, '', '', '...', 24)"} AS hit
       FROM ${table} JOIN pages p ON p.slug = ${table}.slug
       ${korean ? "JOIN page_fts original ON original.slug = p.slug" : ""}
-      WHERE ${table} MATCH ? AND p.kind != 'db_row'
+      WHERE ${table} MATCH ? AND ${kinds}
         AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = p.slug)
       ORDER BY bm25(${table}, 0, 10, 1), p.slug LIMIT ?`)
       .bind(...(korean ? [terms.find(term => /[\uac00-\ud7a3]/.test(term))] : []), match, limit).all();
     return (rows.results ?? []).map(row => ({ ...row, hit: String(row.hit ?? "").slice(0, 180) }));
   }
 
+  // Many pages at once with a fixed number of statements (imports, the first search after one): a member workspace counts
+  // every write statement against its daily quota. rows = [{ slug, title, body }]; clear = slugs to drop from the index.
+  async function indexMany(db, rows, clear) {
+    if (!rows.length && !(clear && clear.length)) return;
+    const pg = db.dialect === "pg";
+    const slugs = JSON.stringify(clear && clear.length ? clear : rows.map(row => row.slug));
+    const list = pg ? "SELECT json_array_elements_text(CAST(? AS json))" : "SELECT value FROM json_each(?)";
+    const pick = pg ? "SELECT x->>0, x->>1, x->>2 FROM json_array_elements(CAST(? AS json)) AS j(x)" : "SELECT value->>0, value->>1, value->>2 FROM json_each(?)";
+    const statements = [
+      db.prepare("DELETE FROM page_fts WHERE slug IN (" + list + ")").bind(slugs),
+      rows.length ? db.prepare("INSERT INTO page_fts (slug, title, body) " + pick).bind(JSON.stringify(rows.map(row => [row.slug, row.title, row.body]))) : null,
+    ];
+    if (!pg) statements.push(
+      db.prepare("DELETE FROM page_fts_ko WHERE slug IN (" + list + ")").bind(slugs),
+      rows.length ? db.prepare("INSERT INTO page_fts_ko (slug, title, body) " + pick).bind(JSON.stringify(rows.map(row => [row.slug, koreanText(row.title), koreanText(row.body)]))) : null);
+    statements.push(db.prepare("DELETE FROM page_fts_dirty WHERE slug IN (" + list + ")").bind(slugs));
+    await db.batch(statements.filter(Boolean));
+  }
   registerFeature({
     schema: async db => { await db.batch(schema.map(sql => db.prepare(sql))); },
     afterSave: async (db, slug) => { await reindex(db, slug); },
-    services: { search },
+    services: { search, searchIndexMany: indexMany },
   });
 })();

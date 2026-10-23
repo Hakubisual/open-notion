@@ -2,7 +2,7 @@
   "name": "acard-local",
   "private": true,
   "type": "module",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Acard Local: a self-hosted, local-first Notion-style workspace. Server + desktop app, AGPL-3.0.",
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261015.1",
@@ -24,7 +24,7 @@
     "zod": "^4.6.7"
   },
   "license": "AGPL-3.0-only",
-  "homepage": "https://acard.dev",
+  "homepage": "https://github.com/Hakubisual/open-notion-acard",
   "repository": {
     "type": "git",
     "url": "https://github.com/Hakubisual/open-notion-acard.git"

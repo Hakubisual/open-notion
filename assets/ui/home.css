@@ -64,3 +64,44 @@ body.home-custom #article { display: none; }
   .home-check-step { gap: 12px; padding: 14px 12px; min-height: 88px; }
   .home-check-summary { font-size: var(--fs-12); }
 }
+
+/* 시작 가이드 (issue 140): the guide card and the slim bar that stays after 그만보기 until 4/4. */
+.wg-card { padding: 22px 26px 20px; }
+.wg-head { display: flex; align-items: center; gap: var(--space-4); margin-bottom: 18px; }
+.wg-head h2 { margin: 0; font-size: var(--fs-21); font-weight: 800; }
+.wg-sub { margin: 2px 0 0; color: var(--color-text-dim); font-size: var(--fs-14); }
+.wg-icon { flex: none; display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--color-accent-soft); color: var(--color-accent); }
+.wg-icon svg { width: 22px; height: 22px; }
+.wg-meter { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--color-text-dim); font-size: var(--fs-14); white-space: nowrap; }
+.wg-meter .ui-progress, .wg-bar .ui-progress { width: 220px; height: 8px; }
+.wg-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.wg-step { display: flex; align-items: center; gap: 16px; min-height: 72px; padding: 12px 18px; border: var(--ui-border); border-radius: var(--ui-radius-item); background: var(--color-surface); color: var(--color-text); text-decoration: none; font: inherit; text-align: left; cursor: pointer; }
+.wg-step:hover { background: var(--color-hover); }
+.wg-step:focus-visible, .wg-opt:focus-visible, .wg-quiet:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.wg-check { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border: 1.5px solid var(--color-border); border-radius: 50%; color: var(--color-on-accent); font-size: var(--fs-16); }
+[data-complete="true"] > .wg-check { background: var(--solid-green); border-color: var(--solid-green); }
+.wg-copy { min-width: 0; }
+.wg-copy b { display: block; font-size: var(--fs-16); }
+.wg-copy span { display: block; margin-top: 2px; color: var(--color-text-dim); font-size: var(--fs-14); }
+.wg-optional { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 22px; padding-top: 18px; border-top: 1px dashed var(--color-border); position: relative; }
+.wg-label { position: absolute; top: -11px; left: 8px; padding: 0 10px; border-radius: var(--radius-pill); background: var(--color-surface-soft); color: var(--color-text-dim); font-size: var(--fs-12); line-height: 22px; }
+.wg-opt { display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 8px 18px; border: var(--ui-border); border-radius: var(--ui-radius-item); color: var(--color-text); text-decoration: none; font-size: var(--fs-15); }
+.wg-opt .wg-check { width: 22px; height: 22px; font-size: var(--fs-12); }
+.wg-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
+.wg-quiet { min-height: 40px; padding: 0 8px; border: 0; background: none; color: var(--color-text-dim); font: inherit; font-size: var(--fs-14); cursor: pointer; text-decoration: none; }
+.wg-bar { display: flex; align-items: center; gap: 14px; padding: 12px 18px; }
+.wg-bar b { font-size: var(--fs-15); }
+.wg-bar .wg-progress-text { color: var(--color-text-dim); font-size: var(--fs-14); }
+.wg-bar .ui-btn { margin-left: auto; }
+@media (max-width: 700px) {
+  .wg-card { padding: 16px; }
+  .wg-head { flex-wrap: wrap; }
+  .wg-meter { margin-left: 0; width: 100%; }
+  .wg-meter .ui-progress { flex: 1; width: auto; }
+  .wg-grid, .wg-optional { grid-template-columns: minmax(0, 1fr); }
+  .wg-step { min-height: 64px; padding: 10px 14px; gap: 12px; }
+  .wg-opt, .wg-quiet, .wg-actions .ui-btn { min-height: 44px; }
+  .wg-bar { flex-wrap: wrap; }
+  .wg-bar .ui-progress { flex: 1; width: auto; }
+  .wg-bar .ui-btn { margin-left: 0; width: 100%; min-height: 44px; }
+}

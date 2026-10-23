@@ -1,3 +1,3 @@
-// The hosted service the local app connects to for web publish and cloud backup (docs/local-first.md 5장).
-// ACARD_CLOUD_URL points it elsewhere; an empty value turns the cloud features off.
-export const CLOUD_URL = (process.env.ACARD_CLOUD_URL ?? "https://notes.example.com").replace(/\/+$/, "");
+// The hosted service the local app can publish to and back up to. Empty (the default) turns the cloud features off.
+// Set ACARD_CLOUD_URL to a hosted Acard to publish and back up there.
+export const CLOUD_URL = (process.env.ACARD_CLOUD_URL ?? "").replace(/\/+$/, "");

@@ -1,8 +1,10 @@
 // Multi-device sync v1, local side (docs/local-first.md 14장). Turned on in "내 데이터" for a subscribed account.
 // Every run: pull the server's changes after the last seen number, then push every page whose content differs from the
 // copy last agreed with the server (the "base", kept in <data>/sync.sqlite next to the app's own database, so the app's
-// tables and backup format stay unchanged). Pages and their blocks, settings, view and tags travel; databases do not
-// (v1). Images and attachments referenced by a page go up and come down by id. Conflicts follow sync-merge.ts.
+// tables and backup format stay unchanged). Pages and their blocks, settings, view and tags travel; a database page also
+// carries its database (properties, views, templates, rules, form) and a row page its db_rows row and outgoing relation
+// links. Images and attachments referenced by a page or a row cell go up and come down by id. Conflicts follow
+// sync-merge.ts.
 import { Database } from "bun:sqlite";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -14,7 +16,7 @@ import { mergePage, type Side, type SyncBlock, type SyncDoc } from "./sync-merge
 
 export const SYNC = {
   intervalMs: Number(process.env.ACARD_SYNC_INTERVAL_MS) > 0 ? Number(process.env.ACARD_SYNC_INTERVAL_MS) : 15_000,
-  afterEditMs: 2_000,
+  afterEditMs: Number(process.env.ACARD_SYNC_AFTER_EDIT_MS) > 0 ? Number(process.env.ACARD_SYNC_AFTER_EDIT_MS) : 2_000,
   pushBytes: 8 * 1024 * 1024,
   pushPages: 100,
 };
@@ -54,7 +56,7 @@ export function startSync(options: { env: LocalArchiveEnv; dataDir: string; read
 
   async function readDoc(slug: string): Promise<Side> {
     const page = (await all("SELECT slug, title, parent, ord, kind, updated FROM pages WHERE slug = ?", slug))[0];
-    if (!page || page.kind === "db" || page.kind === "db_row") return { deleted: true, doc: null };
+    if (!page) return { deleted: true, doc: null };
     const trashed = (await all("SELECT page FROM editor_trash WHERE page = ?", slug)).length > 0;
     const strip = (row: Row | undefined) => { if (!row) return null; const { page: _p, ...rest } = row; return rest; };
     const [blocks, links, settings, view, tags] = await Promise.all([
@@ -72,11 +74,28 @@ export function startSync(options: { env: LocalArchiveEnv; dataDir: string; read
       view: strip(view[0]),
       tags: tags.map((t) => String(t.tag)),
     };
+    if (page.kind === "db") {
+      const database = (await all("SELECT * FROM databases WHERE slug = ?", slug))[0];
+      if (database) {
+        const id = String(database.id);
+        const [props, views, templates] = await Promise.all(["db_properties", "db_views", "db_templates"].map((table) => all("SELECT * FROM " + table + " WHERE database_id = ? ORDER BY id", id)));
+        doc.database = { ...database, id, props, views, templates };
+        if ((await cols("db_rules")).size) doc.database.rules = await all("SELECT * FROM db_rules WHERE database_id = ? ORDER BY id", id);
+        if ((await cols("db_forms")).size) doc.database.forms = (await all("SELECT * FROM db_forms WHERE database_id = ?", id))[0] ?? null;
+      }
+    }
+    if (page.kind === "db_row") {
+      const row = (await all("SELECT id, database_id, props, ord, created, updated FROM db_rows WHERE page = ?", slug))[0];
+      if (row) doc.row = {
+        id: String(row.id), database_id: String(row.database_id), props: row.props == null ? null : String(row.props), ord: Number(row.ord) || 0, created: Number(row.created) || 0, updated: Number(row.updated) || 0,
+        relations: await all("SELECT * FROM db_relation_links WHERE src_row = ? ORDER BY prop_id, dst_row", row.id),
+      };
+    }
     return { deleted: trashed, doc };
   }
 
   async function localSlugs() {
-    return (await all("SELECT slug FROM pages WHERE kind NOT IN ('db', 'db_row')")).map((r) => String(r.slug));
+    return (await all("SELECT slug FROM pages")).map((r) => String(r.slug));
   }
 
   async function upsert(table: string, row: Record<string, unknown>) {
@@ -142,19 +161,43 @@ export function startSync(options: { env: LocalArchiveEnv; dataDir: string; read
         if ((await cols("tags")).has("name")) statements.push(db.prepare("INSERT OR IGNORE INTO tags (name, created) VALUES (?, ?)").bind(tag, Date.now()));
       }
     }
+    const add = async (table: string, row: Record<string, unknown>) => { const s = await upsert(table, row); if (s) statements.push(s); };
+    if (doc.database) {
+      const { props, views, templates, rules, forms, ...database } = doc.database;
+      await add("databases", { ...database, slug });
+      const lists: [string, Record<string, unknown>[] | undefined][] = [["db_properties", props], ["db_views", views], ["db_templates", templates], ["db_rules", rules], ["db_forms", forms === undefined ? undefined : forms ? [forms] : []]];
+      for (const [table, list] of lists) {
+        if (!list || !(await cols(table)).size) continue;
+        statements.push(db.prepare("DELETE FROM " + table + " WHERE database_id = ?").bind(database.id));
+        for (const item of list) await add(table, { ...item, database_id: database.id });
+      }
+    }
+    if (doc.row) {
+      const { relations, ...row } = doc.row;
+      await add("db_rows", { ...row, page: slug });
+      statements.push(db.prepare("DELETE FROM db_relation_links WHERE src_row = ?").bind(row.id));
+      for (const link of relations) await add("db_relation_links", { ...link, src_row: row.id });
+    }
     await db.batch(statements);
   }
 
   async function trash(slug: string) {
     if (slug === "index") return;
-    const exists = (await all("SELECT slug FROM pages WHERE slug = ?", slug)).length > 0;
-    if (exists) await db.batch([db.prepare("INSERT INTO editor_trash (page, deleted, permanent) VALUES (?, ?, 0) ON CONFLICT(page) DO NOTHING").bind(slug, Date.now())]);
+    const page = (await all("SELECT kind FROM pages WHERE slug = ?", slug))[0];
+    if (!page) return;
+    const statements = [db.prepare("INSERT INTO editor_trash (page, deleted, permanent) VALUES (?, ?, 0) ON CONFLICT(page) DO NOTHING").bind(slug, Date.now())];
+    if (page.kind === "db_row") statements.push(
+      db.prepare("DELETE FROM db_relation_links WHERE src_row IN (SELECT id FROM db_rows WHERE page = ?) OR dst_row IN (SELECT id FROM db_rows WHERE page = ?)").bind(slug, slug),
+      db.prepare("DELETE FROM db_rows WHERE page = ?").bind(slug),
+    );
+    await db.batch(statements);
   }
 
   async function conflictCopy(doc: SyncDoc): Promise<string> {
     const slug = doc.page.slug + "-c" + randomBytes(3).toString("hex");
     const title = doc.page.title.endsWith(CONFLICT_SUFFIX) ? doc.page.title : doc.page.title + CONFLICT_SUFFIX;
-    await writeDoc({ ...doc, page: { ...doc.page, slug, title, ord: doc.page.ord + 1, updated: Date.now() } });
+    const { database: _d, row: _r, ...rest } = doc;
+    await writeDoc({ ...rest, page: { ...doc.page, slug, title, ord: doc.page.ord + 1, kind: doc.database || doc.row ? "note" : doc.page.kind, updated: Date.now() } });
     return slug;
   }
 
@@ -188,6 +231,7 @@ export function startSync(options: { env: LocalArchiveEnv; dataDir: string; read
     } else {
       const merged = mergePage(base ? { deleted: base.deleted === 1, doc: baseDoc(base) } : null, local, remoteSide);
       if (merged.copy) { const copy = await conflictCopy(merged.copy); run.conflicts.push(copy); touched.add(copy); saved.conflicts += 1; }
+      else if (merged.clash) run.conflicts.push(remote.slug);
       if (merged.deleted) await trash(remote.slug);
       else if (merged.doc && hashOf(merged.doc) !== localHash) await writeDoc(merged.doc);
       else if (merged.doc && local.deleted) await writeDoc(merged.doc);
@@ -210,7 +254,8 @@ export function startSync(options: { env: LocalArchiveEnv; dataDir: string; read
         continue;
       }
       saved.account = body.account ?? saved.account;
-      for (const change of body.changes ?? []) await receive(change, run, touched);
+      const rank = (change: Remote) => (change.doc?.page.kind === "db" ? 0 : 1);
+      for (const change of (body.changes ?? []).sort((a, b) => rank(a) - rank(b))) await receive(change, run, touched);
       saved.cursor = Number(body.cursor) || saved.cursor;
       save();
       if (!body.more) return;
@@ -231,6 +276,7 @@ export function startSync(options: { env: LocalArchiveEnv; dataDir: string; read
         pending.push({ slug, base: base?.seq ?? 0, deleted, updated: local.doc?.page.updated ?? Date.now(), hash, doc: deleted ? null : local.doc });
       }
       if (!pending.length) return;
+      pending.sort((a, b) => Number(b.doc?.page.kind === "db") - Number(a.doc?.page.kind === "db"));
       let conflicted = false;
       while (pending.length) {
         const batch: typeof pending = [];
@@ -273,6 +319,14 @@ export function startSync(options: { env: LocalArchiveEnv; dataDir: string; read
     running = once().finally(() => { running = null; });
     return running;
   }
+  // A run already under way may have read the pages before the latest edits, so an explicit request waits for it and
+  // then runs again; requests made during one run share the next one.
+  let next: Promise<SyncRun | null> | null = null;
+  function syncFresh(): Promise<SyncRun | null> {
+    if (!running) return sync();
+    next ??= running.catch(() => null).then(() => { next = null; return sync(); });
+    return next;
+  }
 
   let soon: ReturnType<typeof setTimeout> | null = null;
   const intervalMs = options.intervalMs ?? SYNC.intervalMs;
@@ -280,11 +334,11 @@ export function startSync(options: { env: LocalArchiveEnv; dataDir: string; read
   setTimeout(() => { sync().catch(() => {}); }, 1_000);
 
   return {
-    sync,
+    sync: syncFresh,
     edited() {
       if (!saved.enabled) return;
       if (soon) clearTimeout(soon);
-      soon = setTimeout(() => { soon = null; sync().catch(() => {}); }, SYNC.afterEditMs);
+      soon = setTimeout(() => { soon = null; syncFresh().catch(() => {}); }, SYNC.afterEditMs);
     },
     async setEnabled(on: boolean) {
       saved.enabled = on;

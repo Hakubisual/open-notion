@@ -6,7 +6,7 @@
 // part (GET /p/<token>/acard-part.json), public=1 marks it for the future gallery (owner screen pending).
 (() => {
   const schema = [
-    "CREATE TABLE IF NOT EXISTS parts (id TEXT PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, code TEXT NOT NULL, schema TEXT NOT NULL DEFAULT '{}', sample TEXT NOT NULL DEFAULT '{}', owner TEXT NOT NULL DEFAULT '', shared INTEGER NOT NULL DEFAULT 0, public INTEGER NOT NULL DEFAULT 0, token_hash TEXT NULL, source TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL DEFAULT 0)",
+    "CREATE TABLE IF NOT EXISTS parts (id TEXT PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, code TEXT NOT NULL, schema TEXT NOT NULL DEFAULT '{}', sample TEXT NOT NULL DEFAULT '{}', owner TEXT NOT NULL DEFAULT '', shared INTEGER NOT NULL DEFAULT 0, public INTEGER NOT NULL DEFAULT 0, token_hash TEXT NULL, source TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL DEFAULT 0, description TEXT NOT NULL DEFAULT '')",
     "CREATE UNIQUE INDEX IF NOT EXISTS parts_token ON parts(token_hash)",
     "CREATE TABLE IF NOT EXISTS part_themes (id TEXT PRIMARY KEY, name TEXT NOT NULL, light TEXT NULL, dark TEXT NULL, owner TEXT NOT NULL DEFAULT '', shared INTEGER NOT NULL DEFAULT 0, public INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL DEFAULT 0)",
   ];
@@ -16,7 +16,7 @@
   const parse = (text, fallback) => { try { const v = JSON.parse(text); return v ?? fallback; } catch { return fallback; } };
 
   function rowOut(row, withCode) {
-    return { id: row.id, name: row.name, version: Number(row.version), schema: parse(row.schema, {}), sample: parse(row.sample, {}), owner: row.owner,
+    return { id: row.id, name: row.name, description: String(row.description || ""), version: Number(row.version), schema: parse(row.schema, {}), sample: parse(row.sample, {}), owner: row.owner,
       shared: Number(row.shared) === 1, public: Number(row.public) === 1, created: Number(row.created), updated: Number(row.updated),
       ...(row.source ? { source: row.source } : {}), ...(withCode ? { code: row.code } : {}) };
   }
@@ -58,6 +58,7 @@
   async function register(db, helpers, body, owner) {
     const id = cleanId(body.id);
     const name = String(body.name || id).trim().slice(0, 60) || id;
+    const description = typeof body.description === "string" ? body.description.trim().slice(0, 200) : null;
     let code = typeof body.code === "string" ? body.code : null, source = "";
     if (code === null) {
       if (typeof body.page !== "string" || typeof body.block !== "string") throw new AgentError("page 와 block(HTML 블록 id), 또는 code 를 보내 주세요.");
@@ -81,9 +82,10 @@
     if (old) {
       await db.prepare("UPDATE parts SET name = ?, version = ?, code = ?, schema = ?, sample = ?, source = ?, updated = ? WHERE id = ?")
         .bind(name, Number(old.version) + 1, code, JSON.stringify(partSchema), JSON.stringify(sample), source, now, id).run();
+      if (description !== null) await db.prepare("UPDATE parts SET description = ? WHERE id = ?").bind(description, id).run();
     } else {
-      await db.prepare("INSERT INTO parts (id, name, version, code, schema, sample, owner, shared, public, token_hash, source, created, updated) VALUES (?, ?, 1, ?, ?, ?, ?, 0, 0, NULL, ?, ?, ?)")
-        .bind(id, name, code, JSON.stringify(partSchema), JSON.stringify(sample), owner, source, now, now).run();
+      await db.prepare("INSERT INTO parts (id, name, version, code, schema, sample, owner, shared, public, token_hash, source, created, updated, description) VALUES (?, ?, 1, ?, ?, ?, ?, 0, 0, NULL, ?, ?, ?, ?)")
+        .bind(id, name, code, JSON.stringify(partSchema), JSON.stringify(sample), owner, source, now, now, description ?? "").run();
     }
     return rowOut(await db.prepare("SELECT * FROM parts WHERE id = ?").bind(id).first(), false);
   }
@@ -106,7 +108,7 @@
   async function listParts(db) {
     const builtin = PART_DEFAULTS.map((p) => ({ id: p.id, name: p.name, version: p.version, builtin: true, description: p.description, schema: p.schema, sample: p.sample,
       fence: "```acard-part " + JSON.stringify({ part: p.id, v: p.version }) }));
-    const mine = (await workspaceParts(db)).map((row) => { const p = rowOut(row, false); return { ...p, builtin: false, description: "Registered from an HTML block" + (p.source ? " (" + p.source + ")" : "") + ". Its script reads window.acardPartData.", fence: "```acard-part " + JSON.stringify({ part: p.id, v: p.version }) }; });
+    const mine = (await workspaceParts(db)).map((row) => { const p = rowOut(row, false); return { ...p, builtin: false, description: (p.description ? p.description + " - r" : "R") + "egistered from an HTML block" + (p.source ? " (" + p.source + ")" : "") + ". Its script reads window.acardPartData.", fence: "```acard-part " + JSON.stringify({ part: p.id, v: p.version }) }; });
     return { parts: [...builtin, ...mine], themes: await listThemes(db), howTo: "Write a part as a fenced block: the fence line above, then the JSON data, then ```. Or call set_part_data on an existing part block; it checks the data against the schema. A part's look is its theme: add \"theme\":\"<id>\" to the fence (or theme in set_part_data) only when the user asks for a look; without it the part follows the page." };
   }
 
@@ -258,6 +260,16 @@
         return d ? reply({ ...d, builtin: true }) : reply({ error: "없는 부품이에요." }, 404);
       }
       if (!row) return reply({ error: "없는 부품이에요." }, 404);
+      if (row.owner && row.owner !== owner) return reply({ error: "다른 사람이 등록한 부품이에요. 만든 사람만 바꾸거나 지울 수 있어요." }, 403);
+      if (!action && method === "PATCH") {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== "object") return reply({ error: "JSON 본문이 필요해요." }, 400);
+        const name = body.name === undefined ? row.name : String(body.name).trim().slice(0, 60);
+        if (!name) return reply({ error: "부품 이름을 적어 주세요." }, 400);
+        const description = body.description === undefined ? String(row.description || "") : String(body.description).trim().slice(0, 200);
+        await db.prepare("UPDATE parts SET name = ?, description = ?, updated = ? WHERE id = ?").bind(name, description, Date.now(), id).run();
+        return reply(rowOut(await db.prepare("SELECT * FROM parts WHERE id = ?").bind(id).first(), false));
+      }
       if (!action && method === "DELETE") {
         await db.prepare("DELETE FROM parts WHERE id = ?").bind(id).run();
         return reply({ ok: true });
@@ -297,7 +309,11 @@
   }
 
   registerFeature({
-    schema: async (db) => { await db.batch(schema.map((sql) => db.prepare(sql))); },
+    schema: async (db) => {
+      await db.batch(schema.map((sql) => db.prepare(sql)));
+      // #38 stage 2: stores made before the description column (supabase/033 on Postgres); an existing column throws and is ignored.
+      await db.prepare("ALTER TABLE parts ADD COLUMN description TEXT NOT NULL DEFAULT ''").run().catch(() => {});
+    },
     api: [themes, human],
     publicRoutes: [sharedPart],
     services: { mcpTools: [

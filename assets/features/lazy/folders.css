@@ -50,6 +50,9 @@
 .fd-dragging .fd-ul { touch-action: none; }
 .fd-ghost { position: fixed; left: 0; top: 0; z-index: 1000; pointer-events: none; padding: 6px 12px; border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-menu); font-size: var(--fs-14); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fd-empty { color: var(--fg-dim); font-size: var(--fs-13); padding: 4px 10px; margin: 0; }
+.fd-ic svg { display: block; margin: auto; } .fd-ic.fd-folder { color: var(--accent); }
+.fd-menu button svg { vertical-align: -3px; margin-right: 10px; } .fd-menu button svg[fill=currentColor] { color: var(--accent); }
+.fd-newf { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; } .fd-newf svg { color: inherit; }
 .fd-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 8px; }
 .fd-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 0; border-radius: 13px; font: inherit; font-size: var(--fs-13); font-weight: 500; cursor: pointer; background: var(--tag-gray-bg); color: var(--tag-gray-fg); white-space: nowrap; }
 .fd-chip { max-width: 100%; min-width: 0; }

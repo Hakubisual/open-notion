@@ -135,7 +135,7 @@ step1.addEventListener("submit", async (e) => {
 });
 
 const ORDER = ["board", "progress", "blog", "notes"];
-async function finish(presets) {
+async function finish(presets, next) {
   const btn = step2.querySelector('button[type="submit"]');
   btn.disabled = true;
   try {
@@ -144,7 +144,7 @@ async function finish(presets) {
       if (!res.ok) { show(step2, "err", T("js.onb.saveFail")); return; }
     }
     const widgets = ORDER.filter((k) => presets.includes(k));
-    if (await save({ home_layout: { widgets }, finish: true }, step2)) goto(3);
+    if (await save({ home_layout: { widgets }, finish: true }, step2)) next ? location.assign(next) : goto(3);
   } catch { show(step2, "err", T("js.network")); }
   finally { btn.disabled = false; }
 }
@@ -155,6 +155,7 @@ step2.addEventListener("submit", (e) => {
   finish(picked);
 });
 $("skip").addEventListener("click", () => finish([]));
+$("import").addEventListener("click", (e) => { e.preventDefault(); finish([], "/import"); });
 $("back").addEventListener("click", () => goto(1));
 
 (async () => {

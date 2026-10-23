@@ -2,6 +2,7 @@
 
 This guide sets up one Acard server on a machine inside your network (office LAN, home lab, VPN).
 Everyone else connects to it with a browser or the desktop app (see [install-client.md](install-client.md)).
+Using Acard alone on one computer? You do not need a server: see [install-user.md](install-user.md).
 
 The server is a single Bun process that stores everything in SQLite files in one data folder.
 There is no separate database server to run.
@@ -54,6 +55,8 @@ The server is configured with environment variables:
 | `ACARD_HOST` | for LAN | `0.0.0.0` | Address to listen on. Default `127.0.0.1` (this machine only). Use `0.0.0.0` to accept LAN clients. |
 | `ACARD_PASSWORD` | for LAN | `a long passphrase` | Turns on the sign-in page. **The server refuses to listen on a non-loopback address without it.** |
 | `ACARD_ALLOWED_HOSTS` | for LAN | `192.168.0.10,notes.lan` | Comma-separated host names clients use in the address bar. Requests with any other `Host` header are rejected (DNS-rebinding protection). `*` accepts any name. |
+| `ACARD_AGENT_TOKEN` | for agents | `a random string of 24+ characters` | Lets AI agents and scripts reach `/mcp` and `/api/v1` with `Authorization: Bearer <token>`. Without it, agents cannot reach them on a password-protected server. The server password never works for agents. See [Connect agents](#connect-agents). |
+| `ACARD_LOCAL_API` | no | `0` | `0` turns off the token-free agent access of a server started without a password (this machine only). |
 | `ACARD_LANG` | no | `en` | Interface language: `en`, `ko` or `zh`. The examples below use English. Unset shows the original Korean interface. |
 
 The `ACARD_` prefix comes from the upstream project and is kept so both share one code base.
@@ -246,6 +249,39 @@ certificate on client machines. The sign-in cookie is marked `Secure` automatica
 - Changing `ACARD_PASSWORD` (or deleting `session-secret` in the data folder) signs everyone out.
 - Accounts, Google sign-in and the remote MCP endpoint of the hosted service are not part of the LAN server.
 
+## Connect agents
+
+AI agents (Codex, Claude Code, any MCP client) and scripts use the MCP endpoint `/mcp` and the REST API `/api/v1`
+(described at `/api/v1/openapi.json`; agent guide at `/AGENTS.md` and `/llms.txt`). On a server with a password they
+need their own token, separate from the people's password:
+
+1. Generate a random token of 24 characters or more, for example `openssl rand -hex 24`.
+2. Add `ACARD_AGENT_TOKEN=<token>` to the server's environment (the NSSM `AppEnvironmentExtra` list or
+   `/etc/acard-local.env`) and restart the service.
+3. Give the token to the agents. They send `Authorization: Bearer <token>`.
+
+Codex:
+
+```sh
+export ACARD_AGENT_TOKEN=<token>
+codex mcp add acard --url http://192.168.0.10:47811/mcp --bearer-token-env-var ACARD_AGENT_TOKEN
+```
+
+The CLI reads the server address and token from `ACARD_URL` and `ACARD_TOKEN`:
+
+```sh
+ACARD_URL=http://192.168.0.10:47811 ACARD_TOKEN=<token> \
+  npx -y --package=http://192.168.0.10:47811/acard-cli.tgz acard pull ./notes
+```
+
+The token opens only `/mcp` and `/api/v1`, not the web app. Anyone with it can read and change every page, so treat
+it like the server password. Changing or removing `ACARD_AGENT_TOKEN` and restarting cuts off every agent that used
+the old value.
+
+With a password on, every agent needs the token, including programs on the server machine itself. A server started
+without a password (this machine only, `ACARD_HOST=127.0.0.1`) lets local agents in without a token; set
+`ACARD_LOCAL_API=0` to turn that off.
+
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -254,3 +290,5 @@ certificate on client machines. The sign-in cookie is marked `Secure` automatica
 | Browser shows `Address not allowed.` | Add the name in the address bar to `ACARD_ALLOWED_HOSTS`. |
 | `ACARD_DATA_DIR and ACARD_APP_DIR (with editor.html) are required` | Run `bun run build` and point `ACARD_APP_DIR` at `dist`. |
 | Clients time out | Firewall rule (step 5), or the server is on a different subnet / VPN. |
+| `ACARD_AGENT_TOKEN must contain at least 24 characters` | Use a longer token, or remove the variable. |
+| Agent gets `401` from `/mcp` | Set `ACARD_AGENT_TOKEN` on the server and send the same value as `Authorization: Bearer <token>`. |

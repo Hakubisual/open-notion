@@ -451,7 +451,7 @@ export const agentOps = {
     requireScope(principal, "write");
     const props = input.props && typeof input.props === "object" && !Array.isArray(input.props) ? input.props : null;
     if (!props) throw new AgentError("props 객체가 필요해요.");
-    const result = await helpers.dbRowRequest(db, String(input.database ?? ""), "POST", null, { props });
+    const result = await helpers.dbRowRequest(db, String(input.database ?? ""), "POST", null, { props }, principal);
     if (result.row?.page) await recordActivity(db, result.row.page, principal, "row-add");
     return result;
   },
@@ -461,13 +461,13 @@ export const agentOps = {
     const props = input.props && typeof input.props === "object" && !Array.isArray(input.props) ? input.props : null;
     if (!props) throw new AgentError("props 객체가 필요해요.");
     const row = String(input.row ?? "");
-    const result = await helpers.dbRowRequest(db, String(input.database ?? ""), "PATCH", row, { props });
+    const result = await helpers.dbRowRequest(db, String(input.database ?? ""), "PATCH", row, { props }, principal);
     const page = await db.prepare("SELECT page FROM db_rows WHERE id = ?").bind(row).first();
     if (page?.page) await recordActivity(db, page.page, principal, "row-update");
     return result;
   },
 
-  // "주인님 결정 필요" 는 마크다운 `> [!decision] 질문` 콜아웃으로 적는다. 오너가 콜아웃을 지우면 목록에서 빠진다.
+  // "decision" 은 마크다운 `> [!decision] 질문` 콜아웃으로 적는다. 오너가 콜아웃을 지우면 목록에서 빠진다.
   async listDecisions(db, principal, helpers) {
     requireScope(principal, "read");
     const rows = await db.prepare("SELECT b.page AS slug, p.title, b.id AS block, b.text, p.updated FROM blocks b JOIN pages p ON p.slug = b.page WHERE b.type = 'callout' AND b.meta LIKE '%\"tone\":\"decision\"%' AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = b.page) ORDER BY p.updated DESC LIMIT 100").all();

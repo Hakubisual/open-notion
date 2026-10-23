@@ -37,7 +37,7 @@ test("thumb bar buttons are at least 44px tall (#103)", () => {
 });
 
 test("drawer, page menu and share dialog controls reach 44px on phones (#103)", () => {
-  for (const selector of ["#side-more", ".side-add", ".fd-ib", ".fd-more", ".side-root > .row > a", ".fd-link", ".fd-sh", ".seg button", ".shd-tab", ".shd-help", ".ui-btn", ".pj-side-set", "button.tw", ".fd-tw", ".mbar #menu", ".drawer-close", ".page-actions .icon", ".menu a"]) {
+  for (const selector of ["#side-more", ".side-add", ".fd-ib", ".fd-more", ".side-root > .row > a", ".fd-link", ".fd-sh", ".seg button", ".shd-tab", ".shd-help", ".ui-btn", "button.tw", ".fd-tw", ".mbar #menu", ".drawer-close", ".page-actions .icon", ".menu a"]) {
     expect({ selector, height: heightOf(selector) >= 44 }).toEqual({ selector, height: true });
   }
   for (const selector of ["#side-more", ".side-add", ".fd-ib", ".fd-more"]) expect(rulesFor(selector).some(([, b]) => px(decl(b, "min-width")) >= 44)).toBe(true);

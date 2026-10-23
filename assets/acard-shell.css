@@ -93,7 +93,7 @@ html.side-collapsed .reader .sidebar { display: none; }
   .side-brand #collapse { display: none; }
   .reader .tree a, .side-nav :is(a, button) { height: 42px; }
 }
-@media print { .reader .sidebar, .reader .mbar { display: none; } .reader .shell { display: block; } }
+@media print { .reader :is(.sidebar, .mbar, .thumbbar, .skip, .results, .dbbreadcrumb, .page-actions, .menu, .overlay, .fbt, .fbp, .agent-fab, .reader-toc, .reader-toc-toggle, .foot) { display: none !important; } .reader .shell { display: block; } }
 
 html[data-theme="dark"] img[src^="/logo"] { filter: invert(.93); }
 @media (prefers-color-scheme: dark) { html[data-theme="dark"] img[src^="/logo"] { filter: none; } html[data-theme="light"] img[src^="/logo"] { filter: invert(.93); } }

@@ -41,10 +41,11 @@
     if (home) home.remove();
     return { main: main, title: doc.title, id: identity(doc), assets: assets(doc), scripts: Array.from(doc.querySelectorAll('#main script:not([src]),body > script:not([src])')).filter(function (s) { return !s.type || s.type === "module" || /javascript/.test(s.type); }).map(function (s) { return { text: s.textContent, type: s.type }; }) };
   }
-  function full(url) {
+  function full(url, page) {
     generation++; pages.clear(); inflight.clear();
     // A rejected identity/permission must not leave the old private content visible during document navigation.
-    document.querySelectorAll("#main,#sidebar").forEach(function (el) { el.style.visibility = "hidden"; });
+    // A page of the same identity that only needs assets this document has not loaded stays visible while it loads.
+    if (!page || nav.mustReload(200, id, page.id)) document.querySelectorAll("#main,#sidebar").forEach(function (el) { el.style.visibility = "hidden"; });
     location.assign(url);
   }
   function databaseScript(url, loaded) {
@@ -83,7 +84,7 @@
       var doc = new DOMParser().parseFromString(html, "text/html");
       if (!doc.body.classList.contains("reader") || !doc.getElementById("main") || nav.mustReload(200, id, identity(doc))) throw Error("reader identity or shell changed");
       var page = snapshot(doc);
-      if (!allowed(page)) throw Error("reader assets changed");
+      if (!allowed(page)) throw Object.assign(Error("reader assets changed"), { page: page });
       if (id && !id.startsWith("g-")) pages.set(k, page);
       return page;
     });
@@ -102,7 +103,7 @@
     } else window.scrollTo({ top: y == null ? 0 : y, behavior: "instant" });
   }
   function swap(page, url, y, focus) {
-    if (!allowed(page)) { full(url); return false; }
+    if (!allowed(page)) { full(url, page); return false; }
     focus = focus || document.activeElement === document.getElementById("main");
     var main = page.main.cloneNode(true);
     document.getElementById("main").replaceWith(main);
@@ -116,6 +117,7 @@
     // Parsed inline code is inert. Replay page init code, not the external singleton bundles/sidebar mounts.
     main.querySelectorAll('script:not([src])').forEach(function (s) { if (!s.type || s.type === "module" || /javascript/.test(s.type)) s.remove(); });
     page.scripts.forEach(function (s) { var el = document.createElement("script"); if (s.type) el.type = s.type; el.textContent = s.text; main.appendChild(el); el.remove(); });
+    prefetched.clear();
     document.dispatchEvent(new CustomEvent("acard:navigated", { detail: { slug: reader.slug } }));
     document.dispatchEvent(new CustomEvent("acard:page-fresh"));
     // The home module retains its mounted root for live refresh; do not let that root follow a note navigation.
@@ -125,7 +127,7 @@
     position(url, y, focus);
     // Keep the server-rendered rows visible while the optional DB bundles load in dependency order.
     // Other missing assets and changed versions still require a full document navigation.
-    mountDatabase(page).catch(function () { if (key(url) === active) full(url); });
+    mountDatabase(page).catch(function () { if (key(url) === active) full(url, page); });
     return true;
   }
   function savePosition() { history.replaceState(Object.assign({}, history.state, { acardReader: true, y: window.scrollY }), "", location.href); }
@@ -135,25 +137,31 @@
     document.dispatchEvent(new CustomEvent("acard:before-navigate"));
     if (!options.pop) savePosition();
     var turn = ++generation, cached = id && !id.startsWith("g-") && pages.get(key(url));
-    var y = options.pop ? options.y || 0 : null, shown = false;
+    var y = options.pop ? options.y || 0 : null, shown = false, last;
     function show(page) {
       if (turn !== generation) return;
+      // An unchanged revalidation would only re-run page scripts and remount listeners over identical content.
+      if (shown && page.main.outerHTML === last.main.outerHTML) return;
       if (!options.pop && !shown) history.pushState({ acardReader: true, y: 0 }, "", url);
       var keep = shown ? window.scrollY : y;
-      shown = swap(page, url, keep, !shown);
+      shown = swap(page, url, keep, !shown); last = page;
     }
     if (cached) show(cached);
-    return readPage(url, !!cached).then(show).catch(function () { if (turn === generation) full(url); });
+    return readPage(url, !!cached).then(show).catch(function (e) { if (turn === generation) full(url, e && e.page); });
   }
   function refresh(authorize) {
     if (!authorize && selecting()) { deferredFresh = true; return Promise.resolve(); }
     deferredFresh = false;
     var turn = generation, url = location.href;
+    // A page whose main holds state of its own (the import screen's progress and result) is not replaced by a live
+    // refresh; its sidebar still follows through the tree reload.
+    var mainNow = document.getElementById("main");
+    if (!authorize && mainNow && mainNow.hasAttribute("data-live-keep")) return Promise.resolve();
     return readPage(url, true).then(function (page) {
       if (turn !== generation || key(url) !== active) return;
       if (!authorize && selecting()) { deferredFresh = true; return; }
       swap(page, url, window.scrollY, false);
-    }).catch(function () { if (turn === generation) full(url); });
+    }).catch(function (e) { if (turn === generation) full(url, e && e.page); });
   }
   reader.navigate = navigate; reader.refresh = refresh;
   reader.prefetch = function (url) {
@@ -167,7 +175,13 @@
     e.preventDefault(); navigate(a.href);
   });
   history.scrollRestoration = "manual"; savePosition();
-  window.addEventListener("scroll", function () { if (key(location.href) === active) savePosition(); }, { passive: true });
+  // The saved y is read only on popstate, and navigate() saves it again right before leaving, so the scroll handler
+  // records the position once the scrolling settles instead of calling replaceState (a long task on a slow phone) per event.
+  var positionTimer = null;
+  window.addEventListener("scroll", function () {
+    if (key(location.href) !== active) return;
+    clearTimeout(positionTimer); positionTimer = setTimeout(savePosition, 150);
+  }, { passive: true });
   window.addEventListener("popstate", function (e) {
     if (key(location.href) === active) return;
     navigate(location.href, { pop: true, y: e.state && e.state.y });

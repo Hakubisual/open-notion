@@ -39,6 +39,7 @@
   var box = document.getElementById("backlinks");
   if (!box) return;
   var slug = location.pathname.replace(/^\//, "").replace(/\/$/, "") || "index";
+  if (slug === "home") slug = "index";
   fetch("/api/backlinks?slug=" + encodeURIComponent(slug)).then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
     var list = data && data.backlinks ? data.backlinks : [];
     if (!list.length) return;
@@ -50,6 +51,14 @@
   }
   mountBacklinks();
   document.addEventListener("acard:page-fresh", mountBacklinks);
+})();
+(function () {
+  document.addEventListener("click", function (ev) {
+    if (!ev.target.closest || !ev.target.closest("#print-pdf")) return;
+    var menu = document.getElementById("more-menu");
+    if (menu) menu.hidden = true;
+    window.print();
+  });
 })();
 (function () {
   var overlay = null;

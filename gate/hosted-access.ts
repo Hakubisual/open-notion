@@ -17,3 +17,4 @@ export async function betaApi(_request: Request, _env: BetaEnv, _url: URL, _sess
 export function trackSignup(_env: BetaEnv, _session: Session) {}
 export function rewriteLanding(res: Response, _env: BetaEnv): Response { return res; }
 export function injectAppBeta(res: Response): Response { return res; }
+export function injectGuide(res: Response, _env?: BetaEnv): Response { return res; }

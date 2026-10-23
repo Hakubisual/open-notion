@@ -80,7 +80,7 @@
   --dur-fast: var(--dur-1); --dur-base: var(--dur-2); --dur-slow: 240ms;
   /* ds10 #94: shared-CSS literals moved here. Solid fills (bars, dots, star) read on both themes, so they have no dark pair. */
   --radius-2xs: 4px;
-  --color-hover: rgba(120, 110, 160, .08); --color-scrim: rgba(28, 24, 44, .28); --color-scrim-strong: rgba(0, 0, 0, .82);
+  --color-hover: rgba(120, 110, 160, .08); --color-scrim: rgba(28, 24, 44, .28); --color-scrim-strong: rgba(0, 0, 0, .82); --color-scrim-drawer: rgba(20, 18, 32, .48);
   --solid-green: #70bba5; --solid-blue: #70aaf4; --solid-red: #e07a86; --solid-orange: #eba25c; --solid-yellow: #e3a008;
   --tag-brown-bg: #f3ece5; --tag-brown-fg: #7a5230;
 }
@@ -116,6 +116,7 @@ html[data-theme="dark"] {
   --raised: #26262d;
   --shadow-md: 0 4px 14px rgba(0, 0, 0, .35);
   --tag-brown-bg: #3a2e24; --tag-brown-fg: #e3bf98;
+  --color-scrim-drawer: rgba(0, 0, 0, .62);
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]):not([data-theme="dark"]) {
@@ -132,6 +133,7 @@ html[data-theme="dark"] {
     --cover: linear-gradient(120deg, #2e2950 0%, #1f3149 48%, #1f3a2e 100%);
     --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-menu: 0 14px 36px rgba(0, 0, 0, .5); --raised: #26262d; --shadow-md: 0 4px 14px rgba(0, 0, 0, .35);
     --tag-brown-bg: #3a2e24; --tag-brown-fg: #e3bf98;
+    --color-scrim-drawer: rgba(0, 0, 0, .62);
   }
 }
 

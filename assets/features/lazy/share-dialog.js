@@ -36,7 +36,7 @@
     else say("주소를 직접 복사해 주세요: " + text);
   }
   function abs(path) { return new URL(path, location.origin).href; }
-  function pageUrl() { return abs("/" + (slug === "index" ? "" : encodeURIComponent(slug) + "/")); }
+  function pageUrl() { return abs("/" + (slug === "index" ? "home" : encodeURIComponent(slug)) + "/"); }
   function publishCopy() {
     if (publishing || state.role !== "full") return;
     publishing = true;
@@ -104,11 +104,18 @@
     return '<div class="shd-adv"><h3>링크와 보호</h3>' +
       '<label class="shd-switch"><span>링크 만료<small>' + (onLink ? "이 날짜가 지나면 링크로 열 수 없어요." : "링크가 있는 모든 사용자로 바꾸면 정할 수 있어요.") + '</small></span><input type="date" data-expiry value="' + (link && link.expires ? day(link.expires) : "") + '"' + (onLink ? "" : " disabled") + "></label>" +
       '<label class="shd-switch"><span>검색 엔진 허용<small>게시한 페이지를 검색 결과에 보여요.</small></span><input type="checkbox" data-setting="allowIndex"' + (s.allowIndex ? " checked" : "") + "></label>" +
+      themeHtml(s) +
       '<label class="shd-switch"><span>복제·내보내기 허용<small>끄면 내보내기·복제 버튼을 숨기고 서버에서 막아요 (화면 복사까지 막지는 못해요).</small></span><input type="checkbox" data-setting="allowExport"' + (s.allowExport ? " checked" : "") + "></label>" +
       "<h3>에이전트 사용 권한</h3>" + (state.agents.length ? state.agents.map(function (a) {
         return '<label class="shd-agent"><span>' + esc(a.name) + "<br><small>토큰 권한 " + (a.scopes.indexOf("write") >= 0 ? "읽기·쓰기" : "읽기") + " · 이 페이지에서 " + (a.effective.length ? (a.effective.indexOf("write") >= 0 ? "읽기·쓰기" : "읽기만") : "막힘") + (a.inherited ? " (상위 페이지 규칙)" : "") + '</small></span><select data-agent="' + esc(a.id) + '" aria-label="' + esc(a.name) + ' 권한">' +
           options([["inherit", "기본 (토큰 권한 그대로)"], ["write", "읽기·쓰기"], ["read", "읽기만"], ["none", "막기"]], a.inherited ? "inherit" : a.level) + "</select></label>";
       }).join("") + '<p class="shd-note" style="margin-left:0">페이지 규칙은 토큰 권한을 좁히기만 해요. 읽기 토큰에 쓰기를 줄 수는 없어요.</p>' : '<p class="shd-note" style="margin-left:0">연결된 에이전트 토큰이 없어요. 설정 &gt; 에이전트 연결에서 만들 수 있어요.</p>') + "</div>";
+  }
+
+  // issue 116: the theme a shared or published page opens in. "system" keeps the viewer's own setting.
+  function themeHtml(s) {
+    return '<label class="shd-switch"><span>보는 사람 테마<small>공유·게시 페이지가 이 테마로 열려요. 보는 사람은 화면에서 다시 바꿀 수 있어요.</small></span><select data-theme-pick aria-label="보는 사람 테마">' +
+      options([["system", "보는 사람 설정 따름"], ["light", "항상 라이트"], ["dark", "항상 다크"]], s.theme || "system") + "</select></label>";
   }
 
   function publishTab() {
@@ -119,6 +126,7 @@
       html += pub.url ? '<p>웹에 게시됐어요.</p><div class="shd-copyrow"><input readonly value="' + esc(abs(pub.url)) + '" aria-label="게시 주소"><button type="button" class="shd-ghost" data-copy-publish>' + ico("link") + '복사</button><a class="shd-ghost" href="' + esc(pub.url) + '" target="_blank" rel="noopener">사이트 보기</a></div>' : '<p>예전에 만든 공개 링크로 게시돼 있어요 (' + pub.legacy + "개). 주소는 만들 때만 보여요.</p><button type=\"button\" class=\"shd-ghost\" data-publish>새 게시 주소 만들기</button>";
       html += '<label class="shd-switch"><span>하위 페이지도 게시<small>켜면 하위 페이지도 게시 주소 아래에서 열려요.</small></span><input type="checkbox" data-setting="publishSubpages"' + (s.publishSubpages ? " checked" : "") + "></label>" +
         '<label class="shd-switch"><span>검색 엔진 색인<small>켜면 검색 엔진이 이 페이지를 찾을 수 있어요.</small></span><input type="checkbox" data-setting="allowIndex"' + (s.allowIndex ? " checked" : "") + "></label>" +
+        themeHtml(s) +
         '<label class="shd-switch"><span>사이트 제목</span><input type="text" data-site-title maxlength="120" value="' + esc(s.siteTitle) + '" placeholder="비우면 페이지 제목"></label>' +
         '<div class="shd-foot"><span></span><button type="button" class="shd-ghost shd-danger" data-unpublish>게시 중단</button></div>';
     }
@@ -174,6 +182,8 @@
     } else if (t.dataset.setting) {
       var patch = {}; patch[t.dataset.setting] = t.checked;
       act(api("/settings", "PUT", patch), "설정을 바꿨어요.");
+    } else if (t.hasAttribute("data-theme-pick")) {
+      act(api("/settings", "PUT", { theme: t.value }), t.value === "system" ? "보는 사람의 테마 설정을 따라요." : t.value === "dark" ? "공유 페이지가 다크로 열려요." : "공유 페이지가 라이트로 열려요.");
     } else if (t.hasAttribute("data-site-title")) {
       act(api("/settings", "PUT", { siteTitle: t.value }), "사이트 제목을 저장했어요.");
     } else if (t.dataset.agent) {

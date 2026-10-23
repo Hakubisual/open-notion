@@ -5,6 +5,7 @@
 
 const VIS_COLORS = ["#86dfe3", "#c4b2f4", "#94bff4", "#a4dcb9", "#f1c692", "#eab1cd"];
 const VIS_STROKE = "#7b68ee";
+import { FRAME_BASE_CSP } from "./sandbox-policy.js";
 export const VISUAL_MAX_BYTES = 64 * 1024;
 
 function esc(value) {
@@ -458,7 +459,7 @@ export function chartSvg(spec, title) {
   return MOTION + out + "</svg>";
 }
 
-export const VISUAL_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:";
+export const VISUAL_CSP = FRAME_BASE_CSP;
 // #43: the frame follows the page theme. A sandboxed frame's prefers-color-scheme is the used color-scheme of its
 // <iframe> element, which inherits the page's (tokens.css sets it per data-theme), so it switches live with no page
 // script, also on shared pages. The frame gets the Acard color variables for both modes, mirrors the mode into

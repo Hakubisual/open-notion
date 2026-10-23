@@ -264,7 +264,7 @@ describe("markdown pages through /api/v1", () => {
 
   test("search and list find pages; decision callouts are listed", async () => {
     const writer = await token(["read", "write"]);
-    await call("POST", "/api/v1/pages", { token: writer, markdown: "---\ntitle: 배포 질문\n---\n> [!decision] 주인님 결정 필요: 오늘 배포할까요?\n" });
+    await call("POST", "/api/v1/pages", { token: writer, markdown: "---\ntitle: 배포 질문\n---\n> [!decision] Decision needed: 오늘 배포할까요?\n" });
     await call("POST", "/api/v1/pages", { token: writer, markdown: "---\ntitle: 그냥 메모\n---\n> [!note] 메모\n" });
     const found = (await call("GET", "/api/v1/pages?q=" + encodeURIComponent("배포"), { token: writer })).data.pages;
     expect(found.map((p: any) => p.title)).toEqual(["배포 질문"]);

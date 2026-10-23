@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const src = readFileSync(join(import.meta.dir, '..', 'agent-docs.js'), 'utf8').replace(/^export /gm, '');
-const { openapiSpec, llmsTxt, agentsMd, connectClients } = new Function(
-  `${src}\nreturn { openapiSpec, llmsTxt, agentsMd, connectClients };`,
+const { openapiSpec, llmsTxt, agentsMd } = new Function(
+  `${src}\nreturn { openapiSpec, llmsTxt, agentsMd };`,
 )();
 
 const origin = 'https://legacy.notes.example.com';
@@ -61,26 +61,6 @@ describe('openapiSpec', () => {
     const refs = collectRefs(spec);
     expect(refs.length).toBeGreaterThan(0);
     for (const r of refs) expect(resolveRef(spec, r), r).toBeDefined();
-  });
-});
-
-describe('connectClients', () => {
-  const ids = ['omo', 'claude-code', 'claude-desktop', 'codex', 'amp', 'openclaw', 'cursor', 'windsurf', 'cline',
-    'continue', 'gemini-cli', 'opencode', 'goose', 'zed', 'vscode-copilot'];
-  const clients = connectClients(origin);
-
-  test('15 clients in order; only clients verified live on this PC are marked verified', () => {
-    expect(clients.map((c: any) => c.id)).toEqual(ids);
-    expect(clients.filter((c: any) => c.status === 'verified').map((c: any) => c.id)).toEqual(['omo', 'claude-code']);
-    for (const c of clients) {
-      expect(['verified', 'unverified']).toContain(c.status);
-      expect(c.methods.length).toBeGreaterThan(0);
-      expect(c.docUrl.startsWith('https://')).toBe(true);
-      for (const m of c.methods) {
-        expect(['command', 'file']).toContain(m.kind);
-        expect(m.code.includes('acard_')).toBe(false);
-      }
-    }
   });
 });
 

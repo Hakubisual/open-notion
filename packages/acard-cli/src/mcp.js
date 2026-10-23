@@ -19,7 +19,7 @@ export async function runMcpProxy(cfg, version) {
   } catch (err) {
     log(`failed to connect to ${cfg.server}/mcp: ${err.message}`);
     if (err.code === 401 || /\b401\b|unauthori[sz]ed/i.test(err.message)) {
-      log("인증 실패: Acard 설정 > 에이전트 연결 에서 토큰을 만든 뒤 ACARD_TOKEN 환경변수로 지정하세요.");
+      log("Authentication failed: on a team server set ACARD_TOKEN to the server's agent token.");
     }
     return 1;
   }
@@ -33,9 +33,9 @@ export async function runMcpProxy(cfg, version) {
   server.setRequestHandler(ListToolsRequestSchema, (req) => client.listTools(req.params));
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const local = await rewriteLocalImages(cfg, req.params.name, req.params.arguments);
-    if (local.uploaded) log(`로컬 이미지·영상 ${local.uploaded}개를 올리고 주소를 바꿨어요`);
+    if (local.uploaded) log(`uploaded ${local.uploaded} local image/video file(s) and replaced their paths`);
     const out = await client.callTool({ ...req.params, arguments: local.args });
-    if (local.errors.length) out.content = [...(out.content || []), { type: "text", text: "로컬 이미지를 올리지 못했어요: " + local.errors.join("; ") }];
+    if (local.errors.length) out.content = [...(out.content || []), { type: "text", text: "Could not upload local images: " + local.errors.join("; ") }];
     return out;
   });
 

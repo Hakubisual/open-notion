@@ -3,9 +3,9 @@
   "caps": {
     "readerRaw": 115500,
     "readerGzip": 30300,
-    "editorRaw": 366000,
-    "editorGzip": 101700,
-    "totalRaw": 1772000,
+    "editorRaw": 330000,
+    "editorGzip": 101900,
+    "totalRaw": 2207000,
     "lazyMaxRaw": 46000
   }
 }

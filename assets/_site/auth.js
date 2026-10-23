@@ -17,7 +17,7 @@ if (params.get("e") === "oauth") show("err", T("js.auth.oauth"));
 if (params.get("reset") === "1") show("ok", T("js.auth.resetDone"));
 if (params.get("deleted") === "1") show("ok", T("js.auth.deleted"));
 
-const next = (() => { const n = params.get("next") || "/"; return n.startsWith("/") && !n.startsWith("//") ? n : "/"; })();
+const next = (() => { const n = params.get("next") || "/"; return n.startsWith("/") && !n.startsWith("//") && !/[\\\u0000-\u001f\u007f]/.test(n) ? n : "/"; })();
 const google = document.querySelector(".btn-google");
 if (google && next !== "/") google.href = "/api/auth/google?next=" + encodeURIComponent(next);
 document.querySelectorAll('.switch a[href="/login"], .switch a[href="/signup"]').forEach((a) => {

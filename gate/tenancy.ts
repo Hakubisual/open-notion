@@ -33,6 +33,8 @@ export type TenancyEnv = {
   readonly SUPABASE_URL?: string;
   readonly SUPABASE_ANON_KEY?: string;
   readonly ACARD_LIVE_TRACK?: <T>(ws: string, db: T) => T;
+  // Per-request count and time of the member store's pipe() calls (gate/agent-entry.ts Server-Timing).
+  readonly ACARD_DB_TIMING?: { n: number; ms: number; first: number };
 };
 
 export function workspaceIdFor(userId: string, env: TenancyEnv): string {
@@ -58,9 +60,11 @@ const DONE = { results: [], success: true, meta: { changes: 0 } };
 const pendingDdl = new Map<string, PipeItem[]>();
 const ddlInFlight = new Map<string, Promise<unknown>>();
 
-export function d1Adapter(stub: StoreStub, key: string) {
+export function d1Adapter(stub: StoreStub, key: string, timing?: { n: number; ms: number; first: number }) {
   let queue: { item: PipeItem; resolve(value: any): void; reject(error: unknown): void }[] = [];
   const flush = async () => {
+    const t0 = Date.now();
+    const measured = () => { if (!timing) return; const spent = Date.now() - t0; if (timing.n === 0) timing.first = spent; timing.n += 1; timing.ms += spent; };
     const taken = queue;
     queue = [];
     const ddl = pendingDdl.get(key) ?? [];
@@ -78,10 +82,12 @@ export function d1Adapter(stub: StoreStub, key: string) {
     try {
       out = await sent;
     } catch (error) {
+      measured();
       if (ddl.length) pendingDdl.set(key, [...ddl, ...(pendingDdl.get(key) ?? [])]);
       for (const t of taken) t.reject(error);
       return;
     }
+    measured();
     out.slice(0, ddl.length).forEach((r) => {
       if (!r.ok && !/duplicate column/i.test(r.error)) console.error("acard workspace schema step failed", key, r.error);
     });
@@ -158,7 +164,7 @@ export function workspaceEnv<E extends TenancyEnv>(env: E, ws: string): E {
   if (ws === OWNER_WS) return { ...env, ACARD_SESSION: "owner", ACARD_WORKSPACE: OWNER_WS };
   return {
     ...env,
-    DB: env.ACARD_LIVE_TRACK ? env.ACARD_LIVE_TRACK(ws, d1Adapter(storeFor(env, ws), "ws:" + ws)) : d1Adapter(storeFor(env, ws), "ws:" + ws),
+    DB: env.ACARD_LIVE_TRACK ? env.ACARD_LIVE_TRACK(ws, d1Adapter(storeFor(env, ws), "ws:" + ws, env.ACARD_DB_TIMING)) : d1Adapter(storeFor(env, ws), "ws:" + ws, env.ACARD_DB_TIMING),
     MEDIA: env.MEDIA ? prefixedKv(env.MEDIA, mediaPrefix(ws)) : undefined,
     ASSETS: memberAssets(env.ASSETS),
     ACARD_SESSION: "member",

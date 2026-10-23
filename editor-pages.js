@@ -98,8 +98,8 @@ function settingsPatch(body) {
     if (!(body.cover.startsWith("https://") || /^\/(?!\/)/.test(body.cover)) || cover.protocol !== "https:" || cover.username || cover.password) throw new EditorInputError("Invalid cover URL.");
   }
   if ("width" in body && !["default", "normal", "full"].includes(body.width)) throw new EditorInputError("Invalid width.");
-  // "report" = the research-report page style (cream page, serif headings, numbered equations): a value of the existing
-  // font column, so no schema change; an older build that does not know it draws the page in the normal style.
+  // "report" = the research-report page style (the normal page look plus numbered equations and figures): a value of the
+  // existing font column, so no schema change; an older build that does not know it draws the page without numbers.
   if ("font" in body && !["default", "serif", "mono", "report"].includes(body.font)) throw new EditorInputError("Invalid font.");
   if ("favorite" in body && typeof body.favorite !== "boolean") throw new EditorInputError("Invalid favorite.");
   return body;
@@ -233,7 +233,8 @@ export async function handleEditorApi(request, db, url, helpers) {
       }
       if (!row) return json({ error: "Snapshot not found." }, 404);
       const snapshot = JSON.parse(row.snapshot);
-      const { statement, version } = versionInsert(db, slug, await snapshotPage(db, slug));
+      const now = await snapshotPage(db, slug);
+      const { statement, version } = versionInsert(db, slug, now);
       const restored = { ...snapshot.page, updated: Date.now(), source: "editor", hash: null };
       const keys = Object.keys(restored).filter((key) => !["slug", "parent", "ord"].includes(key));
       snapshot.settings = { ...meta.settings, ...snapshot.settings };
@@ -241,6 +242,8 @@ export async function handleEditorApi(request, db, url, helpers) {
         statement,
         db.prepare('UPDATE pages SET ' + keys.map((key) => '"' + key.replaceAll('"', '""') + '" = ?').join(", ") + " WHERE slug = ?").bind(...keys.map((key) => restored[key]), slug),
         ...replaceContent(db, slug, snapshot),
+        // issue 107: the restored button actions count as saved by whoever restores them.
+        ...(helpers.buttonSavers ? await helpers.buttonSavers(db, slug, snapshot.blocks, now.blocks, snapshot.page && snapshot.page.slug ? String(snapshot.page.slug) : slug) : []),
       ]);
       return json({ ok: true, slug, versionId: version.id, settings: snapshot.settings });
     }
@@ -291,7 +294,7 @@ export async function handleEditorApi(request, db, url, helpers) {
       const snapshot = await snapshotPage(db, slug);
       const max = await db.prepare("SELECT COALESCE(MAX(ord), 0) AS m FROM pages WHERE parent IS ?").bind(parent).first();
       const copy = { ...snapshot.page, slug: target, title, parent, ord: Number(max.m) + 10, updated: Date.now(), source: "editor", hash: null };
-      await db.batch([insertRow(db, "pages", copy), ...replaceContent(db, target, snapshot)]);
+      await db.batch([insertRow(db, "pages", copy), ...replaceContent(db, target, snapshot), ...(helpers.buttonSavers ? await helpers.buttonSavers(db, target, snapshot.blocks, [], slug) : [])]);
       return json({ slug: target, page: copy, settings: snapshot.settings }, 201);
     }
     return json({ error: "Method not allowed." }, 405);

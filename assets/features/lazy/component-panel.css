@@ -1,0 +1,10 @@
+/* Visual kit settings panel in the editor (components chunk): preset / palette chips above the schema form. */
+.ui-kit-panel>summary{cursor:pointer;color:var(--color-text-dim);font-size:var(--fs-14)}
+.ui-kit-chips{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-5);margin:var(--space-3) 0}
+.ui-kit-group{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-1)}
+.ui-kit-cap{margin-right:var(--space-1);color:var(--color-text-dim);font-size:var(--fs-12)}
+.ui-kit-chip{min-height:var(--control-h-sm);padding:0 var(--space-3);border:1px solid var(--color-border);border-radius:var(--radius-pill);background:var(--color-surface);color:var(--color-text);font:inherit;font-size:var(--fs-13);cursor:pointer;transition:background var(--dur-fast),border-color var(--dur-fast)}
+.ui-kit-chip:hover{background:var(--color-surface-soft)}
+.ui-kit-chip[aria-checked=true]{border-color:var(--color-text);background:var(--color-text);color:var(--color-bg)}
+.ui-kit-chip:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+@media (prefers-reduced-motion:reduce){.ui-kit-chip{transition:none}}

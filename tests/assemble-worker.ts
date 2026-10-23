@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { IMPORT_CORE_FILES } from "../import-core-files.ts";
 
 const ROOT = join(import.meta.dir, "..");
 const read = (name: string) => readFileSync(join(ROOT, name), "utf8");
@@ -22,11 +23,14 @@ export function assembleWorkerSource(fixture = "") {
   for (const [marker, file] of Object.entries(parts)) {
     const code = file.endsWith(".ts") ? new Bun.Transpiler({ loader: "ts" }).transformSync(read(file)) : read(file);
     const components = ["component-registry.js", ...readdirSync(join(ROOT, "components")).filter((name) => name.endsWith(".js") && name !== "index.js").sort().map((name) => "components/" + name)];
-    const extra = marker === "//__EQUATION_HTML__" ? "\n" + stripModule(read("visual-html.js")) + "\n" + stripModule(read("part-html.js")) + "\n" + components.map((name) => stripModule(read(name))).join("\n") : "";
+    const extra = marker === "//__EQUATION_HTML__" ? "\n" + stripModule(read("sandbox-policy.js")) + "\n" + stripModule(read("plugin-ui.js")) + "\n" + stripModule(read("visual-html.js")) + "\n" + stripModule(read("part-html.js")) + "\n" + components.map((name) => stripModule(read(name))).join("\n") : "";
     source = source.replace(marker, () => stripModule(code) + extra);
   }
+  const importCore = IMPORT_CORE_FILES.filter((name) => existsSync(join(ROOT, name))).map((name) => stripModule(new Bun.Transpiler({ loader: "ts" }).transformSync(read(name)))).join("\n");
+  source = source.replace("//__IMPORT_CORE__", () => importCore);
   const features = readdirSync(join(ROOT, "features")).filter((name) => name.endsWith(".js")).sort();
-  source = source.replace("//__FEATURES__", () => features.map((name) => stripModule(read("features/" + name))).concat(fixture).join("\n;\n"));
+  const writeCore = "";
+  source = source.replace("//__FEATURES__", () => features.map((name) => stripModule(read("features/" + name)).replace("//__WRITE_CORE__", () => writeCore)).concat(fixture).join("\n;\n"));
   const clientFeatures = readdirSync(join(ROOT, "assets/features"));
   for (const ext of ["js", "css"]) {
     const present = clientFeatures.some((name) => name.endsWith("." + ext)

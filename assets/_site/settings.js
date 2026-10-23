@@ -91,6 +91,46 @@ $("home-save").addEventListener("click", async () => {
   finally { btn.disabled = false; }
 });
 
+// 사이드바 보기 (#16): saved right away on the workspace; the sidebar reads it with its tree.
+const sideViews = $("side-views"), sideMsg = $("side-view-msg");
+const paintView = (v) => sideViews.querySelectorAll("label").forEach((l) => { const i = l.querySelector("input"); i.checked = i.value === v; l.classList.toggle("on", i.checked); });
+fetch("/api/folders/view").then((r) => (r.ok ? r.json() : null)).then((d) => paintView(d?.view ?? "project")).catch(() => paintView("project"));
+sideViews.addEventListener("change", async (e) => {
+  const view = e.target.value;
+  paintView(view);
+  try {
+    const r = await fetch("/api/folders/view", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ view }) });
+    if (!r.ok) throw r;
+    sideMsg.className = "msg ok"; sideMsg.textContent = "저장했어요.";
+  } catch { sideMsg.className = "msg err"; sideMsg.textContent = "저장하지 못했어요."; }
+});
+
+const guideMsg = $("guide-msg");
+const postGuide = async (action) => {
+  const r = await fetch("/api/guide", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action }) });
+  if (!r.ok) throw r;
+  return r.json();
+};
+const guideFail = () => { guideMsg.className = "msg err"; guideMsg.textContent = "저장하지 못했어요."; };
+fetch("/api/guide").then((r) => (r.ok ? r.json() : null)).then((d) => {
+  if (!d || !d.enabled) return;
+  $("guide-state").textContent = d.done ? "시작 가이드를 모두 마쳤어요." : d.active && !d.hidden ? d.count + " / 4 완료" : "처음 쓰는 화면을 짧게 다시 안내해요.";
+  $("guide-hide").hidden = !(d.active && !d.done);
+  $("guide").hidden = false;
+}).catch(() => {});
+$("guide-restart").addEventListener("click", async () => {
+  const btn = $("guide-restart");
+  btn.disabled = true;
+  try { await postGuide("restart"); location.assign(document.querySelector(".onb-back")?.getAttribute("href") || "/home/"); } catch { btn.disabled = false; guideFail(); }
+});
+$("guide-hide").addEventListener("click", async () => {
+  try {
+    await postGuide("hide");
+    guideMsg.className = "msg ok"; guideMsg.textContent = "홈에서 가이드를 숨겼어요.";
+    $("guide-hide").hidden = true;
+  } catch { guideFail(); }
+});
+
 fetch("/api/media-usage").then((r) => (r.ok ? r.json() : null)).then((d) => {
   if (!d || typeof d.used !== "number") return;
   const mb = (n) => (n / 1e6 < 10 ? (n / 1e6).toFixed(1) : Math.round(n / 1e6).toLocaleString("ko-KR")) + "MB";
@@ -98,6 +138,24 @@ fetch("/api/media-usage").then((r) => (r.ok ? r.json() : null)).then((d) => {
   $("media-usage-bar").style.width = d.quota ? Math.min(100, (d.used / d.quota) * 100).toFixed(1) + "%" : "0%";
   $("media-usage-rule").textContent = "아이콘·표지 이미지는 png, jpg, webp, gif, avif 로 한 장에 " + mb(d.fileLimit) + " 까지 올릴 수 있어요.";
   $("media-usage").hidden = false;
+}).catch(() => {});
+
+fetch("/api/cloud/plan").then((r) => (r.ok ? r.json() : null)).then((d) => {
+  if (!d || !Array.isArray(d.includes)) return;
+  const until = d.until ? new Date(d.until).toLocaleDateString("ko-KR") : "";
+  const state = { active: "구독 중", grace: "구독 끝남 · 유예 기간", expired: "구독 끝남", none: "무료 (로컬판·웹 베타)" }[d.status] || "무료 (로컬판·웹 베타)";
+  const span = (text) => { const s = document.createElement("span"); s.textContent = text; return s; };
+  $("plan-state").replaceChildren(span(state), ...(d.status === "active" && until ? [span(" · "), span(until + "까지")] : []));
+  $("plan-includes").replaceChildren(...d.includes.map((text) => { const li = document.createElement("li"); li.textContent = text; return li; }));
+  $("plan-note").replaceChildren(span(d.active ? "구독으로 열린 기능이에요." : "구독하면 열리는 기능이에요"), ...(d.active ? [] : [span(" · "), span(d.price)]));
+  const actions = [];
+  const link = (href, text, primary) => { const a = document.createElement("a"); a.className = "btn" + (primary ? " btn-primary" : ""); a.href = href; a.textContent = text; return a; };
+  if (d.checkout) actions.push(link("/billing/checkout", "구독하기", true));
+  else if (!d.active) actions.push(link("/download", "로컬판에서 구독하기", false));
+  if (d.manageUrl) actions.push(link(d.manageUrl, "구독 관리", false));
+  actions.push(link(d.compareUrl, "노션·옵시디언과 비교", false));
+  $("plan-actions").replaceChildren(...actions);
+  $("plan").hidden = false;
 }).catch(() => {});
 
 fetch("/api/me/ai-usage").then((r) => (r.ok ? r.json() : null)).then((d) => {

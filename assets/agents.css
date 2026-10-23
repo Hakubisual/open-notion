@@ -169,6 +169,30 @@ html[data-theme="dark"] { color-scheme: dark; --ag-ok: #7fc48a; --ag-err: #e8857
 .ag-lat th { color: var(--fg-dim); font-weight: 600; }
 .ag-lat-all td { font-weight: 700; }
 
+/* 글쓰기 성향: 줄마다 이름 + 한 줄 고르기(segmented) + 도움말, 아래는 칩 토글 */
+.ag-h3 { margin: 22px 0 8px; font-size: var(--fs-15); font-weight: 700; }
+.ag-wp { padding: 4px 18px 8px; }
+.ag-wp-row { border: 0; margin: 0; padding: 14px 0; border-top: 1px solid var(--line); min-width: 0; display: grid; gap: 8px; }
+.ag-wp-row:first-child { border-top: 0; }
+.ag-wp-row > .ag-legend { padding: 0; float: left; width: 100%; }
+.ag-seg { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--bg-soft); justify-self: start; max-width: 100%; }
+.ag-seg .ag-radio { position: relative; min-height: 34px; padding: 0 14px; border-radius: var(--radius-pill); font-size: var(--fs-14); }
+.ag-seg .ag-radio input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ag-seg .ag-radio:has(input:checked) { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.ag-seg .ag-radio:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ag-wp-help { margin: 0; }
+.ag-wp-chips { margin: 0; gap: 6px; }
+.ag-wp-chips .ag-chip { min-height: 34px; padding: 4px 12px; font-size: var(--fs-13); white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.ag-chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.ag-wp-add .ag-token { font-family: inherit; }
+.ag-method-note { margin: 0 0 8px; }
+
+/* 앱마다 되는 정도 */
+.ag-grades-wrap { overflow-x: auto; margin: 0 0 16px; }
+.ag-grades th, .ag-grades td { text-align: left; white-space: normal; }
+.ag-grades td.ag-grade-on { color: var(--fg); font-weight: 600; }
+.ag-grades td.ag-grade-none { color: var(--fg-dim); }
+
 /* 알림 */
 .ag-toast {
   position: fixed; left: 50%; bottom: 24px; z-index: 70; max-width: calc(100vw - 32px);
@@ -212,6 +236,9 @@ html[data-theme="dark"] { color-scheme: dark; --ag-ok: #7fc48a; --ag-err: #e8857
   .ag-detail-head .ag-doc { margin-left: 0; flex-basis: 100%; }
   .ag-grid { grid-template-columns: 1fr; }
   .ag-empty, .ag-loading { padding: 16px; }
+  .ag-wp { padding: 4px 16px 8px; }
+  .ag-seg .ag-radio { min-height: 40px; }
+  .ag-wp-add .ag-btn { flex: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ag-switch .track, .ag-switch .track::after, .ag-toast { transition: none; }

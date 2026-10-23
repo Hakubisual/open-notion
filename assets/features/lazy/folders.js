@@ -3,17 +3,22 @@
   var editor = /^\/edit\//.test(location.pathname);
   var current = decodeURIComponent((location.pathname.match(/^\/(?:edit\/)?([^/]+)\/?$/) || [])[1] || "index");
   if (current === "home") current = "index";
+  if (current === "home") current = "index";
   var identity = (document.querySelector('meta[name="acard-id"]') || {}).content;
   var base = editor ? document.getElementById("tree") : document.querySelector(".side-ws");
   if (!base) return;
   var host = base;
   if (editor) { host = document.createElement("div"); host.id = "fd-tree"; base.after(host); }
-  var S = { pages: [], tags: [], prefs: { open: [], collapsed: [], closed: [] }, journal: "agent-journal", filter: null, byParent: {}, bySlug: {} };
+  var S = { pages: [], tags: [], prefs: { open: [], collapsed: [], closed: [] }, journal: "agent-journal", filter: null, byParent: {}, bySlug: {}, view: "project" };
+  // #16 draft A: a folder is a page shown as a folder (page_view), drawn with a folder icon; other pages a page icon.
+  var SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" ';
+  var ICO = { folder: SVG + 'fill="currentColor"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h3.6c.6 0 1.2.3 1.6.7L12 6h6.5A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>',
+    page: SVG + 'fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>' };
   var COLORS = ["gray", "brown", "orange", "yellow", "green", "blue", "purple", "pink", "red"];
   var COLOR_KO = { gray: "회색", brown: "갈색", orange: "주황", yellow: "노랑", green: "초록", blue: "파랑", purple: "보라", pink: "분홍", red: "빨강" };
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
-  function href(slug) { return editor ? "/edit/" + encodeURIComponent(slug) + "/" : slug === "index" ? "/" : "/" + encodeURIComponent(slug) + "/"; }
+  function href(slug) { return editor ? "/edit/" + encodeURIComponent(slug) + "/" : slug === "index" ? "/home/" : "/" + encodeURIComponent(slug) + "/"; }
   function api(method, path, body) {
     // keepalive: a drop is drawn at once, so a click on a link right after it must not cancel the save.
     return fetch(path, { method: method, keepalive: method !== "GET", headers: body ? { "content-type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined })
@@ -93,8 +98,10 @@
     if (open) r.classList.add("open");
     tw.onclick = function (ev) { ev.preventDefault(); toggleOpen(p.slug, !r.classList.contains("open")); render(); };
     var a = el("a", "fd-link"); a.href = href(p.slug); a.draggable = false;
-    var ic = el("span", "fd-ic", /^\/media\/[0-9a-f]{16}$/.test(p.icon || "") ? null : p.icon || (children.length ? "▤" : "▢"));
-    if (!ic.textContent) { var im = el("img"); im.src = p.icon + "?w=400"; im.alt = ""; im.width = im.height = 16; im.loading = "lazy"; im.style.cssText = "border-radius:3px;object-fit:cover;vertical-align:-3px"; ic.appendChild(im); }
+    var img = /^\/media\/[0-9a-f]{16}$/.test(p.icon || ""), folder = p.view === "folder" || p.view !== "article" && kids(p.slug).length > 0;
+    var ic = el("span", "fd-ic" + (folder ? " fd-folder" : ""), img ? null : p.icon || null);
+    if (!img && !p.icon) ic.innerHTML = folder ? ICO.folder : ICO.page;
+    else if (img) { var im = el("img"); im.src = p.icon + "?w=400"; im.alt = ""; im.width = im.height = 16; im.loading = "lazy"; im.style.cssText = "border-radius:3px;object-fit:cover;vertical-align:-3px"; ic.appendChild(im); }
     a.appendChild(ic);
     a.appendChild(el("span", "fd-t", p.title || "제목 없음"));
     r.appendChild(tw); r.appendChild(a);
@@ -122,18 +129,45 @@
     return sec;
   }
   function iconBtn(label, text, fn) { var b = el("button", "fd-ib", text); b.type = "button"; b.title = label; b.setAttribute("aria-label", label); b.onclick = fn; return b; }
-  // 트리 / 태그별 보기: a per-browser choice (localStorage).
-  function groupMode() { return local("acard-tree-group"); }
-  function tagGroups() {
-    var box = el("div"), names = {};
-    S.pages.forEach(function (p) { if (p.slug !== S.journal && !isUnder(p.slug, S.journal) && !p.shared) (p.tags.length ? p.tags : ["태그 없음"]).forEach(function (t) { (names[t] = names[t] || []).push(p); }); });
-    Object.keys(names).sort().forEach(function (t) {
+  // 사이드바 보기 (#16): project (tree) / tags / date, saved on the server per workspace (설정 > 사이드바 보기, or #).
+  function setView(v) {
+    var was = S.view;
+    S.view = v; render();
+    api("PUT", "/api/folders/view", { view: v }).catch(function () { S.view = was; render(); toast("사이드바 보기를 저장하지 못했어요. 이전 보기로 돌렸어요.", null, true); });
+  }
+  function mine(p) { return p.slug !== S.journal && !isUnder(p.slug, S.journal) && !p.shared; }
+  function groups(pick, pages, rank) {
+    var box = el("div"), names = {}, order = [];
+    (pages || S.pages).filter(mine).forEach(function (p) { pick(p).forEach(function (t) { if (!names[t]) { names[t] = []; order.push(t); } names[t].push(p); }); });
+    if (rank) order.sort(function (a, b) { return rank(a) - rank(b); });
+    order.forEach(function (t) {
       var d = el("details"), sm = el("summary", "fd-t", t + " · " + names[t].length);
-      d.appendChild(sm); d.appendChild(list(names[t], true)); box.appendChild(d);
+      d.open = true; d.appendChild(sm); d.appendChild(list(names[t], true)); box.appendChild(d);
     });
+    if (!order.length) box.appendChild(list([], true));
     return box;
   }
-  function list(items, flat) { var ul = el("ul", "fd-ul fd-root"); items.forEach(function (p) { ul.appendChild(row(p, 0, flat)); }); if (!items.length) ul.appendChild(el("li", "fd-empty", "없어요.")); return ul; }
+  function tagGroups() {
+    var names = S.tags.map(function (t) { return t.name; });
+    // Tags in the tag list's order, 태그 없음 last.
+    return groups(function (p) { return p.tags.length ? p.tags : ["태그 없음"]; }, null, function (t) { var i = names.indexOf(t); return i < 0 ? 1e9 : i; });
+  }
+  function dateGroups() {
+    var d = new Date(), day = d.setHours(0, 0, 0, 0), week = day - 6 * 864e5, month = day - 29 * 864e5;
+    return groups(function (p) { var t = p.updated; return [t >= day ? "오늘" : t >= week ? "이번 주" : t >= month ? "이번 달" : "그 전"]; },
+      S.pages.slice().sort(function (a, b) { return b.updated - a.updated; }));
+  }
+  function list(items, flat, ws) {
+    var ul = el("ul", "fd-ul fd-root"); items.forEach(function (p) { ul.appendChild(row(p, 0, flat)); });
+    if (!items.length) ul.appendChild(el("li", "fd-empty", "없어요."));
+    if (!items.length && ws) {
+      // An empty workspace (draft A): one line and a 새 폴더 button.
+      ul.lastChild.textContent = "폴더를 만들어 페이지를 묶어 보세요";
+      var b = el("button", "fd-btn primary fd-newf"); b.type = "button"; b.innerHTML = ICO.folder; b.append("새 폴더"); b.onclick = function () { newFolder(null, b); };
+      ul.lastChild.appendChild(b);
+    }
+    return ul;
+  }
 
   function render() {
     index();
@@ -151,11 +185,15 @@
       // 모두 펼치기: 2 levels; deeper ones stay folded with a count.
       var depth = function (p) { var d = 0; for (var q = S.bySlug[p.parent]; q && d < 9; q = S.bySlug[q.parent]) d++; return d; };
       var parents = S.pages.filter(function (p) { return kids(p.slug).length && depth(p) < 2; }).map(function (p) { return p.slug; });
-      var byTag = groupMode() == "tags";
-      wrap.appendChild(section("ws", "작업 공간", byTag ? tagGroups() : list(roots), { tools: [
-        iconBtn(byTag ? "트리로 보기" : "태그·프로젝트별 보기", byTag ? "≡" : "#", function () { local("acard-tree-group", byTag ? "" : "tags"); render(); }),
-        byTag ? null : iconBtn(anyOpen ? "모두 접기" : "모두 펼치기", anyOpen ? "⇤" : "⇥", function () { S.prefs.open = anyOpen ? [] : parents.slice(0, 2000); S.prefs.closed = anyOpen ? parents.slice(0, 2000) : []; savePrefs(); render(); }),
-        iconBtn("새 페이지", "+", function () { newPage(null); }),
+      var tree = S.view === "project";
+      var add = iconBtn("새 페이지 또는 폴더 만들기", "+", function () {
+        menu(add, [{ label: "새 페이지", icon: ICO.page, fn: function () { newPage(null); } }, { label: "새 폴더", icon: ICO.folder, fn: function () { newFolder(null, add); } }]);
+      });
+      add.setAttribute("aria-haspopup", "menu");
+      wrap.appendChild(section("ws", "작업 공간", S.view === "tags" ? tagGroups() : S.view === "date" ? dateGroups() : list(roots, false, true), { tools: [
+        iconBtn(tree ? "태그별 보기" : "프로젝트별 보기", tree ? "#" : "≡", function () { setView(tree ? "tags" : "project"); }),
+        tree ? iconBtn(anyOpen ? "모두 접기" : "모두 펼치기", anyOpen ? "⇤" : "⇥", function () { S.prefs.open = anyOpen ? [] : parents.slice(0, 2000); S.prefs.closed = anyOpen ? parents.slice(0, 2000) : []; savePrefs(); render(); }) : null,
+        add,
       ].filter(Boolean) }));
       // The agent journal group is hidden from the tree (owner); journal pages stay reachable from search and 설정 > 에이전트 연결.
       var shared = S.pages.filter(function (p) { return p.shared; });
@@ -181,13 +219,13 @@
   function reload(read) {
     return (read || api("GET", "/api/folders/tree")).then(function (d) {
       if (!d || !Array.isArray(d.pages)) throw Error("tree");
-      local("acard-tree-cache", { pages: d.pages, tags: d.tags, journalRoot: d.journalRoot });
+      local("acard-tree-cache", { pages: d.pages, tags: d.tags, journalRoot: d.journalRoot, view: d.view });
       apply(d, d.prefs);
       render(); headTags();
     });
   }
   function apply(d, theirs) {
-    S.pages = d.pages || []; S.tags = d.tags || []; S.journal = d.journalRoot || S.journal;
+    S.pages = d.pages || []; S.tags = d.tags || []; S.journal = d.journalRoot || S.journal; S.view = d.view || "project";
     var mine = local("acard-tree-prefs"), pick = mine && mine.v > ((theirs || {}).v || 0) ? mine : theirs;
     S.prefs = Object.assign({ open: [], collapsed: [], closed: [] }, pick);
     delete S.prefs.saved;
@@ -200,6 +238,7 @@
     // Keep the tree and its focus/expansion DOM mounted across reader navigation.
     host.querySelectorAll(".fd-row[data-slug]").forEach(function (row) { row.classList.toggle("on", row.dataset.slug === current); });
     headTags();
+    ahead = {}; aheadN = 0;
   });
 
   // #30 prefetch
@@ -214,7 +253,7 @@
     document.head.append(Object.assign(document.createElement("script"), { type: "speculationrules", textContent: JSON.stringify({ prefetch: [{ source: "list", urls: [u], eagerness: "immediate" }] }) }));
   }
   function warm(ev) {
-    var t = ev.target.closest ? ev.target : document.body, n = t.closest(".fd-add,[title='새 페이지']"), a = t.closest("#sidebar a[href^='/']");
+    var t = ev.target.closest ? ev.target : document.body, n = t.closest(".fd-add,[title='새 페이지'],[title='새 페이지 또는 폴더 만들기']"), a = t.closest("#sidebar a[href^='/']");
     var u = n ? newUrl(n.matches(".fd-add") && n.parentNode.dataset.slug) : a && a.pathname;
     clearTimeout(hover);
     if (ev.type === "pointerover") hover = setTimeout(pre, 100, u); else pre(u);
@@ -254,8 +293,13 @@
       .then(function (d) { toast(label || "1개 페이지 옮김", d.batch); return reload(); }, function (e) { toast(e.message, null, true); return reload(); });
   }
   function newPage(parent) { location.href = newUrl(parent); }
-  function newFolder(parent) {
-    api("POST", "/api/pages", { title: "새 폴더", parent: parent || null }).then(function (d) {
+  // 새 폴더: name it in a small field at the button, then a page set to folder view opens (its + 새 페이지 adds pages).
+  function newFolder(parent, anchor) {
+    if (anchor) return ask(anchor, "폴더 이름", "새 폴더", function (name) { makeFolder(parent, name); });
+    makeFolder(parent, "새 폴더");
+  }
+  function makeFolder(parent, title) {
+    api("POST", "/api/pages", { title: title, parent: parent || null }).then(function (d) {
       return api("PUT", "/api/page/" + encodeURIComponent(d.slug) + "/view", { mode: "folder" }).then(function () { location.href = href(d.slug); });
     }, oops);
   }
@@ -266,7 +310,7 @@
   function menu(anchor, items) {
     closeMenu();
     menuEl = el("div", "fd-menu"); menuEl.setAttribute("role", "menu");
-    items.forEach(function (it) { var b = el("button", it.danger ? "danger" : "", it.label); b.type = "button"; b.setAttribute("role", "menuitem"); b.onclick = function () { closeMenu(); it.fn(); }; menuEl.appendChild(b); });
+    items.forEach(function (it) { var b = el("button", it.danger ? "danger" : "", it.label); if (it.icon) b.insertAdjacentHTML("afterbegin", it.icon); b.type = "button"; b.setAttribute("role", "menuitem"); b.onclick = function () { closeMenu(); it.fn(); }; menuEl.appendChild(b); });
     document.body.appendChild(menuEl);
     var r = anchor.getBoundingClientRect();
     menuEl.style.left = Math.max(8, Math.min(r.left, innerWidth - 240)) + "px";

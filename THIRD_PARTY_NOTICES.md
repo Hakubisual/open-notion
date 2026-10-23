@@ -51,9 +51,9 @@ OFL 1.1 in short: the fonts may be used, embedded, subset and redistributed, inc
 copyright notice and this license go with them, the font files are not sold on their own, and a modified version is
 not published under a Reserved Font Name.
 
-The Acard wordmark (`assets/wordmark*.svg`, `assets/logo*.svg`, `assets/og*.svg`) is drawn from outlines of **Fredoka**
-(Copyright 2016 The Fredoka Project Authors, https://github.com/google/fonts/tree/main/ofl/fredoka), also under the SIL
-Open Font License 1.1. The font files themselves are not redistributed.
+The "Acard" letters of the wordmark (`assets/wordmark*.svg`, `assets/og*.svg`) are drawn from outlines of
+**Pretendard Bold** (Copyright (c) 2021, Kil Hyung-jin, https://github.com/orioncactus/pretendard), also under the SIL
+Open Font License 1.1. The outlines are paths in the SVG files; no font file is loaded for them.
 
 The OFL 1.1 text online: https://openfontlicense.org/open-font-license-official-text/
 

@@ -77,7 +77,7 @@ the same server see each other's edits without reloading.
 
 `agents/mcp-tools.ts` defines the MCP tools: list, read, create and update pages, edit single blocks, append to a page,
 upload images, read and edit databases, tags and parts. The local server serves them at `/mcp` for agents on your
-machine or network, and `agent-api.js` exposes the same operations as a REST API. `packages/acard-cli` bridges MCP over stdio and can pull and push pages as `.md` files.
+machine or network, and `agent-api.js` exposes the same operations as a REST API. `packages/acard-cli` is a plain client with four commands: `pull` and `push` sync pages as `.md` files, `mcp` bridges MCP over stdio, and `whoami` shows the server it talks to.
 
 ## Backups and restore
 

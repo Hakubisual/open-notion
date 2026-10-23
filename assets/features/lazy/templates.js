@@ -52,10 +52,11 @@
     try {
       await editor.save();
       // Keep the created slug on a failed PUT so retry never creates a duplicate page.
-      if (!pendingPage) pendingPage = await editor.api("/pages", { method: "POST", body: JSON.stringify({ title: template ? template.name : "제목 없음" }) });
+      var filled = template && !template.personal ? fillTemplate(template) : null;
+      if (!pendingPage) pendingPage = await editor.api("/pages", { method: "POST", body: JSON.stringify({ title: template ? (filled ? filled.title : template.name) : "제목 없음" }) });
       if (template) {
         if (template.personal) await editor.api("/page/" + encodeURIComponent(pendingPage.slug) + "/from-template", { method: "POST", body: JSON.stringify({ templateId: template.id }) });
-        else await editor.api("/page/" + encodeURIComponent(pendingPage.slug), { method: "PUT", body: JSON.stringify({ title: template.name, blocks: template.blocks, base_updated: pendingPage.updated }) });
+        else await editor.api("/page/" + encodeURIComponent(pendingPage.slug), { method: "PUT", body: JSON.stringify({ title: filled.title, blocks: filled.blocks, base_updated: pendingPage.updated }) });
         if (!template.personal && template.settings) await editor.api("/page/" + encodeURIComponent(pendingPage.slug) + "/settings", { method: "PUT", body: JSON.stringify(template.settings) });
       }
       location.href = "/edit/" + encodeURIComponent(pendingPage.slug) + "/" + (template ? "" : "?new");
@@ -65,6 +66,19 @@
       fail(error);
     }
   }
+  function fill(text, title) {
+    var now = new Date(Date.now() + 9 * 3600000).toISOString(), vars = { date: now.slice(0, 10), today: now.slice(0, 10), time: now.slice(11, 16), title: title };
+    return String(text).replace(/\{\{(date|today|time|title)\}\}/g, function (all, key) { return vars[key]; });
+  }
+  function fillTemplate(template) {
+    var title = fill(template.name, template.name);
+    return { title: title, blocks: template.blocks.map(function (block) {
+      var copy = JSON.parse(JSON.stringify(block)), value = block.type === "component" ? JSON.stringify(title).slice(1, -1) : title;
+      copy.text = fill(block.text, value);
+      if (copy.meta && Array.isArray(copy.meta.richText)) copy.meta.richText.forEach(function (run) { run.text = fill(run.text, title); });
+      return copy;
+    }) };
+  }
   async function open() {
     if (dialog && dialog.open) return;
     if (!dialog) { dialog = node("dialog", "", "template-picker"); document.body.appendChild(dialog); }
@@ -72,7 +86,7 @@
     var header = node("header"), heading = node("h2", "템플릿으로 시작"); heading.id = "template-heading";
     dialog.setAttribute("aria-labelledby", heading.id);
     var close = button("닫기", function () { dialog.close(); }, "template-close");
-    header.append(heading, close, node("p", "목적에 맞는 틀을 골라 내 페이지로 바꿔 보세요."));
+    header.append(heading, close, node("p", "목적에 맞는 틀을 골라 내 페이지로 바꿔 보세요."), node("p", "{{date}}, {{title}} 같은 변수를 쓸 수 있어요", "template-hint"));
     var layout = node("div", "", "template-layout"), catalog = node("div", "", "template-catalog"), aside = node("section", "", "template-preview");
     aside.setAttribute("aria-label", "템플릿 미리보기");
     var status = node("p", "불러오는 중...", "template-status"); status.setAttribute("role", "status");

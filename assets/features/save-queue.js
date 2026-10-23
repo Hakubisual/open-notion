@@ -97,12 +97,14 @@
   }
 
   function create(options) {
-    var records = new Map(), active = new Map(), writes = new Map(), sequence = 0;
+    var records = new Map(), active = new Map(), writes = new Map(), texts = new Map(), sequence = 0;
     var identity = options.identity || "";
     var now = options.now || Date.now;
     function changed() { if (options.changed) options.changed(); }
-    function persist(entry) {
+    function persist(entry, text) {
       records.set(entry.slug, entry);
+      // The serialized payload of the live record, so a repeat enqueue compares strings instead of re-stringifying.
+      if (text) texts.set(entry.slug, text); else texts.delete(entry.slug);
       var pending = Promise.resolve(identity ? options.storage.write(copy(entry)) : undefined);
       writes.set(entry.slug, pending);
       // Expose errors to the UI without creating an unhandled rejected promise.
@@ -113,11 +115,14 @@
     function next() { sequence = Math.max(sequence + 1, now() * 1000); return sequence; }
     function entries() { return Array.from(records.values()).filter(function (entry) { return entry.payload; }); }
     function enqueue(slug, payload) {
-      var old = records.get(slug);
-      if (old && old.payload && JSON.stringify(old.payload) === JSON.stringify(payload)) return old;
-      var entry = { slug: slug, acard_id: identity, base_updated: payload.base_updated, payload: copy(payload), sequence: next(), updated: now(), attempts: 0, nextAt: 0,
+      var old = records.get(slug), text = JSON.stringify(payload);
+      if (old && old.payload) {
+        if (!texts.has(slug)) texts.set(slug, JSON.stringify(old.payload));
+        if (texts.get(slug) === text) return old;
+      }
+      var entry = { slug: slug, acard_id: identity, base_updated: payload.base_updated, payload: JSON.parse(text), sequence: next(), updated: now(), attempts: 0, nextAt: 0,
         blocked: old && old.base_updated === payload.base_updated ? old.blocked : 0 };
-      persist(entry);
+      persist(entry, text);
       return entry;
     }
     function remove(entry) {
@@ -173,7 +178,7 @@
           sequence = Math.max(sequence, entry.sequence);
           if (local.has(entry.slug)) return;
           var current = records.get(entry.slug);
-          if (!current || entry.sequence >= current.sequence) records.set(entry.slug, entry);
+          if (!current || entry.sequence >= current.sequence) { records.set(entry.slug, entry); texts.delete(entry.slug); }
         });
         changed();
       }),
@@ -215,7 +220,7 @@
     if (!pending.length && !editor.state.saving && JSON.stringify({ title: editor.state.title, blocks: editor.state.blocks }) === acknowledged) editor.state.dirty = false;
     var due = pending.filter(function (entry) { return !entry.blocked && Number.isSafeInteger(entry.base_updated); });
     if (due.length && !queue.busy() && navigator.onLine !== false) {
-      timer = setTimeout(function () { queue.flush(false).then(settled); }, Math.max(0, Math.max(notBefore, Math.min.apply(null, due.map(function (entry) { return entry.nextAt; }))) - Date.now()));
+      timer = setTimeout(function () { commit(); queue.flush(false).then(settled); }, Math.max(0, Math.max(notBefore, Math.min.apply(null, due.map(function (entry) { return entry.nextAt; }))) - Date.now()));
     }
   }
   var acknowledged = "";
@@ -226,11 +231,27 @@
     recovering = false;
     update();
   }
+  // Typing emits "change" per keystroke. The journal takes the first edit at once and later ones at most every
+  // CHANGE_MS (the blocks array is live, so the commit holds the newest text); a save, pagehide, visibility
+  // change or the queue's own flush timer commits the rest first, so nothing waits on the timer.
+  var CHANGE_MS = 300, pendingChange = null, changeTimer = null, captured = 0;
   function capture(payload) {
     edited = true;
+    pendingChange = null;
+    if (changeTimer) { clearTimeout(changeTimer); changeTimer = null; }
+    captured = Date.now();
     queue.enqueue(editor.slug, Object.assign({}, payload, { base_updated: editor.state.baseUpdated }));
   }
-  editor.on("change", function (payload) { notBefore = Date.now() + 750; capture(payload); });
+  function commit() { changeTimer = null; if (pendingChange) capture(pendingChange); }
+  function captureSoon(payload) {
+    edited = true;
+    pendingChange = payload;
+    if (changeTimer) return;
+    var wait = captured + CHANGE_MS - Date.now();
+    if (wait <= 0) commit();
+    else changeTimer = setTimeout(commit, wait);
+  }
+  editor.on("change", function (payload) { notBefore = Date.now() + 750; captureSoon(payload); });
   editor.on("beforeSave", capture);
   editor.transport = function (slug, payload) {
     queue.enqueue(slug, payload);
@@ -270,10 +291,12 @@
   var status = document.getElementById("save-state");
   if (status) new MutationObserver(function () { if (initialized && queue.entries().length) update(); }).observe(status, { childList: true });
   function flush() {
+    commit();
     if (!initialized) return;
     if (editor.state.dirty) capture({ title: editor.state.title, blocks: editor.state.blocks });
     queue.flush(true).then(settled);
   }
   root.addEventListener("online", flush);
+  root.addEventListener("pagehide", flush);
   document.addEventListener("visibilitychange", flush);
 })(typeof window === "undefined" ? globalThis : window);

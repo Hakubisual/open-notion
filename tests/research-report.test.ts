@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadTemplates } from "../features/templates.build";
 import "../assets/editor-model.js";
@@ -9,8 +9,8 @@ import { blocksToMarkdown, markdownToBlocks } from "../markdown-blocks";
 import { visualBlockHtml, VISUAL_CSP } from "../visual-html.js";
 import { cookie, setup } from "./db-harness";
 
-// Research report page style (acard-research-report, owner 2026-10-22): page setting font "report" draws a page like the
-// owner's reference report. Only that page changes; the shared link and agents' front matter carry the same switch.
+// Research report page style (acard-research-report, owner 2026-10-22; acard-report-plain 2026-10-23): page setting font
+// "report" keeps the normal Acard page look and adds numbered equations and figures. Evidence tags draw on every page.
 const ROOT = join(import.meta.dir, "..");
 let h: ReturnType<typeof setup>;
 beforeEach(() => { h = setup(); });
@@ -31,13 +31,14 @@ async function reader(path: string) {
   return { status: response.status, html: await response.text() };
 }
 
-test("a report page gets the report class, its inline rules and the date line above the title", async () => {
+test("a report page gets the report class and its numbering rules; the byline stays below the title like any page", async () => {
   await page("study", "report");
   const { status, html } = await reader("/study/");
   expect(status).toBe(200);
   expect(html).toMatch(/<main id="main" class="[^"]*\brp\b[^"]*" data-font="report">/);
-  expect(html).toContain('<link rel="stylesheet" href="/tokens-report.css"><style>' + REPORT_CSS + "</style>");
-  expect(html.indexOf('class="byline"')).toBeLessThan(html.indexOf("<h1>T study</h1>"));
+  expect(html).toContain("<style>" + REPORT_CSS + "</style>");
+  expect(html).not.toContain("tokens-report.css");
+  expect(html.indexOf("<h1>T study</h1>")).toBeLessThan(html.indexOf('class="byline"'));
 });
 
 test("pages without the setting render exactly as before: no report class, rules or moved byline", async () => {
@@ -90,16 +91,15 @@ test("the setting only takes known values", async () => {
   expect((await h.call("PUT", "/api/page/study/settings", { font: "report" })).data.settings.font).toBe("report");
 });
 
-test("report rules are scoped to .rp and use tokens (no colors outside tokens.css)", () => {
+test("report rules are scoped to .rp, only number blocks and leave the page look alone", () => {
   for (const rule of REPORT_CSS.split("}").filter((r) => r.includes("{") && !r.trim().startsWith("@media"))) {
     const selector = rule.slice(0, rule.indexOf("{")).replace(/^@media[^{]*\{/, "");
     expect(selector.includes(".rp")).toBe(true);
   }
   expect(REPORT_CSS).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d/);
-  const tokens = readFileSync(join(ROOT, "assets/tokens-report.css"), "utf8");
-  const defined = new Set([...tokens.matchAll(/(--rp-[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
-  const used = [...REPORT_CSS.matchAll(/var\((--rp-[a-z0-9-]+)/g)].map((m) => m[1]);
-  expect(used.filter((name) => !defined.has(name))).toEqual([]);
+  expect(REPORT_CSS).not.toMatch(/font-family|background|--content-width|--rp-|\bh[1-4]\b|blockquote|byline|statrow|stable|callout/);
+  expect(EVIDENCE_CSS).not.toMatch(/font-family|--rp-/);
+  expect(existsSync(join(ROOT, "assets/tokens-report.css"))).toBe(false);
 });
 
 test("evidence labels: [MEASURED] [CLAIMED] [ESTIMATED] draw as tags in text, tables and tiles; other brackets stay text", () => {

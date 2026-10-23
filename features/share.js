@@ -5,7 +5,7 @@
     "CREATE TABLE IF NOT EXISTS share_rules (id TEXT PRIMARY KEY, page TEXT NOT NULL, principal TEXT NOT NULL, role TEXT NOT NULL, expires INTEGER, created INTEGER NOT NULL, revoked INTEGER, token_hash TEXT UNIQUE)",
     "CREATE INDEX IF NOT EXISTS share_rules_page ON share_rules(page, revoked)",
     "CREATE INDEX IF NOT EXISTS share_rules_principal ON share_rules(principal, revoked)",
-    "CREATE TABLE IF NOT EXISTS share_pages (page TEXT PRIMARY KEY, inherit INTEGER NOT NULL DEFAULT 1, allow_export INTEGER NOT NULL DEFAULT 0, allow_index INTEGER NOT NULL DEFAULT 0, publish_subpages INTEGER NOT NULL DEFAULT 0, site_title TEXT)",
+    "CREATE TABLE IF NOT EXISTS share_pages (page TEXT PRIMARY KEY, inherit INTEGER NOT NULL DEFAULT 1, allow_export INTEGER NOT NULL DEFAULT 0, allow_index INTEGER NOT NULL DEFAULT 0, publish_subpages INTEGER NOT NULL DEFAULT 0, site_title TEXT, theme TEXT)",
     "CREATE TABLE IF NOT EXISTS share_invites (id_hash TEXT PRIMARY KEY, rule TEXT NOT NULL, email TEXT NOT NULL, code_hash TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER NOT NULL, tries INTEGER NOT NULL DEFAULT 0, used INTEGER)",
     "CREATE INDEX IF NOT EXISTS share_invites_rule ON share_invites(rule)",
     "CREATE TABLE IF NOT EXISTS share_sessions (token_hash TEXT PRIMARY KEY, email TEXT NOT NULL, links TEXT NOT NULL DEFAULT '[]', created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER)",
@@ -25,7 +25,7 @@
     ".sv-bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:14px;height:52px;padding:0 20px;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}" +
     ".sv-path{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-14)}.sv-crumb{display:inline-flex;align-items:center;gap:8px;min-width:0;color:var(--fg);text-decoration:none}.sv-crumb span:last-child,.sv-here{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
     ".sv-ico{display:inline-grid;place-items:center;width:22px;height:22px;flex:0 0 22px}.sv-ico img,.sv-ico svg{width:20px;height:20px;border-radius:5px}.sv-sep{color:var(--fg-dim)}.sv-here{color:var(--fg-dim)}.sv-grow{flex:1}" +
-    ".sv-made{display:inline-flex;align-items:baseline;gap:2px;color:var(--fg);font-size:var(--fs-13);line-height:1;text-decoration:none;white-space:nowrap}.sv-wm{display:block;height:13px;aspect-ratio:416.7/100;overflow:visible;color:currentColor}.sv-made span{display:block;line-height:1;margin-bottom:-0.12em}.sv-made:hover{text-decoration:underline}" +
+    ".sv-made{display:inline-flex;align-items:baseline;gap:2px;color:var(--fg);font-size:var(--fs-13);line-height:1;text-decoration:none;white-space:nowrap}.sv-wm{display:block;height:13px;aspect-ratio:375.59/100;overflow:visible;color:currentColor}.sv-made span{display:block;line-height:1;margin-bottom:-0.12em}.sv-made:hover{text-decoration:underline}" +
     ".sv-theme{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:8px;color:var(--fg-dim);cursor:pointer}.sv-theme:hover{background:var(--bg-soft);color:var(--fg)}.sv-tt:focus-visible~.sv-bar .sv-theme{outline:2px solid var(--accent)}" +
     ".sv-notice{max-width:460px;margin:14vh auto 0;padding:0 24px;text-align:center}.sv-code{margin:0;color:var(--accent);font-weight:700;font-size:var(--fs-14);letter-spacing:.08em}.sv-notice h1{margin:8px 0 10px;font-size:var(--fs-28);letter-spacing:-.02em}.sv-notice p{color:var(--fg-dim)}" +
     ".sv-edit{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4);margin:calc(var(--space-8) * -1 + var(--space-2)) 0 var(--space-8);color:var(--fg-dim);font-size:var(--fs-13)}.sv-edit .sv-btn{margin-top:0}" +
@@ -335,7 +335,7 @@
       parent: parent && model.parents.has(parent) ? parent : null,
       people: describeAccess(model, slug).filter(rule => rule.principal.startsWith("email:")).map(rule => ruleView(rule, slug)),
       link: linkRule ? { ...ruleView(linkRule, slug), url: sharePrefix(env) + await ruleToken(env, linkRule.id) } : null,
-      settings: { allowExport: Number(settings?.allow_export) === 1, allowIndex: Number(settings?.allow_index) === 1, publishSubpages: Number(settings?.publish_subpages) === 1, siteTitle: settings?.site_title || "" },
+      settings: { allowExport: Number(settings?.allow_export) === 1, allowIndex: Number(settings?.allow_index) === 1, publishSubpages: Number(settings?.publish_subpages) === 1, siteTitle: settings?.site_title || "", theme: shareTheme(settings?.theme) },
       publish: publishRules.length ? { url: derived ? sharePrefix(env) + await ruleToken(env, derived.id) : null, legacy: publishRules.filter(rule => rule.id.startsWith("pl-")).length } : null,
       requests: requests.results ?? [],
       agents: tokens.map(token => {
@@ -453,15 +453,17 @@
       return reply({ ok: true, link: { id, role, expires, url: sharePrefix(env) + await ruleToken(env, id) } });
     }
     if (rest === "settings" && method === "PUT") {
-      const current = await db.prepare("SELECT * FROM share_pages WHERE page = ?").bind(slug).first() || { inherit: 1, allow_export: 0, allow_index: 0, publish_subpages: 0, site_title: null };
+      const current = await db.prepare("SELECT * FROM share_pages WHERE page = ?").bind(slug).first() || { inherit: 1, allow_export: 0, allow_index: 0, publish_subpages: 0, site_title: null, theme: null };
+      if (body.theme !== undefined && !SHARE_THEMES.includes(body.theme)) return reply({ error: "테마는 system, light, dark 중 하나예요." }, 400);
       const flag = (name, key) => (typeof body[key] === "boolean" ? (body[key] ? 1 : 0) : Number(current[name]) || 0);
       const next = {
         inherit: typeof body.inherit === "boolean" ? (body.inherit ? 1 : 0) : Number(current.inherit) === 0 ? 0 : 1,
         allow_export: flag("allow_export", "allowExport"), allow_index: flag("allow_index", "allowIndex"), publish_subpages: flag("publish_subpages", "publishSubpages"),
         site_title: typeof body.siteTitle === "string" ? body.siteTitle.trim().slice(0, 120) || null : current.site_title,
+        theme: body.theme === undefined ? current.theme ?? null : body.theme === "system" ? null : body.theme,
       };
-      await db.prepare("INSERT INTO share_pages (page, inherit, allow_export, allow_index, publish_subpages, site_title) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(page) DO UPDATE SET inherit = excluded.inherit, allow_export = excluded.allow_export, allow_index = excluded.allow_index, publish_subpages = excluded.publish_subpages, site_title = excluded.site_title")
-        .bind(slug, next.inherit, next.allow_export, next.allow_index, next.publish_subpages, next.site_title).run();
+      await db.prepare("INSERT INTO share_pages (page, inherit, allow_export, allow_index, publish_subpages, site_title, theme) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(page) DO UPDATE SET inherit = excluded.inherit, allow_export = excluded.allow_export, allow_index = excluded.allow_index, publish_subpages = excluded.publish_subpages, site_title = excluded.site_title, theme = excluded.theme")
+        .bind(slug, next.inherit, next.allow_export, next.allow_index, next.publish_subpages, next.site_title, next.theme).run();
       return reply({ ok: true });
     }
     if (rest === "publish" && method === "POST") {
@@ -586,18 +588,20 @@
       let slug;
       try { slug = resolveSlug(decodeURIComponent(ask[1])); } catch { return html(shell("공유", "<h1>없는 페이지예요</h1>"), 404); }
       const action = "/s/" + wsTag(env) + "/r/" + encodeURIComponent(slug);
-      const form = (message = "") => shell("권한 요청", "<h1>이 페이지 권한 요청</h1><p>공유한 사람에게 요청을 보내요. 승인되면 이 이메일로 열 수 있는 초대 링크와 코드를 받아요.</p>" +
+      const wantEdit = new URL(request.url).searchParams.get("role") === "edit";
+      const form = (message = "", edit = wantEdit) => shell("권한 요청", "<h1>이 페이지 권한 요청</h1><p>공유한 사람에게 요청을 보내요. 승인되면 이 이메일로 열 수 있는 초대 링크와 코드를 받아요.</p>" +
         (message ? '<p class="err" role="alert">' + escapeHtml(message) + "</p>" : "") +
         '<form method="post" action="' + escapeHtml(action) + '"><label for="email">내 이메일</label><input id="email" name="email" type="email" autocomplete="email" required>' +
-        '<label for="role">원하는 권한</label><select id="role" name="role"><option value="read">읽기 허용</option><option value="edit">편집 허용</option></select>' +
+        '<label for="role">원하는 권한</label><select id="role" name="role"><option value="read">읽기 허용</option><option value="edit"' + (edit ? " selected" : "") + '>편집 허용</option></select>' +
         '<label for="note">한마디 (선택)</label><textarea id="note" name="note" rows="3" maxlength="300"></textarea><button type="submit">요청 보내기</button></form>');
       if (method === "GET" || method === "HEAD") return html(form());
       if (method !== "POST") return new Response(null, { status: 405, headers: { ...noStore, allow: "GET, POST" } });
       const data = await request.formData().catch(() => null);
       const email = String(data?.get("email") || "").trim().toLowerCase();
-      if (!EMAIL.test(email)) return html(form("이메일 주소를 확인해 주세요."), 400);
+      const edit = data?.get("role") === "edit";
+      if (!EMAIL.test(email)) return html(form("이메일 주소를 확인해 주세요.", edit), 400);
       const ip = request.headers.get("cf-connecting-ip") || "local";
-      if (!(await hit(db, "ask:" + ip, 10, 60 * 60 * 1000))) return html(form("요청이 너무 많아요. 잠시 뒤에 다시 해 주세요."), 429);
+      if (!(await hit(db, "ask:" + ip, 10, 60 * 60 * 1000))) return html(form("요청이 너무 많아요. 잠시 뒤에 다시 해 주세요.", edit), 429);
       const live = await db.prepare("SELECT slug FROM pages WHERE slug = ? AND NOT EXISTS (SELECT 1 FROM editor_trash WHERE page = pages.slug)").bind(slug).first();
       const open = live && await db.prepare("SELECT id FROM share_requests WHERE page = ? AND email = ? AND status = 'open'").bind(slug, email).first();
       if (live && !open) await db.prepare("INSERT INTO share_requests (id, page, email, role, note, created) VALUES (?, ?, ?, ?, ?, ?)").bind(randomId(), slug, email, data.get("role") === "edit" ? "edit" : "read", String(data.get("note") || "").slice(0, 300), Date.now()).run();
@@ -620,7 +624,11 @@
   const SV_CLOCK = SV_ICON + '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>';
   const SV_GLOBE = SV_ICON + '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>';
   const SV_LOCK = SV_ICON + '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
-  const svPage = (title, inner, extraHead = "") => '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>' + title + '</title>' + extraHead + '</head><body class="sv">' +
+  // issue 116: a shared page follows the viewer's system theme unless the owner fixed it (share_pages.theme light | dark).
+  // The fixed theme is html[data-theme], which tokens.css already reads; the 테마 바꾸기 toggle still flips it.
+  const SHARE_THEMES = ["system", "light", "dark"];
+  const shareTheme = value => (value === "light" || value === "dark" ? value : "system");
+  const svPage = (title, inner, extraHead = "", theme = "system") => '<!doctype html><html lang="ko"' + (theme === "system" ? "" : ' data-theme="' + theme + '"') + '><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="' + (theme === "system" ? "light dark" : theme) + '"><title>' + title + '</title>' + extraHead + '</head><body class="sv">' +
     '<input type="checkbox" id="sv-tt" class="sv-tt" aria-label="테마 바꾸기">' + inner + "</body></html>";
   const SV_NOTICE_VARS = ":root{--bg:#fff;--bg-soft:#f6f6f8;--fg:#26252c;--fg-dim:#5f5d69;--line:#ececf0;--accent:#6450dc;--on-accent:#fff;--font-body:'Pretendard Variable',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif;--fs-12:12px;--fs-13:13px;--fs-14:14px;--fs-16:16px;--fs-28:28px}" +
     "@media (prefers-color-scheme:dark){:root{--bg:#1b1b20;--bg-soft:#26262d;--fg:#ecebf2;--fg-dim:#a3a1ad;--line:#31313a;--accent:#a597ff;--on-accent:#16131f}}";
@@ -751,8 +759,31 @@
     return new Response(html, { headers });
   }
 
+  // A published page the owner allowed search engines to index lists itself (and, with sub-pages published, every
+  // readable descendant) in <prefix><token>/sitemap.xml. Link shares, legacy links, revoked, expired or not-indexed rules 404.
+  async function publishSitemap(db, env, request, token, method) {
+    if (!db) return missing(method);
+    const rule = await db.prepare("SELECT id, page, principal, role, expires, revoked FROM share_rules WHERE token_hash = ? AND principal = 'publish'").bind(await sha(token)).first();
+    if (!rule || rule.revoked !== null || (rule.expires !== null && Number(rule.expires) <= Date.now()) || String(rule.id).startsWith("pl-")) return missing(method);
+    const settings = await db.prepare("SELECT allow_index FROM share_pages WHERE page = ?").bind(String(rule.page)).first();
+    if (Number(settings?.allow_index) !== 1) return missing(method);
+    const model = await loadModel(db);
+    const tokenRule = { ...rule, expires: rule.expires === null ? null : Number(rule.expires) };
+    const pages = await db.prepare("SELECT slug, updated FROM pages p WHERE kind != 'db_row' AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = p.slug)").all();
+    const siteOrigin = String(env.SITE_URL || new URL(request.url).origin).replace(/\/+$/, "");
+    const base = siteOrigin + sharePrefix(env) + token;
+    const urls = (pages.results ?? []).filter(row => shareRole(model, String(row.slug), { kind: "token", rule: tokenRule }) !== "none").map(row => {
+      const loc = String(row.slug) === String(rule.page) ? base : base + "/" + encodeURIComponent(String(row.slug));
+      const lastmod = Number(row.updated) > 0 ? "<lastmod>" + new Date(Number(row.updated)).toISOString().slice(0, 10) + "</lastmod>" : "";
+      return "  <url><loc>" + escapeHtml(loc) + "</loc>" + lastmod + "</url>";
+    });
+    const xml = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', ...urls, "</urlset>", ""].join("\n");
+    return new Response(method === "HEAD" ? null : xml, { headers: { ...PUBLIC_HEADERS, "cache-control": "public, max-age=3600", "content-type": "application/xml; charset=utf-8" } });
+  }
   async function renderPublicPage({ path, method, db, env, request }) {
     if (method !== "GET" && method !== "HEAD") return new Response(null, { status: 405, headers: { ...PUBLIC_HEADERS, "x-robots-tag": "noindex, nofollow", allow: "GET, HEAD" } });
+    const sitemapMatch = /^\/p\/([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])\/sitemap\.xml$/.exec(path);
+    if (sitemapMatch) return publishSitemap(db, env, request, sitemapMatch[1], method);
     // A canonical unpadded base64url encoding of 32 bytes has 43 characters.
     const match = /^\/p\/([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])(?:\/media\/([0-9a-f]{16})(?:\/(480|960|1440)\.(avif|webp))?|(?:\/(?!frame\/[^/])([^/]+))?(?:\/frame\/([^/]{1,120}))?\/?)$/.exec(path);
     if (!match || !db) return missing(method);
@@ -803,7 +834,8 @@
     const iconMedia = /^\/media\/([0-9a-f]{16})$/.exec(String(found.settings?.icon || "").trim());
     if (iconMedia) ids.add(iconMedia[1]);
     const shareIcon = html => iconMedia ? html.replace('src="/media/' + iconMedia[1] + '"', () => 'src="' + base + "/media/" + iconMedia[1] + '"') : html;
-    const settings = await db.prepare("SELECT allow_index, site_title FROM share_pages WHERE page = ?").bind(String(rule.page)).first();
+    const settings = await db.prepare("SELECT allow_index, site_title, theme FROM share_pages WHERE page = ?").bind(String(rule.page)).first();
+    const theme = shareTheme(settings?.theme);
     const indexable = rule.principal === "publish" && Number(settings?.allow_index) === 1 && !String(rule.id).startsWith("pl-");
     const robots = indexable ? "index, follow" : "noindex, nofollow";
     if (match[2]) {
@@ -861,13 +893,13 @@
           const value = element.getAttribute(name);
           if (value === null) continue;
           const media = /^\/media\/([0-9a-f]{16})$/.exec(value);
-          const local = /^\/([^/?#]+)\/?$/.exec(value);
+          const local = /^\/([^/?#]+)\/?(#[^"]*)?$/.exec(value);
           let target = null;
           if (local) { try { target = resolveSlug(decodeURIComponent(local[1])); } catch { target = null; } }
           if (media && ids.has(media[1])) element.setAttribute(name, base + "/media/" + media[1]);
           else if (name === "href" && value.startsWith("#")) continue;
-          else if (name === "href" && element.tagName === "a" && target && target !== String(rule.page) && reachable(target)) element.setAttribute(name, base + "/" + encodeURIComponent(target) + "/");
-          else if (name === "href" && element.tagName === "a" && target === String(rule.page)) element.setAttribute(name, base);
+          else if (name === "href" && element.tagName === "a" && target && target !== String(rule.page) && reachable(target)) element.setAttribute(name, base + "/" + encodeURIComponent(target) + "/" + (local[2] || ""));
+          else if (name === "href" && element.tagName === "a" && target === String(rule.page)) element.setAttribute(name, base + (local[2] || ""));
           // A card-grid card is the link itself: drop only the href so the card keeps its box.
           else if (element.tagName === "a" && /(^|\s)ui-cards-item(\s|$)/.test(element.getAttribute("class") || "")) element.removeAttribute(name);
           else if (element.tagName === "a") element.removeAndKeepContent();
@@ -875,18 +907,18 @@
         }
         element.removeAttribute("data-page");
       },
-    }).transform(new Response(renderBlocks(blocks, { page: { readOnly: true } })));
-    // Inline existing reader styles: private static asset routes remain cookie-gated.
+    }).transform(new Response(renderBlocks(blocks, { page: { readOnly: true }, pages: (await db.prepare("SELECT slug, title, updated FROM pages p WHERE kind != 'db_row' AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = p.slug)").all()).results ?? [] })));
+    // Inline existing reader styles: private static asset routes remain cookie-gated. dist/style.css already carries
+    // tokens.css in front (build.ts), so the :root vars and dark rules below come from it.
     // #73: lazy/checks.css draws "[ ]" table cells; a link visitor gets no checks chunk, so it rides inline.
-    const report = isReportPage(found.settings);
-    const styles = await Promise.all(["tokens.css", "style.css", "lazy/checks.css", ...(report ? ["tokens-report.css"] : [])].map(async name => {
+    const styles = await Promise.all(["style.css", "lazy/checks.css"].map(async name => {
       const asset = await env.ASSETS.fetch(new Request(new URL("/" + name, request.url)));
       return asset.ok ? (await asset.text()).replace(/@import\s+[^;]+;/g, "") : "";
     }));
-    // Report pages: the --rp-* tokens join tokens.css so the theme switch below covers their dark values too.
-    if (report) styles[0] += "\n" + styles.pop();
     const lightVars = [...styles[0].matchAll(/(?:^|\})\s*:root\s*\{([^}]*)\}/g)].map(m => m[1]).join(";");
-    styles[0] = styles[0].replace(/html\[data-theme="dark"\]/g, 'html[data-theme="dark"], html:has(#sv-tt:checked):not(#sv-none)') + "@media (prefers-color-scheme: dark){html:has(#sv-tt:checked):not(#sv-none){color-scheme:light;" + lightVars + "}}";
+    // The toggle shows the other theme: system pages flip against prefers-color-scheme, fixed pages against their theme.
+    styles[0] = styles[0].replace(/html\[data-theme="dark"\]/g, 'html[data-theme="dark"], html:has(#sv-tt:checked):not(#sv-none)') + "@media (prefers-color-scheme: dark){html:not([data-theme]):has(#sv-tt:checked):not(#sv-none){color-scheme:light;" + lightVars + "}}" +
+      'html[data-theme="dark"]:has(#sv-tt:checked):not(#sv-none){color-scheme:light;' + lightVars + "}";
     const siteTitle = settings?.site_title ? String(settings.site_title) : "";
     const rootRow = slug !== String(rule.page) ? await db.prepare("SELECT title FROM pages WHERE slug = ?").bind(String(rule.page)).first() : null;
     const subRows = titles.results ?? [];
@@ -924,7 +956,9 @@
     // issue 114: an edit/comment link shows how to get that permission (email code, no account) instead of only the read-only stamp.
     const upgrade = rule.principal === "link" && (rule.role === "edit" || rule.role === "comment");
     const stamp = rule.principal === "link" ? (upgrade ? (rule.role === "edit" ? "공유 링크 · 편집 허용" : "공유 링크 · 댓글 허용") : "공유 링크 · 읽기 전용") : siteTitle ? escapeHtml(siteTitle) : "공개 페이지 · 읽기 전용";
-    const upgradeHtml = upgrade ? '<p class="sv-edit"><a class="sv-btn" href="/s/' + wsTag(env) + "/l/" + match[1] + '">' + (rule.role === "edit" ? "편집하려면 이메일로 확인" : "댓글을 달려면 이메일로 확인") + "</a><small>회원가입 없이 이메일로 받은 6자리 코드로 확인해요.</small></p>" : "";
+    // A read-only link visitor can ask the owner for edit access (share_requests, approved in the share dialog).
+    const askHtml = rule.principal === "link" && rule.role === "read" ? '<p class="sv-edit"><a class="sv-btn" href="/s/' + wsTag(env) + "/r/" + encodeURIComponent(slug) + '?role=edit">' + "편집 권한 요청" + '</a><small>공유한 사람이 승인하면 이메일로 초대 링크와 코드를 받아요.</small></p>' : "";
+    const upgradeHtml = upgrade ? '<p class="sv-edit"><a class="sv-btn" href="/s/' + wsTag(env) + "/l/" + match[1] + '">' + (rule.role === "edit" ? "편집하려면 이메일로 확인" : "댓글을 달려면 이메일로 확인") + "</a><small>회원가입 없이 이메일로 받은 6자리 코드로 확인해요.</small></p>" : askHtml;
     const crumb = '<a class="sv-crumb" href="' + base + '"><span class="sv-ico">' + (rootRow ? pageIconHtml({ slug: String(rule.page) }, {}, 20) : shareIcon(pageIconHtml(found.page, pageSettings, 20))) + '</span><span>' + escapeHtml(String(rootRow ? rootRow.title : found.page.title)) + "</span></a>" +
       (rootRow ? '<span class="sv-sep">/</span><span class="sv-here">' + escapeHtml(found.page.title) + "</span>" : "");
     const toc = headings.length >= 2 ? '<aside class="sv-toc" aria-label="목차"><details open><summary>목차</summary><ol>' + headings.map((h, i) => '<li class="l' + h.level + '"><a href="#' + escapeHtml(h.id) + '"><span class="n">' + (i + 1) + "</span>" + escapeHtml(h.text) + "</a></li>").join("") + "</ol></details></aside>" : "";
@@ -937,22 +971,24 @@
     // generic Acard card so their title and text stay out of crawlers and link previews.
     const cardTitle = indexable ? found.page.title : siteTitle || "Acard";
     const cardText = indexable ? description : (siteTitle || "Acard") + "에서 공유한 페이지예요.";
-    const ogImage = siteOrigin + "/og.png";
-    const og = '<meta name="robots" content="' + (indexable ? "index" : "noindex") + '">' + (indexable ? '<meta name="description" content="' + escapeHtml(description) + '"><link rel="canonical" href="' + escapeHtml(pageUrl) + '">' : "") +
+    // issue 118: the content hash in the URL makes messengers fetch a new card when og.png changes (build.ts fills the versions).
+    const ogVersion = (globalThis.ACARD_STATIC_VERSIONS || {})["og.png"];
+    const ogImage = siteOrigin + "/og.png" + (ogVersion ? "?v=" + ogVersion : "");
+    const og = '<meta name="robots" content="' + (indexable ? "index" : "noindex") + '">' + (indexable ? '<meta name="description" content="' + escapeHtml(description) + '"><link rel="canonical" href="' + escapeHtml(pageUrl) + '"><link rel="sitemap" type="application/xml" href="' + escapeHtml(base + "/sitemap.xml") + '">' : "") +
       '<meta property="og:type" content="article"><meta property="og:site_name" content="' + escapeHtml(siteTitle || "Acard") + '"><meta property="og:title" content="' + escapeHtml(cardTitle) + '"><meta property="og:description" content="' + escapeHtml(cardText) + '">' +
       '<meta property="og:url" content="' + escapeHtml(pageUrl) + '"><meta property="og:image" content="' + ogImage + '"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="Acard"><meta property="og:locale" content="ko_KR">' +
       '<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="' + escapeHtml(cardTitle) + '"><meta name="twitter:description" content="' + escapeHtml(cardText) + '"><meta name="twitter:image" content="' + ogImage + '">' +
       (frameBlocks.size ? "<script>" + SV_FRAME_RESIZE + "</script>" : "") + '<link rel="icon" href="/favicon.svg" type="image/svg+xml"><style>' + styles.join("\n") + "\n" + VISUAL_CSS + "\n" +
       // notion-parity-1: block colors, heading 4 and toggle headings ride inline in reader pages; the sanitizer above drops
       // inline <style> from the body, so the shared page carries the same rules here (CSP and sanitizing unchanged).
-      BLOCK_COLOR_CSS + HEADING4_CSS + TOGGLE_HEADING_CSS + componentCss() + "\n" + SV_BASE_CSS + SV_PAGE_CSS + (isReportPage(pageSettings) ? REPORT_CSS : "") + (bodyHtml.includes('<span class="ev ev-') ? EVIDENCE_CSS : "") + "</style>";
+      BLOCK_COLOR_CSS + HEADING4_CSS + TOGGLE_HEADING_CSS + componentCss(componentIdsIn(bodyHtml)) + "\n" + SV_BASE_CSS + SV_PAGE_CSS + (isReportPage(pageSettings) ? REPORT_CSS : "") + (bodyHtml.includes('<span class="ev ev-') ? EVIDENCE_CSS : "") + "</style>";
     const html = svPage(title,
-      '<header class="sv-bar"><nav class="sv-path" aria-label="위치">' + crumb + '</nav><span class="sv-grow"></span><a class="sv-made" href="/" aria-label="Acard로 만들었어요"><svg class="wordmark sv-wm" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg><span>로 만들었어요</span></a><label for="sv-tt" class="sv-theme" title="테마 바꾸기">' + SV_MOON + "</label></header>" +
+      '<header class="sv-bar"><nav class="sv-path" aria-label="위치">' + crumb + '</nav><span class="sv-grow"></span><a class="sv-made" href="/" aria-label="Acard로 만들었어요"><svg class="wordmark sv-wm" viewBox="0 0 375.59 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg><span>로 만들었어요</span></a><label for="sv-tt" class="sv-theme" title="테마 바꾸기">' + SV_MOON + "</label></header>" +
       '<div class="sv-cover">' + cover + "</div>" +
       '<div class="sv-wrap' + (toc ? " has-toc" : "") + (pageSettings.width === "full" ? " sv-full" : pageSettings.width === "normal" ? " sv-normal" : "") + (isReportPage(pageSettings) ? " rp" : "") + '"><main class="sv-main"><article><div class="sv-icon" aria-hidden="true">' + shareIcon(pageIconHtml(found.page, pageSettings, 88)) + "</div>" +
       '<h1 class="sv-title">' + escapeHtml(found.page.title) + '</h1><p class="sv-meta">' + (updated ? '<span class="sv-when">' + SV_CLOCK + "<span>" + updated + "</span></span>" : "") + '<span class="sv-pill"><span class="sv-pill-in">' + (rule.principal === "link" ? SV_LOCK : SV_GLOBE) + stamp + "</span></span></p>" + upgradeHtml +
       '<div class="sv-toc-narrow">' + toc + '</div><div class="blocks">' + bodyHtml + "</div>" + cards + "</article></main>" + toc.replace('class="sv-toc"', 'class="sv-toc sv-toc-wide"') + "</div>" +
-      '<footer class="sv-foot"><a href="/"><img src="/logo.svg" alt="" width="16" height="16">Acard로 만들었어요</a></footer>', og);
+      '<footer class="sv-foot"><a href="/"><img src="/logo.svg" alt="" width="16" height="16">Acard로 만들었어요</a></footer>', og, theme);
     return new Response(html, { headers: contentHeaders });
   }
 
@@ -978,7 +1014,11 @@
   }
 
   registerFeature({
-    schema: async db => { await db.batch(SCHEMA.map(sql => db.prepare(sql))); },
+    schema: async db => {
+      await db.batch(SCHEMA.map(sql => db.prepare(sql)));
+      // issue 116: stores made before the theme column (supabase/031 on Postgres); an existing column throws and is ignored.
+      await db.prepare("ALTER TABLE share_pages ADD COLUMN theme TEXT").run().catch(() => {});
+    },
     api: accessApi,
     publicRoutes: [publicPage, shareRoutes],
     services: {
@@ -988,6 +1028,19 @@
         const key = agentKey(principal);
         if (!slug || !(await hasAgentRules(db, key, principal))) return principal.scopes;
         return agentScopes(await loadModel(db), slug, key, principal.scopes);
+      },
+      // issue 106: the per-page agent rules as a guest-style role map (write -> edit, read -> read), so row writes check every row
+      // page they touch like a share guest. null when the token has no per-page rules (nothing narrows it).
+      async agentRoles(db, principal) {
+        const key = agentKey(principal);
+        if (!(await hasAgentRules(db, key, principal))) return null;
+        const model = await loadModel(db);
+        const roles = new Map();
+        for (const slug of model.parents.keys()) {
+          const scopes = agentScopes(model, slug, key, principal.scopes);
+          if (scopes.length) roles.set(slug, scopes.includes("write") ? "edit" : "read");
+        }
+        return roles;
       },
       async agentReadable(db, principal, slugs) {
         const key = agentKey(principal);

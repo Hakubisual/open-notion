@@ -21,6 +21,12 @@ const components: Entry[] = [
   { type: "component:empty", label: "빈 상태", hint: "비어 있을 때 안내", ico: "○", aliases: "빈상태 empty 안내 비어있음 empty 빈 상태" },
 ];
 const all = blockTypes.concat(components);
+// Same shape as parts/page.js slashItems() (#38).
+const parts: Entry[] = [
+  { type: "part:table", label: "표 (합계 자동)", hint: "부품", ico: "", aliases: "부품 part 표 합계 자동 table sum table" },
+  { type: "part:dag", label: "흐름도 (DAG)", hint: "부품", ico: "", aliases: "부품 part 흐름도 dag 단계 구조 flow pipeline dag" },
+  { type: "part:weekly-card", label: "주간 판매 카드 v2", hint: "내 부품", ico: "", aliases: "부품 part weekly-card", mine: true } as Entry,
+];
 const types = (sections: Section[]) => sections.flatMap((s) => s.items.map((e) => e.type));
 const first = (q: string) => types(lib.slashSections(all, q))[0];
 
@@ -32,6 +38,15 @@ test("no query: four groups in order, every item once, catalog order kept inside
   expect(sections[1].items.map((e) => e.type)).toEqual(["component:stat", "component:empty"]);
   expect(sections[2].items.map((e) => e.type)).toContain("image");
   expect(sections[3].items.map((e) => e.type)).toEqual(expect.arrayContaining(["code", "database", "equation"]));
+});
+
+test("parts sit in their own 부품 and 내 부품 groups right after the basic blocks, and search finds them", () => {
+  const sections = lib.slashSections(all.concat(parts), "");
+  expect(sections.map((s) => s.title)).toEqual(["기본 블록", "부품", "내 부품", "컴포넌트", "미디어·임베드", "고급"]);
+  expect(sections[1].items.map((e) => e.type)).toEqual(["part:table", "part:dag"]);
+  expect(sections[2].items.map((e) => e.type)).toEqual(["part:weekly-card"]);
+  expect(types(lib.slashSections(all.concat(parts), "부품"))).toEqual(expect.arrayContaining(["part:table", "part:dag", "part:weekly-card"]));
+  expect(types(lib.slashSections(all.concat(parts), "흐름도"))[0]).toBe("part:dag");
 });
 
 test("every block has a one-line description", () => {

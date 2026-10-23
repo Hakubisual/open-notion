@@ -118,7 +118,7 @@ describe("auth", () => {
       const r = await cli(["pull", dir], token);
       expect(r.code).toBe(1);
       expect(r.stderr).toContain("HTTP 401: invalid token");
-      expect(r.stderr).toContain("설정 > 에이전트 연결");
+      expect(r.stderr).toContain("set ACARD_TOKEN to the server's agent token");
       expect(r.stdout + r.stderr).not.toContain(TOKEN);
     });
   }

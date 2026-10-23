@@ -1,5 +1,6 @@
 // acard-server sidecar: the Electron shell (desktop/main.cjs) starts it with ACARD_DATA_DIR / ACARD_APP_DIR / ACARD_PORT,
 // waits for the READY line, and closes stdin to stop it. Closing stdin also stops it when the shell dies.
+// ACARD_LOCAL_API=1 enables tokenless local agents; ACARD_AGENT_TOKEN grants agent-only bearer access (24+ chars).
 import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { startServer } from "./server";
@@ -15,11 +16,16 @@ if (!dataDir || !appDir || !existsSync(join(appDir, "editor.html"))) {
 const host = process.env.ACARD_HOST || "127.0.0.1";
 const allowedHosts = (process.env.ACARD_ALLOWED_HOSTS || "").split(",").map((s) => s.trim()).filter(Boolean);
 const password = process.env.ACARD_PASSWORD || undefined;
+const agentToken = process.env.ACARD_AGENT_TOKEN || undefined;
+if (agentToken && agentToken.length < 24) {
+  console.error("ACARD_AGENT_TOKEN must contain at least 24 characters");
+  process.exit(2);
+}
 // UI language for app pages: en, ko or zh. Unset keeps the Korean source copy.
 const lang = process.env.ACARD_LANG || undefined;
 let running: ReturnType<typeof startServer>;
 try {
-  running = startServer({ dataDir, appDir, port, host, allowedHosts, password, lang });
+  running = startServer({ dataDir, appDir, port, host, allowedHosts, password, lang, localApi: process.env.ACARD_LOCAL_API !== "0", agentToken });
 } catch (error) {
   console.error(String((error as Error).message || error));
   process.exit(2);

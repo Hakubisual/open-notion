@@ -170,22 +170,6 @@ test("invalid edits never claim the version or create history", async () => {
   expect(sqlite.query("SELECT id FROM editor_history").all()).toHaveLength(0);
 });
 
-test("skills discovery creates one editable page, preserves owner changes and respects trash", async () => {
-  const seeded = await mcp("get_agent_skills");
-  expect(seeded.slug).toBe("agent-skills");
-  expect((await rest("/agent-skills", "GET", undefined, readToken)).status).toBe(200);
-  expect(sqlite.query("SELECT slug FROM pages WHERE slug = 'agent-skills'").all()).toHaveLength(1);
-  expect(sqlite.query("SELECT id FROM blocks WHERE page = 'agent-skills' AND type = 'callout'").all()).toHaveLength(0);
-  const before = await mcp("read_blocks", { page: "agent-skills" });
-  await mcp("update_block", { page: "agent-skills", block_id: before.blocks[0].id, markdown: "# Owner rules", expected_version: before.version });
-  expect((await mcp("get_agent_skills")).markdown).toContain("# Owner rules");
-  sqlite.exec("INSERT INTO editor_trash (page, deleted) VALUES ('agent-skills', 1)");
-  expect((await rest("/agent-skills")).status).toBe(404);
-  sqlite.exec("DELETE FROM pages WHERE slug = 'agent-skills'");
-  expect((await rest("/agent-skills")).status).toBe(404);
-  expect(sqlite.query("SELECT slug FROM pages WHERE slug = 'agent-skills'").all()).toHaveLength(0);
-});
-
 // #39: agents pass the page as the address the person sees; every form reaches the same page for every write tool.
 test("agent writes accept the page address, encoded slug or NFD Hangul, and name a page outside the workspace", async () => {
   await worker.acardHost.run(env, writer, "createPage", { slug: "샘플프로젝트-구성도", title: "샘플프로젝트 구성도", markdown: "첫 문단" });

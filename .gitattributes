@@ -5,3 +5,5 @@ assets/features/lazy/editor-next.css -text
 assets/features/lazy/parts.js -text
 # part-html.js embeds the parts runtime between LF markers that scripts/build-parts.ts rewrites (#58); CRLF checkout broke the rebuild.
 part-html.js -text
+# Built by scripts/build-plugin-frame.ts; tests/plugin-sandbox.test.ts compares bytes and the CSP hash covers them.
+workers/acard-plugin-sandbox/frame.gen.js -text

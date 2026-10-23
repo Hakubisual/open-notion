@@ -46,23 +46,61 @@ export const UI_TONES = ["neutral", "info", "success", "warning", "danger", "acc
 
 const uiHelpers = { esc: uiEsc, rich: uiRich, str: uiStr, oneOf: uiOneOf, list: uiList, TONES: UI_TONES };
 
+// Shared drawing code for a family (the chart engine, diagram layout) joins the helpers every render gets as h.<name>.
+// Files load sorted, so a helper file is named components/_<name>.js and registers before the components using it.
+// A name is set once; the ds10 helper names can never be replaced.
+export function registerHelpers(name, helpers) {
+  if (!/^[a-z][a-zA-Z0-9]{1,30}$/.test(String(name)) || !helpers || typeof helpers !== "object") throw new Error("helpers need a name (a-z, 2-31 chars) and an object");
+  if (Object.prototype.hasOwnProperty.call(uiHelpers, name)) throw new Error("helper name already taken: " + name);
+  uiHelpers[name] = Object.freeze({ ...helpers });
+  return uiHelpers[name];
+}
+
+// Persona presets (visual kit): a component may give partial data for each; data.preset picks one.
+//   report   - office reports: KPI first, compact, delta colors, a source line
+//   friendly - students, teachers, blogs: pastel, rounded, emoji icons
+//   paper    - theses and research: grayscale + colorblind-safe marks, figure numbers, axis labels
+//   showcase - designers: large visuals, generous spacing
+export const UI_PRESETS = ["report", "friendly", "paper", "showcase"];
+
+// Families group components in the slash menu, the catalog and the editor's lazy chunks. A def without one is "basic".
+export const UI_FAMILIES = ["basic", "chart", "diagram", "interactive", "block", "asset"];
+
 const uiRegistry = new Map();
 
 // def: { id, name, description, schema, defaults, sample, slash: { label, hint, ico, aliases }, css, render(data, h) }
 // css is the component's own rules (tokens.css variables only); componentCss() joins them for the page.
+// Optional (visual kit, additive - every def above keeps working unchanged):
+//   family   one of UI_FAMILIES (default "basic")
+//   presets  { report?, friendly?, paper?, showcase? } -> partial data merged under the stored data when data.preset names it
 export function registerComponent(def) {
   if (!def || !COMPONENT_ID.test(def.id)) throw new Error("component id must be a-z0-9- (2-40 chars): " + (def && def.id));
   if (typeof def.render !== "function") throw new Error("component " + def.id + " needs render(data, h)");
-  uiRegistry.set(def.id, Object.freeze({ ...def, defaults: def.defaults || {}, sample: def.sample || def.defaults || {}, slash: def.slash || { label: def.name, hint: def.description, ico: "▦" } }));
+  const family = UI_FAMILIES.includes(def.family) ? def.family : "basic";
+  const presets = def.presets && typeof def.presets === "object" ? Object.fromEntries(UI_PRESETS.filter((p) => def.presets[p] && typeof def.presets[p] === "object").map((p) => [p, def.presets[p]])) : {};
+  uiRegistry.set(def.id, Object.freeze({ ...def, family, presets, defaults: def.defaults || {}, sample: def.sample || def.defaults || {}, slash: def.slash || { label: def.name, hint: def.description, ico: "▦" } }));
   return uiRegistry.get(def.id);
+}
+
+// Rules every component of a family shares (axes, legends, figure captions for charts). A page carries them once,
+// before the first component of that family; componentCss(ids) includes them for the families of those ids.
+const uiFamilyCss = new Map();
+export function registerFamilyCss(family, css) {
+  if (!UI_FAMILIES.includes(family) || typeof css !== "string") throw new Error("family css needs one of " + UI_FAMILIES.join(", ") + " and a string");
+  uiFamilyCss.set(family, css);
+}
+export function familyCss(family) {
+  return uiFamilyCss.get(family) || "";
 }
 
 export function getComponent(id) {
   return uiRegistry.get(id) || null;
 }
 
-export function listComponents() {
-  return [...uiRegistry.values()];
+// listComponents(family?) - every component, or only one family's.
+export function listComponents(family) {
+  const all = [...uiRegistry.values()];
+  return family ? all.filter((c) => c.family === family) : all;
 }
 
 // The short line agents see in the MCP tool description: names only.
@@ -72,7 +110,7 @@ export function componentNames() {
 
 // Catalog entries for agents (list_components / GET /api/v1/components): schema, defaults and a ready-to-paste example.
 export function componentCatalog(id) {
-  const pick = (c) => ({ id: c.id, name: c.name, description: c.description, schema: c.schema || { type: "object" }, defaults: c.defaults, sample: c.sample, markdown: componentMarkdown(c.id, c.sample) });
+  const pick = (c) => ({ id: c.id, name: c.name, description: c.description, schema: c.schema || { type: "object" }, defaults: c.defaults, sample: c.sample, markdown: componentMarkdown(c.id, c.sample), family: c.family, ...(Object.keys(c.presets).length ? { presets: Object.keys(c.presets) } : {}) });
   if (id) { const c = getComponent(id); return c ? pick(c) : null; }
   return listComponents().map(pick);
 }
@@ -90,7 +128,8 @@ export function componentData(block) {
     try { parsed = JSON.parse(text); } catch { ok = false; }
     if (parsed !== null && (typeof parsed !== "object" || Array.isArray(parsed))) { ok = false; parsed = null; }
   }
-  return { comp, ok, data: { ...(comp ? comp.defaults : {}), ...(parsed || {}) } };
+  const preset = comp && parsed && comp.presets[parsed.preset] ? comp.presets[parsed.preset] : null;
+  return { comp, ok, data: { ...(comp ? comp.defaults : {}), ...(preset || {}), ...(parsed || {}) } };
 }
 
 // Fallback card for anything the reader cannot draw: an unknown block type, an unknown component, or a component whose
@@ -107,7 +146,8 @@ export function renderComponentBlock(block) {
   if (!comp) return fallbackCardHtml(ui ? "컴포넌트 " + ui : "컴포넌트", block && block.text);
   try {
     // Malformed JSON still draws the component with its defaults, flagged for the editor (data-ui-invalid).
-    return '<div class="ui ui-' + comp.id + '" data-ui="' + comp.id + '"' + (ok ? "" : ' data-ui-invalid="1"') + ">" + comp.render(data, uiHelpers) + "</div>";
+    const preset = UI_PRESETS.includes(data.preset) ? ' data-preset="' + data.preset + '"' : "";
+    return '<div class="ui ui-' + comp.id + '" data-ui="' + comp.id + '"' + preset + (ok ? "" : ' data-ui-invalid="1"') + ">" + comp.render(data, uiHelpers) + "</div>";
   } catch {
     return fallbackCardHtml("컴포넌트 " + comp.id, block && block.text);
   }
@@ -116,6 +156,24 @@ export function renderComponentBlock(block) {
 export const COMPONENT_BASE_CSS = ".ui{margin:var(--space-4) 0}.ui-fallback{margin:var(--space-3) 0;padding:var(--space-3) var(--space-4);border:1px dashed var(--color-border);border-radius:var(--radius-sm);background:var(--color-surface-soft);color:var(--color-text-dim);font-size:var(--fs-13)}.ui-fallback-kind{display:inline-block;margin-bottom:var(--space-1);padding:0 var(--space-2);border-radius:var(--radius-pill);background:var(--color-neutral-bg);color:var(--color-neutral-fg);font-size:var(--fs-12);font-weight:600}.ui-fallback-text{margin:var(--space-1) 0 0;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:var(--fs-12);background:none;padding:0}.ui-fallback-empty{display:block}.ui-btn{display:inline-flex;align-items:center;gap:var(--space-2);height:var(--control-h-md);padding:0 var(--space-4);border-radius:var(--radius-sm);border:1px solid var(--color-border);background:var(--color-surface);color:var(--color-text);font-size:var(--fs-14);font-weight:600;text-decoration:none}.ui-btn.primary{background:var(--color-accent);border-color:var(--color-accent);color:var(--color-on-accent)}";
 
 // Every rule a page with components needs: the base, then each component's css in registration order.
-export function componentCss() {
-  return COMPONENT_BASE_CSS + listComponents().map((c) => c.css || "").join("");
+// componentCss(ids) keeps the same order but only for the components named (a page carries what it uses).
+export function componentCss(ids) {
+  const only = ids ? new Set(ids) : null;
+  const picked = listComponents().filter((c) => !only || only.has(c.id));
+  // ds10 (basic) rules first, in registration order; then each other family's shared rules followed by its components.
+  const basic = picked.filter((c) => c.family === "basic").map((c) => c.css || "").join("");
+  const rest = [...new Set(picked.filter((c) => c.family !== "basic").map((c) => c.family))]
+    .map((f) => familyCss(f) + picked.filter((c) => c.family === f).map((c) => c.css || "").join("")).join("");
+  return COMPONENT_BASE_CSS + basic + rest;
+}
+
+// The rules one component adds on top of the base ("" for an unknown id).
+export function componentOwnCss(id) {
+  const c = getComponent(id);
+  return c ? c.css || "" : "";
+}
+
+// Component ids a rendered HTML string uses (data-ui="..."), in first-use order.
+export function componentIdsIn(html) {
+  return [...new Set([...String(html || "").matchAll(/data-ui="([a-z][a-z0-9-]{1,39})"/g)].map((m) => m[1]))];
 }

@@ -14,22 +14,22 @@
 <a class="skip" href="#doc">본문으로</a>
 <header class="topbar">
   <button class="icon" id="menu" aria-label="메뉴" aria-expanded="false" aria-controls="sidebar">☰</button>
-  <a class="brand" href="/"><svg class="wordmark" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+  <a class="brand" href="/home/"><svg class="wordmark" viewBox="0 0 375.59 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
   <span class="ag-crumb" aria-hidden="true">설정</span>
   <div class="ag-grow"></div>
-  <a class="icon" id="viewlink" href="/" aria-label="읽기 화면으로" title="읽기 화면으로">↩</a>
+  <a class="icon" id="viewlink" href="/home/" aria-label="읽기 화면으로" title="읽기 화면으로">↩</a>
   <button class="icon" id="theme" aria-label="테마 바꾸기" title="테마 바꾸기">◐</button>
 </header>
 <div class="shell">
   <nav class="sidebar" id="sidebar" aria-label="설정 메뉴">
     <div class="navgroup">
       <h2>설정</h2>
-      <ul><li><a href="/settings/agents/" class="on" aria-current="page">에이전트 연결</a></li><li><a href="#auto-notes">자동 메모</a></li><li><a href="#webhooks">웹훅</a></li><li><a href="/agent-journal/">작업 기록 보기</a></li></ul>
+      <ul><li><a href="/settings/agents/" class="on" aria-current="page">에이전트 연결</a></li><li><a href="#webhooks">웹훅</a></li><li><a href="/agent-journal/">작업 기록 보기</a></li></ul>
     </div>
     <div class="navgroup">
       <h2>노트</h2>
       <ul>
-        <li><a href="/">읽기 화면</a></li>
+        <li><a href="/home/">읽기 화면</a></li>
         <li><a href="/settings">계정 설정 (이름·주소)</a></li>
         <li><a href="/edit/home/">고치기</a></li>
       </ul>
@@ -70,11 +70,7 @@
       </div>
     </section>
 
-    <section class="ag-section" id="auto-notes" aria-labelledby="h-auto">
-      <h2 id="h-auto" class="ag-h2">자동 메모</h2>
-      <p class="ag-help">Claude Code와 Codex가 대화가 끝날 때마다 프로젝트(저장소)별 메모를 남겨요. 켜려면 터미널에서 <code>npx https://notes.example.com/acard-cli.tgz hooks install</code></p>
-      <div id="auto-notes-panel"><p class="ag-help">불러오는 중…</p></div>
-    </section>
+
 
     <section class="ag-section" aria-labelledby="h-grants">
       <h2 id="h-grants" class="ag-h2">로그인으로 연결된 앱</h2>
@@ -115,22 +111,12 @@
     <section class="ag-section" aria-labelledby="h-connect">
       <h2 id="h-connect" class="ag-h2">연결 방법</h2>
       <p class="ag-help">쓰는 앱을 고르면 설정 방법이 나와요. 설정 속 &lt;TOKEN&gt; 자리에 위에서 만든 토큰을 넣어요.</p>
+      <h3 class="ag-h3" id="h-grades">앱마다 되는 정도</h3>
+      <div class="ag-grades-wrap"><table class="ag-lat ag-grades" id="app-grades" aria-labelledby="h-grades"></table></div>
       <div class="ag-chips" id="client-picker" role="tablist" aria-label="앱 고르기"></div>
       <div class="ag-detail" id="client-detail" role="tabpanel" tabindex="0"></div>
     </section>
 
-    <section class="ag-section" id="instructions" aria-labelledby="h-rule">
-      <h2 id="h-rule" class="ag-h2">개인 지침에 붙여 넣을 한 줄</h2>
-      <p class="ag-help">쓰는 도구의 지침 자리에 붙여 넣으면 대화할 때마다 노트가 알아서 정리돼요.</p>
-      <div class="ag-token-row"><input class="ag-token" id="mcp-rule" readonly aria-label="개인 지침 문구"><button type="button" class="ag-btn ag-primary" id="mcp-rule-copy">복사</button></div>
-      <ul class="ag-help ag-where">
-        <li><b>Claude Desktop</b> 설정 &gt; 프로필(또는 프로젝트 지침)</li>
-        <li><b>ChatGPT</b> 설정 &gt; 개인 맞춤 설정 &gt; 맞춤형 지침</li>
-        <li><b>Claude Code</b> ~/.claude/CLAUDE.md (모든 프로젝트) 또는 프로젝트의 CLAUDE.md</li>
-        <li><b>Codex CLI</b> ~/.codex/AGENTS.md (모든 프로젝트) 또는 프로젝트의 AGENTS.md</li>
-        <li><b>Codex 앱</b> 설정 &gt; 개인 맞춤 설정 &gt; 맞춤 지침 (~/.codex/AGENTS.md 와 같은 파일이라 저장하면 그 파일을 덮어써요)</li>
-      </ul>
-    </section>
 
     <section class="ag-section" aria-labelledby="h-other">
       <h2 id="h-other" class="ag-h2">다른 방법</h2>
@@ -148,6 +134,5 @@
 </div>
 <div class="ag-toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/agents.js"></script>
-<link rel="stylesheet" href="/lazy/projects.css?v=__PROJECTS_CSS__"><script src="/lazy/projects.js?v=__PROJECTS_JS__" defer></script>
 </body>
 </html>

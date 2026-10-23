@@ -1065,6 +1065,7 @@
         cards ? { separator: true } : null,
         { label: subitems() ? "하위 항목 끄기" : "하위 항목 켜기", ico: "↳", run: function () { switchSubitems(!subitems()); } },
         subitems() && view.type === "table" ? { label: "하위 항목: " + (view.config.subitems === "flat" ? "평평" : "중첩"), ico: "≡", run: function () { saveView({ subitems: view.config.subitems === "flat" ? null : "flat" }).then(render); } } : null,
+        { label: "CSV로 내보내기", ico: "⤓", run: exportCsv },
         { separator: true },
         state.views.length > 1 ? { label: "뷰 삭제", ico: "✕", run: function () {
           if (!window.confirm(view.name + " 뷰를 지울까요?")) return;
@@ -1350,100 +1351,14 @@
       return bar;
     }
 
-    function filterEditor(anchor) {
-      var view = currentView();
-      var draft = view.config.filter && view.config.filter.property ? view.config.filter : null;
-      var wrap = el("div", { class: "dbaddbox" });
-      var propSelect = el("select", { class: "dbselect" });
-      state.properties.forEach(function (prop) {
-        propSelect.appendChild(el("option", { value: prop.id, text: prop.name, selected: draft && draft.property === prop.id }));
-      });
-      var opSelect = el("select", { class: "dbselect" });
-      var valueInput = el("input", { class: "dburl", placeholder: "값", value: draft ? String(draft.value === undefined || draft.value === null ? "" : draft.value) : "" });
-      var valueWrap = el("div", { class: "dboptlist" });
-      var draftRelative = draft && draft.value && typeof draft.value === "object" ? String(draft.value.relative || "").split(":") : [];
-      var periodSelect = el("select", { class: "dbselect dbperiod", "aria-label": "기간" });
-      (MODEL.RELATIVE_DATES || []).forEach(function (entry) {
-        periodSelect.appendChild(el("option", { value: entry.id, text: entry.label, selected: draftRelative[0] === entry.id }));
-      });
-      var daysInput = el("input", { class: "dburl dbperioddays", type: "number", min: "1", max: "3650", "aria-label": "일 수", value: draftRelative[1] || "7" });
-      var periodWrap = el("div", { class: "dbrow2 dbperiodrow" }, [periodSelect, daysInput]);
-      function paintPeriod() {
-        var within = opSelect.value === "is_within";
-        periodWrap.hidden = !within;
-        valueInput.hidden = within;
-        valueWrap.hidden = within;
-        daysInput.hidden = !/_days$/.test(periodSelect.value);
-      }
-      opSelect.addEventListener("change", paintPeriod);
-      periodSelect.addEventListener("change", paintPeriod);
-      function currentProp() {
-        return state.properties.find(function (entry) { return entry.id === propSelect.value; }) || state.properties[0];
-      }
-      function paintOps() {
-        opSelect.innerHTML = "";
-        MODEL.filterOperatorsFor(currentProp().type).forEach(function (operator) {
-          var label = (MODEL.FILTER_OPERATORS.find(function (entry) { return entry.id === operator; }) || {}).label || operator;
-          opSelect.appendChild(el("option", { value: operator, text: label, selected: draft && draft.operator === operator }));
-        });
-        paintValues();
-        paintPeriod();
-      }
-      function paintValues() {
-        valueWrap.innerHTML = "";
-        var prop = currentProp();
-        var options = (prop.config.options || []);
-        if (prop.type === "select" || prop.type === "status" || prop.type === "multi_select") {
-          options.forEach(function (option) {
-            var button = el("button", { type: "button", class: "dbopt" + (draft && draft.value === option.id ? " on" : ""), text: option.name });
-            button.addEventListener("click", function () { valueInput.value = option.id; });
-            valueWrap.appendChild(button);
-          });
-        }
-        if (prop.type === "person") {
-          var seen = {};
-          state.rows.forEach(function (row) { ((row.props || {})[prop.id] || []).forEach(function (email) { seen[email] = true; }); });
-          Object.keys(seen).sort().forEach(function (email) {
-            var button = el("button", { type: "button", class: "dbopt" + (draft && draft.value === email ? " on" : ""), text: email });
-            button.addEventListener("click", function () { valueInput.value = email; });
-            valueWrap.appendChild(button);
-          });
-        }
-        if (prop.type === "date" || prop.type === "created_time" || prop.type === "updated_time") {
-          var today = new Date().toISOString().slice(0, 10);
-          var quick = el("button", { type: "button", class: "dbopt", text: "오늘" });
-          quick.addEventListener("click", function () { valueInput.value = today; });
-          valueWrap.appendChild(quick);
-        }
-      }
-      propSelect.addEventListener("change", paintOps);
-      paintOps();
-      wrap.appendChild(el("label", { class: "dblabel", text: "속성" }));
-      wrap.appendChild(propSelect);
-      wrap.appendChild(el("label", { class: "dblabel", text: "조건" }));
-      wrap.appendChild(opSelect);
-      wrap.appendChild(el("label", { class: "dblabel", text: "값" }));
-      wrap.appendChild(valueInput);
-      wrap.appendChild(valueWrap);
-      wrap.appendChild(periodWrap);
-      var box = popover(anchor, wrap);
-      var row = el("div", { class: "dbrow2" });
-      var apply = el("button", { type: "button", class: "dbprimary", text: "적용" });
-      apply.addEventListener("click", function () {
-        var prop = currentProp();
-        var value = valueInput.value;
-        if (prop.type === "number") value = value === "" ? null : Number(value);
-        if (prop.type === "date") value = value || null;
-        if (opSelect.value === "is_within") value = { relative: /_days$/.test(periodSelect.value) ? periodSelect.value + ":" + Math.max(1, Math.min(3650, Math.trunc(Number(daysInput.value) || 7))) : periodSelect.value };
-        box.remove();
-        saveView({ filter: { property: propSelect.value, operator: opSelect.value, value: value } }).then(render);
-      });
-      var clear = el("button", { type: "button", class: "dbtool", text: "지우기" });
-      clear.addEventListener("click", function () { box.remove(); saveView({ filter: null }).then(render); });
-      row.appendChild(apply);
-      row.appendChild(clear);
-      box.appendChild(row);
+    function dbTools() {
+      var load = window.AcardDbTools ? Promise.resolve() : chunk("db-tools", "__DB_TOOLS_JS__", "__DB_TOOLS_CSS__");
+      return load.then(function () { return window.AcardDbTools({ currentView: currentView, el: el, popover: popover, saveView: saveView, render: render, state: state, MODEL: MODEL, visibleProps: visibleProps, filteredRows: filteredRows, values: values }); });
     }
+
+    function filterEditor(anchor) { dbTools().then(function (tools) { tools.filterEditor(anchor); }); }
+
+    function exportCsv() { dbTools().then(function (tools) { tools.exportCsv(); }); }
 
     function sortEditor(anchor) {
       var view = currentView();

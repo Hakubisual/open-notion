@@ -1,4 +1,4 @@
-(function(d,w){function c(h){if(!d.querySelector('[href="'+h+'"]')){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}}w.acardFont=function(f){(f=="serif"||f=="report")&&c("/fonts/serif.css")};d.querySelector('[data-font="serif"],[data-font="report"]')&&c("/fonts/serif.css");w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
+(function(d,w){function c(h){if(!d.querySelector('[href="'+h+'"]')){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}}w.acardFont=function(f){f=="serif"&&c("/fonts/serif.css")};d.querySelector('[data-font="serif"]')&&c("/fonts/serif.css");w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
 (function () {
   document.addEventListener("submit", function (event) {
     var form = event.target;
@@ -153,10 +153,10 @@
   function esc(t) { return String(t == null ? "" : t).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 
   function itemHtml(item, selected) {
-    return '<a role="option" href="/' + (item.slug === "index" ? "" : encodeURIComponent(item.slug) + "/") + '"' +
+    return '<a role="option" href="/' + (item.slug === "index" ? "home" : encodeURIComponent(item.slug)) + '/"' +
       (selected ? ' class="on"' : "") + ">" +
       "<span class=\"pt\">" + esc(item.title || item.slug) + "</span>" +
-      (item.kind === "db" ? '<span class=\"dbmark\">표</span>' : "") +
+      (item.kind === "db" ? '<span class=\"dbmark\">표</span>' : item.kind === "db_row" ? '<span class=\"dbmark\">표 행</span>' : "") +
       (item.snippet ? '<span class=\"ps\">' + esc(item.snippet) + "</span>" : "") +
       "</a>";
   }
@@ -197,7 +197,7 @@
       // The server already matched every word against the whole page; the snippet shows only the first word's spot.
       var hits = (data.results || []).filter(function (hit) { return !seen[hit.slug]; }).map(function (hit) {
         var text = hit.hit || "";
-        return { slug: hit.slug, title: hit.title, snippet: text.length > 90 ? text.slice(0, 90) + "…" : text };
+        return { slug: hit.slug, title: hit.title, kind: hit.kind, snippet: text.length > 90 ? text.slice(0, 90) + "…" : text };
       });
       paletteItems = paletteItems.concat(markRecents(hits));
       if (!paletteItems.length) {
@@ -230,7 +230,7 @@
     var item = paletteItems[paletteSel];
     if (!item) return;
     closePalette();
-    var url = "/" + (item.slug === "index" ? "" : encodeURIComponent(item.slug) + "/");
+    var url = "/" + (item.slug === "index" ? "home" : encodeURIComponent(item.slug)) + "/";
     if (window.AcardReader.navigate) window.AcardReader.navigate(url); else location.href = url;
   }
   var paletteOpenBtn = document.getElementById("palette-open");
@@ -484,7 +484,7 @@
   var title = document.getElementById("sidepanel-title");
   var list = document.getElementById("sidepanel-list");
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-  function href(slug) { return slug === "index" ? "/" : "/" + encodeURIComponent(slug) + "/"; }
+  function href(slug) { return slug === "index" ? "/home/" : "/" + encodeURIComponent(slug) + "/"; }
   function show(name, items, empty) {
     if (!panel) return;
     title.textContent = name;

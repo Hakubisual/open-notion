@@ -1,7 +1,8 @@
-# Client install
+# Join a team server
 
-You need the address of an Acard server on your network and its password. Ask whoever set it up
-(see [install-server.md](install-server.md)). The address looks like `http://192.168.0.10:47811`.
+This guide connects you to an Acard server someone on your team runs. You need its address and its password. Ask
+whoever set it up (see [install-server.md](install-server.md)). Using Acard alone on your own computer instead? See
+[install-user.md](install-user.md). The address looks like `http://192.168.0.10:47811`.
 
 There are two ways to connect. Both show exactly the same app.
 
@@ -35,13 +36,16 @@ Uninstall on Windows from *Settings → Apps → Installed apps → Acard Local*
 
 ### First start: connect to your server
 
-1. Open **Acard Local**. The first screen asks for the server address.
+1. Open **Acard Local**. The first screen has two choices: **Use on this computer** and **Connect to a team server**.
+   Choose **Connect to a team server**; the address form opens.
 2. Type the address, for example `192.168.0.10:47811` (`http://` is added for you) and press **Connect**.
    The app checks that an Acard server answers there before it continues.
 3. The server's sign-in page opens. Enter the server password.
 4. Your workspace opens. Next time the app goes straight to it.
 
-To switch servers, use the menu **Server → Change server…** (or press `Ctrl+Shift+S` / `Cmd+Shift+S`).
+To switch servers, use the menu **Server → Change server…** (or press `Ctrl+Shift+S` / `Cmd+Shift+S`). The same
+menu has **Use on this computer** and **Connect to a team server…**. If you saved a server address in v0.2, the app
+keeps connecting to it.
 Links that point outside your server open in your normal browser.
 
 ### Build the desktop app from source

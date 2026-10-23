@@ -65,7 +65,8 @@ async function hasValidTicket(request, secret) {
 
 function safeNext(value) {
   if (typeof value !== "string") return "/";
-  if (!value.startsWith("/") || value.startsWith("//")) return "/";
+  // A backslash or control character turns "/\evil.test" into "//evil.test" in browsers.
+  if (!value.startsWith("/") || value.startsWith("//") || /[\\\u0000-\u001f\u007f]/.test(value)) return "/";
   return value;
 }
 
@@ -124,6 +125,8 @@ async function missingPageHint(db, error, slug) {
 //__NOTION_IMPORT__
 
 //__NOTION_EXPORT__
+
+//__IMPORT_CORE__
 
 function loginPage(message, next) {
   return [
@@ -248,6 +251,8 @@ async function createSchema(db) {
     // #86: 템플릿 값을 마지막으로 저장한 사람(kind owner | guest | legacy). 손님은 공유 세션(token_hash)·이메일과 저장할 때 편집할 수
     // 있던 페이지(roles, {slug: edit|full}). blocked 는 연결 직전 권한 검사가 멈춘 이유(값을 다시 저장할 때까지 그대로).
     db.prepare("CREATE TABLE IF NOT EXISTS db_template_savers (template_id TEXT PRIMARY KEY, kind TEXT NOT NULL, session TEXT, email TEXT, roles TEXT, saved INTEGER NOT NULL, blocked TEXT, blocked_at INTEGER)"),
+    // #107: 버튼 동작을 마지막으로 저장한 사람(kind owner | guest). button = prop:<속성 id> 또는 block:<페이지>:<블록 id>.
+    db.prepare("CREATE TABLE IF NOT EXISTS db_button_savers (button TEXT PRIMARY KEY, kind TEXT NOT NULL, session TEXT, email TEXT, roles TEXT, saved INTEGER NOT NULL)"),
   ]);
   // 반복 템플릿(C5): 예전 저장소에도 열을 더한다(이미 있으면 duplicate column 오류를 무시).
   await db.prepare("ALTER TABLE db_templates ADD COLUMN recurrence TEXT").run().catch(() => {});
@@ -388,11 +393,12 @@ async function importMarkdown(request, db) {
   if (files.length > 40) warnings.push("한 번에 40개까지만 가져올 수 있어 나머지는 건너뛰었어요.");
   return json({ ok: true, imported: created.length, pages: created, skipped: [], warnings });
 }
-async function exportPage(db, url) {
+async function exportPage(db, url, env) {
   const format = (url.searchParams.get("format") ?? "md").toLowerCase();
   const scope = url.searchParams.get("scope") ?? "page";
 
   if (scope === "all" || format === "zip") {
+    if (ACARD_FEATURES.services.exportZip) return await ACARD_FEATURES.services.exportZip(db, env);
     const rows = await db.prepare("SELECT slug, title FROM pages ORDER BY ord, title").all();
     const list = [];
     for (const row of rows.results ?? []) {
@@ -457,11 +463,13 @@ async function readPageOnce(db, slug) {
   return [page, { results: parseJson(p_blocks, []) }, editorPageMeta(rest)];
 }
 
+const PAGE_BLOCKS_READ = "SELECT id, type, text, checked, indent, meta FROM blocks WHERE page = ? ORDER BY ord";
+
 async function readPage(db, slug, initial) {
   // One round trip on a member workspace store (gate/tenancy.ts sends same-tick statements together).
   const [page, rows, meta] = !initial && db.dialect === "pg" ? await readPageOnce(db, slug) : await Promise.all([
     initial ? initial.page : db.prepare("SELECT slug, title, parent, ord, kind, updated, source FROM pages WHERE slug = ?").bind(slug).first(),
-    db.prepare("SELECT id, type, text, checked, indent, meta FROM blocks WHERE page = ? ORDER BY ord").bind(slug).all(),
+    initial && initial.rows ? initial.rows : db.prepare(PAGE_BLOCKS_READ).bind(slug).all(),
     initial ? initial.meta : readEditorPageMeta(db, slug),
   ]);
   if (meta.trashed || !page) return null;
@@ -524,13 +532,28 @@ function linksOf(blocks) {
     else if (typeof run.href === "string" && /^\/[^/]+\/$/.test(run.href)) found.add(decodeURIComponent(run.href.slice(1, -1)));
   }
   const text = blocks.map((block) => block.text).join("\n");
-  for (const match of text.matchAll(/\[\[([^\]\s]+)\]\]/g)) found.add(match[1]);
+  for (const match of text.matchAll(WIKI_LINK)) {
+    const link = wikiTarget(match[1], null);
+    if (link) found.add(link.slug);
+  }
   for (const match of text.matchAll(/\]\(\/([^)\s#?]+?)\/?\)/g)) {
     const slug = match[1];
     if (slug && !slug.includes("/")) found.add(slug);
   }
   return [...found];
 }
+
+// [[페이지 제목]] 은 이 워크스페이스 DB 의 페이지로 풀어 links 에 더한다. 모든 저장 경로가 afterSave 를 거치므로 여기서 한 번에 한다.
+async function linkWikiTitles(db, slug, blocks) {
+  const raws = blocks.flatMap((block) => [...String(block.text ?? "").matchAll(WIKI_LINK)].map((match) => match[1]));
+  if (!raws.length) return;
+  const rows = await db.prepare("SELECT slug, title, updated FROM pages WHERE kind != 'db_row' AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = pages.slug)").all();
+  const index = wikiIndex(rows.results ?? []);
+  const known = new Set(linksOf(blocks));
+  const found = new Set(raws.map((raw) => wikiTarget(raw, index)?.slug).filter((dst) => dst && index.slugs.has(dst) && !known.has(dst)));
+  if (found.size) await db.batch([...found].map((dst) => db.prepare("INSERT OR IGNORE INTO links (src, dst) VALUES (?, ?)").bind(slug, dst)));
+}
+registerFeature({ afterSave: linkWikiTitles });
 
 // extra.before / extra.after ride in the same transaction as the blocks, so a page row and its blocks land together or not at all.
 async function saveBlocks(db, slug, blocks, extra) {
@@ -653,8 +676,26 @@ function scopedId(databaseId, local) {
 }
 
 // db_ref 의 meta.html 은 서버가 렌더해 넣는 값이다. 클라이언트가 보낸 html 은 신뢰하지 않는다.
+// issue 144: a plugin block keeps only its plugin/block ids, a caption and a snapshot the plugin UI checker accepts
+// (no HTML, capped), so a stored snapshot can never put markup or script on a public page.
+const PLUGIN_SNAPSHOT_MAX = 32 * 1024;
+function cleanPluginMeta(meta) {
+  const out = {};
+  if (typeof meta.plugin === "string" && /^[a-z][a-z0-9-]{1,39}$/.test(meta.plugin)) out.plugin = meta.plugin;
+  if (typeof meta.block === "string" && /^[a-z][a-z0-9-]{0,39}$/.test(meta.block)) out.block = meta.block;
+  if (typeof meta.caption === "string" && meta.caption) out.caption = meta.caption.slice(0, 200);
+  const snap = meta.snapshot;
+  if (snap && typeof snap === "object" && !Array.isArray(snap)) {
+    const checked = checkTree(snap.tree ?? null);
+    const kept = checked.tree && checked.tree.children.length ? { name: String(snap.name ?? out.plugin ?? "").slice(0, 40), tree: checked.tree.children } : null;
+    if (kept && new TextEncoder().encode(JSON.stringify(kept)).length <= PLUGIN_SNAPSHOT_MAX) out.snapshot = kept;
+  }
+  return out;
+}
+
 function cleanMeta(type, meta) {
   if (!meta || typeof meta !== "object") return meta || null;
+  if (type === "plugin") return cleanPluginMeta(meta);
   if (type !== "db_ref") return meta;
   const out = Object.assign({}, meta);
   delete out.html;
@@ -1272,23 +1313,31 @@ async function templateSaverReason(db, database, properties, saver, props) {
   }).filter((entry) => entry.ids.length);
   if (!saver || saver.kind === "legacy") return linked.length && await guestEverEdited(db, database.slug) ? "legacy" : null;
   if (saver.kind === "owner") return null;
+  const resolved = await guestSaverRoles(db, saver);
+  if (resolved.reason) return resolved.reason;
+  const as = { prepare: (sql) => db.prepare(sql), batch: (list) => db.batch(list), dialect: db.dialect, acardKey: db.acardKey, acardRoles: resolved.roles };
+  if (!canWriteSlug(as, database.slug)) return "database";
+  for (const { pair, ids } of linked) {
+    if (await relationChangeDenied(as, pair, null, ids)) return "rows";
+  }
+  return null;
+}
+
+// 손님이 저장한 값(템플릿·버튼 동작)의 권한: 저장할 때 편집할 수 있던 페이지와 지금 편집할 수 있는 페이지의 교집합(edit|full 만).
+// 기록을 못 읽으면 { reason: "unreadable" }, 세션이 끝났거나 지워졌으면 { reason: "session" }.
+async function guestSaverRoles(db, saver) {
   let saved = null;
   try { saved = saver.kind === "guest" ? JSON.parse(String(saver.roles)) : null; } catch { saved = null; }
-  if (!saved || typeof saved !== "object" || Array.isArray(saved) || !saver.session || !saver.email) return "unreadable";
+  if (!saved || typeof saved !== "object" || Array.isArray(saved) || !saver.session || !saver.email) return { reason: "unreadable" };
   const roleMap = ACARD_FEATURES.services.guestRoles ? await ACARD_FEATURES.services.guestRoles(db, String(saver.session), String(saver.email)) : null;
-  if (!roleMap) return "session";
+  if (!roleMap) return { reason: "session" };
   const roles = new Map();
   for (const [slug, role] of Object.entries(saved)) {
     const now = roleMap.get(slug) || "none";
     const narrower = WRITE_ROLES.indexOf(now) < 0 ? "none" : WRITE_ROLES.indexOf(String(role)) < WRITE_ROLES.indexOf(now) ? String(role) : now;
     if (WRITE_ROLES.includes(narrower)) roles.set(slug, narrower);
   }
-  const as = { prepare: (sql) => db.prepare(sql), batch: (list) => db.batch(list), dialect: db.dialect, acardKey: db.acardKey, acardRoles: roles };
-  if (!canWriteSlug(as, database.slug)) return "database";
-  for (const { pair, ids } of linked) {
-    if (await relationChangeDenied(as, pair, null, ids)) return "rows";
-  }
-  return null;
+  return { roles };
 }
 
 // 템플릿 값의 저장 형태(#86): 키는 속성 id 만, 관계 값은 연결할 행 id 목록(limit 1 이면 마지막 하나)이다. 템플릿 POST·PATCH 가
@@ -1614,6 +1663,15 @@ async function enableRelationPair(db, database, current, next, options) {
   return { property: next, pair };
 }
 
+// #107: 이 양방향 관계(양쪽 속성)의 연결에 걸린 행을 모두 편집할 수 있으면 null, 아니면 401 오류 객체.
+async function assertCanWriteLinkedRows(db, prop, error) {
+  if (!db.acardRoles) return null;
+  const ids = String(prop.config.pair || "") ? [prop.id, String(prop.config.pair)] : [prop.id];
+  const marks = ids.map(() => "?").join(", ");
+  const rows = (await db.prepare("SELECT src_row AS id FROM db_relation_links WHERE prop_id IN (" + marks + ") UNION SELECT dst_row AS id FROM db_relation_links WHERE prop_id IN (" + marks + ")").bind(...ids, ...ids).all()).results ?? [];
+  return await assertCanWriteRows(db, rows.map((row) => String(row.id)), error);
+}
+
 // 양방향 끄기: 엣지·잠금 줄을 지우고, dropPair 면 짝 속성도 지운다. 아니면 짝은 단방향으로 남는다(값은 캐시 그대로).
 async function disableRelationPairStatements(db, current, dropPair) {
   // #86: 짝은 상대 DB 에 있고 이 속성을 되가리키는 속성일 때만 짝이다. 아니면 이 속성의 엣지만 지운다.
@@ -1714,6 +1772,12 @@ async function saveProperties(db, databaseId, list) {
   const idMap = new Map();
   normalised.forEach((prop) => idMap.set(prop.id, scopedId(databaseId, prop.id)));
   const statements = [db.prepare("DELETE FROM db_properties WHERE database_id = ?").bind(databaseId)];
+  // #107: 버튼 동작은 다른 저장 경로와 같은 검사를 거친다(대상 DB 를 편집할 수 없으면 동작을 버리고, 저장한 사람을 기록한다).
+  for (const prop of normalised) {
+    if (prop.type !== "button" || !prop.config.actions.length) continue;
+    prop.config = Object.assign({}, prop.config, { actions: (await buttonActionsAllowed(db, prop.config.actions)) || [] });
+    if (prop.config.actions.length) statements.push(buttonSaverStatement(db, propButtonKey(idMap.get(prop.id))));
+  }
   normalised.forEach((prop) => {
     const config = Object.assign({}, prop.config);
     if (prop.type === "rollup" && idMap.has(config.relation_property)) config.relation_property = idMap.get(config.relation_property);
@@ -2080,8 +2144,7 @@ function pageShell(page, blocks, pages, extras, settings = {}) {
   const ctx = { page: page, pages: pages ?? [] };
   const tagRow = page.ws === "guest" || page.slug === "index" ? "" : '<div class="fd-headtags" id="fd-headtags"></div>';
   const report = isReportPage(settings);
-  // Report style: the date line is the eyebrow above the title, like the reference page.
-  const heading = report ? bylineHtml(page) + "<h1>" + escapeHtml(page.title) + "</h1>" + tagRow : "<h1>" + escapeHtml(page.title) + "</h1>" + tagRow + bylineHtml(page);
+  const heading = "<h1>" + escapeHtml(page.title) + "</h1>" + tagRow + bylineHtml(page);
   let top = heading;
   let body;
   if (extra.dbHtml) {
@@ -2123,7 +2186,7 @@ function pageShell(page, blocks, pages, extras, settings = {}) {
     '<link rel="stylesheet" href="/editor.css">',
     '<link rel="stylesheet" href="/db.css">',
     '<link rel="stylesheet" href="/acard-shell.css"><link rel="stylesheet" href="/acard-page.css"><link rel="stylesheet" href="/acard-body.css"><link rel="stylesheet" href="/acard-table.css"><link rel="stylesheet" href="/acard-mobile.css">',
-    report ? '<link rel="stylesheet" href="/tokens-report.css"><style>' + REPORT_CSS + "</style>" : "",
+    report ? "<style>" + REPORT_CSS + "</style>" : "",
     //__READER_FEATURE_CSS__
     "</head>",
     '<body class="reader"' + (page.readOnly ? ' data-readonly="1"' : "") + ">",
@@ -2735,11 +2798,13 @@ function moreMenu(slug, viewMode) {
     '<div class="menu" id="more-menu" hidden>',
     viewMode ? '<button type="button" class="menuitem" data-fv-mode="' + (viewMode === "folder" ? "article" : "folder") + '">' + (viewMode === "folder" ? "글로 보기" : "폴더로 보기") + "</button>" : "",
     '<div class="menu-width"></div>',
-    '<a href="/print/' + q + '/" target="_blank" rel="noopener">인쇄 · PDF로 저장</a>',
+    '<button type="button" class="menuitem" id="print-pdf">PDF로 저장</button>',
+    '<a href="/print/' + q + '/" target="_blank" rel="noopener">인쇄용 화면</a>',
     '<a href="/api/export?slug=' + q + '&format=acard-md" download="' + escapeHtml(slug) + '.md">마크다운으로 내보내기</a>',
     '<a href="/api/export?slug=' + q + '&format=md" download="' + escapeHtml(slug) + '.notion.md">노션용 마크다운으로 내보내기</a>',
     '<a href="/api/export?slug=' + q + '&format=html" download="' + escapeHtml(slug) + '.html">HTML로 내보내기</a>',
     '<a href="/api/export?scope=all&format=zip" download="acard.zip">전체 노트 내보내기 (zip)</a>',
+    '<a class="menuitem" href="/graph?around=' + q + '">그래프 보기</a>',
     '<button type="button" class="menuitem" id="shortcuts-open">키보드 단축키</button>',
     '<button type="button" class="menuitem" id="quick-note-open">빠른 메모</button>',
     "</div>",
@@ -2778,8 +2843,8 @@ function printShell(page, blocks) {
     ".toggle{margin:6px 0}",
     ".toggle summary{font-weight:600}",
     "hr{border:0;border-top:1px solid #ccc;margin:18px 0}",
-    // Evidence labels keep their colors on paper (no tokens on this page).
-    ".ev{--fs-11:8pt;--radius-pill:999px;--space-2:6px;--font-mono:ui-monospace,Consolas,monospace;--rp-measured-bg:#edf3ec;--rp-measured-fg:#346538;--rp-claimed-bg:#fbf3db;--rp-claimed-fg:#956400;--rp-estimated-bg:#e1f3fe;--rp-estimated-fg:#1f6c9f;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
+    // Evidence labels keep their colors on paper (no tokens on this page): the light success/warning/info tones.
+    ".ev{--fs-11:8pt;--radius-pill:999px;--space-2:6px;--color-success-bg:#edf3ec;--color-success-fg:#346538;--color-warning-bg:#fbf3db;--color-warning-fg:#956400;--color-info-bg:#e1f3fe;--color-info-fg:#1f6c9f;-webkit-print-color-adjust:exact;print-color-adjust:exact}",
     ".backlinks{margin-top:26px;padding-top:10px;border-top:1px solid #ddd;font-size:9.5pt;color:#666}",
     ".bar{position:sticky;top:0;display:flex;gap:10px;align-items:center;justify-content:flex-end;padding:8px 12px;background:#fff;border-bottom:1px solid #eee}",
     ".bar a,.bar button{font:inherit;font-size:10pt;color:#333;background:#f4f4f4;border:1px solid #ddd;border-radius:999px;padding:5px 12px;cursor:pointer;text-decoration:none}",
@@ -2809,6 +2874,13 @@ const API = "/api";
 
 export default {
   async fetch(request, env) {
+    // acard-home-first: on notes.example.com "/" is the landing for everyone, so the workspace home also lives at /home/. Every
+    // edition reads /home/ exactly as "/" (same asset, same row), so in-app links can name /home/ everywhere.
+    if ((request.method === "GET" || request.method === "HEAD") && /^\/home\/?$/.test(new URL(request.url).pathname)) {
+      const home = new URL(request.url);
+      home.pathname = "/";
+      request = new Request(home, request);
+    }
     const url = new URL(request.url);
     const password = env.GATE_PASSWORD;
     const secret = env.GATE_SECRET;
@@ -2931,8 +3003,7 @@ export default {
     }
 
     if (isEditor) {
-      await ensureSchema(db);
-      const asset = await env.ASSETS.fetch(new Request(new URL("/editor.html", request.url)));
+      const [, asset] = await Promise.all([ensureSchema(db), env.ASSETS.fetch(new Request(new URL("/editor.html", request.url)))]);
       if (!asset.ok) return new Response("에디터를 찾을 수 없어요.", { status: 500 });
       if (!isGuest(env)) return new Response((await asset.text()).replace("</body>", FOLDERS_TAG + "</body>"), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } });
       return new Response((await asset.text()).replace("</body>", LIVE_TAG + "</body>"), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } });
@@ -2952,31 +3023,40 @@ export default {
       response.headers.set("server-timing", ["reader;dur=" + (performance.now() - readerStarted).toFixed(2), ...stages].join(", "));
       return response;
     };
+    const pageMatch = /^\/([^/]+)\/?$/.exec(url.pathname) || (url.pathname === "/" ? ["/", "index"] : null);
+    // Schema setup (memoised per isolate) runs while the asset is fetched for a page-shaped path (not /style.css and the
+    // like); a failure is thrown inside the try below as before.
+    const schemaReady = db && pageMatch && !/\.[a-z0-9]{1,8}$/i.test(url.pathname) ? ensureSchema(db).then(() => null, (error) => error || new Error("schema")) : null;
     const asset = await env.ASSETS.fetch(request);
     stage("assets");
-    const pageMatch = /^\/([^/]+)\/?$/.exec(url.pathname) || (url.pathname === "/" ? ["/", "index"] : null);
     const isHtml = asset.ok && /^text\/html/.test(asset.headers.get("content-type") ?? "");
     if (db && pageMatch && (asset.status === 404 || isHtml)) {
       try {
-        await ensureSchema(db);
+        const schemaError = await (schemaReady ?? ensureSchema(db).then(() => null));
+        if (schemaError) throw schemaError;
         const slug = resolveSlug(decodeURIComponent(pageMatch[1]));
         // #39: a copied or agent-made address (NFD Hangul, encoded twice) goes to the page it names.
         const canonical = pageRef(pageMatch[1]);
         if (canonical !== slug && request.method === "GET" && await db.prepare("SELECT slug FROM pages WHERE slug = ? AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page = pages.slug)").bind(canonical).first()) {
           return new Response(null, { status: 301, headers: { location: "/" + encodeURIComponent(canonical) + "/" + url.search, "cache-control": "no-store" } });
         }
-        if (isMember(env) && slug === "index") await ensureMemberHome(db);
         const welcome = slug === "index" && isHtml && ACARD_FEATURES.services.homeWelcome ? await ACARD_FEATURES.services.homeWelcome(db) : "";
         if (welcome) return new Response((await asset.text()).replace('<article id="article">', '<article id="article">' + welcome).replace("</body>", (isGuest(env) ? "" : FOLDERS_TAG + (isMember(env) ? HOME_TAG : "")) + "</body>"), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } });
-        const [row, appearance] = await Promise.all([
-          db.prepare("SELECT slug, title, parent, ord, kind, updated, source FROM pages WHERE slug = ?").bind(slug).first(),
-          readEditorPageMeta(db, slug),
-        ]);
+        // A page with no build asset can only come from the DB, so its blocks travel with the row and meta (one round trip
+        // on a member store, one statement on Postgres); an owner build page reads blocks only once it knows it needs them.
+        const pageRead = async () => {
+          if (isHtml) return [...await Promise.all([db.prepare("SELECT slug, title, parent, ord, kind, updated, source FROM pages WHERE slug = ?").bind(slug).first(), readEditorPageMeta(db, slug)]), null];
+          if (db.dialect === "pg") { const [page, rows, meta] = await readPageOnce(db, slug); return [page, meta, rows]; }
+          return Promise.all([db.prepare("SELECT slug, title, parent, ord, kind, updated, source FROM pages WHERE slug = ?").bind(slug).first(), readEditorPageMeta(db, slug), db.prepare(PAGE_BLOCKS_READ).bind(slug).all()]);
+        };
+        let [row, appearance, blockRows] = await pageRead();
+        // The member home is only re-made (a round trip plus quota-counted writes) when it is missing or in the trash.
+        if (isMember(env) && slug === "index" && (!row || appearance.trashed)) { await ensureMemberHome(db); [row, appearance, blockRows] = await pageRead(); }
         stage("metadata");
         if (appearance.trashed) return readerResponse(new Response(missingPageHtml(slug, true), { status: 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } }));
         const liveDatabase = row && slug === "board" && row.kind === "db" && await db.prepare("SELECT id FROM databases WHERE slug = ?").bind(slug).first();
         if (row && (slug === "board" && row.kind === "db" && !isGuest(env) ? liveDatabase : (isGuest(env) || row.source === "editor" || appearance.settings.icon || appearance.settings.cover || appearance.settings.font !== "default" || appearance.settings.width !== "default"))) {
-          const found = await readPage(db, slug, { page: row, meta: appearance });
+          const found = await readPage(db, slug, { page: row, meta: appearance, rows: blockRows });
           stage("blocks");
           if (found) {
             if (isMember(env)) found.page.ws = "member";
@@ -3027,16 +3107,16 @@ function missingPageHtml(slug, trashed) {
   const body = trashed
     ? "<p>'" + escapeHtml(slug) + "' 페이지는 휴지통에 있어요. 휴지통에서 복원할 수 있어요.</p>"
     : "<p>'" + escapeHtml(slug) + "' 페이지가 지금 로그인한 워크스페이스에 없어요.</p><p>에이전트가 다른 워크스페이스(개인/팀)에 쓴 페이지일 수 있어요. 그 계정으로 로그인하거나, 에이전트 연결을 이 워크스페이스로 다시 맺어 주세요.</p>";
-  return '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>없는 페이지예요 · __SITE_NAME__</title><link rel="stylesheet" href="/style.css"></head><body><main id="main" class="missing" data-missing="' + escapeHtml(slug) + '"><h1>없는 페이지예요</h1>' + body + '<p><a href="/">홈으로</a> · <a href="/settings/agents/">에이전트 연결</a></p></main></body></html>';
+  return '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>없는 페이지예요 · __SITE_NAME__</title><link rel="stylesheet" href="/style.css"></head><body><main id="main" class="missing" data-missing="' + escapeHtml(slug) + '"><h1>없는 페이지예요</h1>' + body + '<p><a href="/home/">홈으로</a> · <a href="/settings/agents/">에이전트 연결</a></p></main></body></html>';
 }
 
 const AGENT_API = "/api/v1";
 const HOME_TAG = '<link rel="stylesheet" href="/lazy/ui-kit-css.css?v=__UI_KIT_CSS__"><link rel="stylesheet" href="/lazy/ui-home-css.css?v=__HOME_CSS__"><script src="/lazy/ui-home-js.js?v=__HOME_JS__" defer></script>';
-// Before first paint (#35): reserves the 프로젝트 sidebar section's last height (kept by lazy/projects.js, no names), and keeps the
+// Before first paint (#35): keeps the
 // server tree rows hidden until lazy/folders.js marks .side-ws as fd-host and swaps in its tree (3 s fallback), so no menu row ever moves.
-const PJ_SIDE_PH = '<style>.fd-wait .side-ws:not(.fd-host)>*{visibility:hidden}</style><script>var R=document.documentElement;R.classList.add("fd-wait");setTimeout(function(){R.classList.remove("fd-wait")},3e3);try{var id=(document.querySelector(\'meta[name="acard-id"]\')||{}).content,c=id&&JSON.parse(localStorage.getItem("acard-projects-side:"+id)),h=c&&c.epoch===(localStorage.getItem("acard-cache-epoch:"+id)||"")&&+c[innerWidth<900?"hm":"h"];h>0&&document.currentScript.insertAdjacentHTML("afterend",\'<div class="pj-side-ph" style="height:\'+h+\'px"></div>\')}catch(e){}</script>';
+const PJ_SIDE_PH = '<style>.fd-wait .side-ws:not(.fd-host)>*{visibility:hidden}</style><script>var R=document.documentElement;R.classList.add("fd-wait");setTimeout(function(){R.classList.remove("fd-wait")},3e3)</script>';
 const LIVE_TAG = '<script src="/lazy/live.js?v=__LIVE_JS__" defer></script>';
-const FOLDERS_TAG = '<link rel="stylesheet" href="/lazy/folders.css?v=__FOLDERS_CSS__"><script src="/lazy/folders.js?v=__FOLDERS_JS__" defer></script><link rel="stylesheet" href="/lazy/projects.css?v=__PROJECTS_CSS__"><script src="/lazy/projects.js?v=__PROJECTS_JS__" defer></script>' + LIVE_TAG;
+const FOLDERS_TAG = '<link rel="stylesheet" href="/lazy/folders.css?v=__FOLDERS_CSS__"><script src="/lazy/folders.js?v=__FOLDERS_JS__" defer></script>' + LIVE_TAG;
 
 // Per-page agent rules (features/share.js) only narrow the token's scopes. A token narrowed to nothing on the page
 // it names gets 403, never a widened scope.
@@ -3257,6 +3337,77 @@ function resolveButtonValues(values, ctx, now) {
   return out;
 }
 
+// ---------- #107: 버튼은 누른 사람과 동작을 저장한 사람 권한의 교집합으로만 쓴다 ----------
+// 손님이 저장한 동작을 소유자가 눌러도 소유자 권한을 빌려 주지 않는다. 저장한 손님을 다시 확인할 수 없으면(세션이 끝남·기록을 못 읽음)
+// 아무것도 쓰지 않는다. 기록이 없는 버튼(이 수정 전에 저장됨, 에이전트·가져오기로 만듦)은 예전처럼 누른 사람 권한으로 돈다.
+const BUTTON_STOPPED = "권한을 확인할 수 없는 손님이 만든 버튼이에요. 버튼 동작을 다시 저장해 주세요.";
+
+function propButtonKey(propId) { return "prop:" + propId; }
+function blockButtonKey(slug, blockId) { return "block:" + slug + ":" + blockId; }
+
+// guard: { sql, binds } - 같은 batch 의 저장이 성공할 때만 기록한다(페이지 저장의 editor_history 조건).
+function buttonSaverStatement(db, key, guard) {
+  const roles = {};
+  if (db.acardRoles) for (const [slug, role] of db.acardRoles) if (WRITE_ROLES.includes(role)) roles[slug] = role;
+  const who = db.acardSaver || {};
+  return db.prepare("INSERT INTO db_button_savers (button, kind, session, email, roles, saved) SELECT CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS BIGINT) WHERE " + (guard ? guard.sql : "1 = 1") + " ON CONFLICT (button) DO UPDATE SET kind = excluded.kind, session = excluded.session, email = excluded.email, roles = excluded.roles, saved = excluded.saved")
+    .bind(key, db.acardRoles ? "guest" : "owner", db.acardRoles ? who.session || null : null, db.acardRoles ? who.email || null : null, JSON.stringify(roles), Date.now(), ...(guard ? guard.binds : []));
+}
+
+// 페이지 내용을 통째로 되돌리는 경로(기록 복원·템플릿 적용): 동작이 있는 버튼 블록마다 되돌린 사람을 저장한 사람으로 적는다.
+// 손님이 되돌리면 바뀐 동작 목록은 그 손님이 저장한 것이다. 소유자가 되돌리거나 복제하면 원래 블록(source 페이지의 같은 id)의 손님
+// 기록을 그대로 잇는다(소유자가 되돌렸다고 손님 동작이 소유자 권한을 얻지 않는다). blocks/current 는 blocks 표 줄(meta 는 JSON 문자열일 수 있다).
+async function buttonSavers(db, slug, blocks, current, source = slug) {
+  const actionsOf = (block) => {
+    const meta = block && block.type === "button" ? (typeof block.meta === "string" ? parseJson(block.meta, null) : block.meta) : null;
+    return meta && Array.isArray(meta.actions) && meta.actions.length ? JSON.stringify(meta.actions) : null;
+  };
+  const before = new Map((current || []).map((block) => [String(block.id), actionsOf(block)]));
+  const out = [];
+  for (const block of blocks || []) {
+    if (!actionsOf(block)) continue;
+    const key = blockButtonKey(slug, String(block.id));
+    if (db.acardRoles) {
+      if (actionsOf(block) !== before.get(String(block.id))) out.push(buttonSaverStatement(db, key));
+      continue;
+    }
+    if (source === slug) continue;
+    const saver = await db.prepare("SELECT kind, session, email, roles, saved FROM db_button_savers WHERE button = ?").bind(blockButtonKey(source, String(block.id))).first();
+    if (saver && saver.kind === "guest") {
+      out.push(db.prepare("INSERT INTO db_button_savers (button, kind, session, email, roles, saved) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (button) DO UPDATE SET kind = excluded.kind, session = excluded.session, email = excluded.email, roles = excluded.roles, saved = excluded.saved")
+        .bind(key, saver.kind, saver.session, saver.email, saver.roles, saver.saved));
+    }
+  }
+  return out;
+}
+
+// 버튼을 누를 때 쓸 db: 저장한 사람이 손님이면 권한 맵 = 누른 사람(소유자면 제한 없음)과 저장한 손님 권한의 교집합.
+async function buttonPressDb(db, key) {
+  const saver = await db.prepare("SELECT kind, session, email, roles FROM db_button_savers WHERE button = ?").bind(key).first();
+  if (!saver || saver.kind !== "guest") return { db };
+  // 저장한 손님이 직접 누르면 지금 그 손님의 권한이 그대로 기준이다.
+  if (db.acardRoles && db.acardSaver && db.acardSaver.session && String(db.acardSaver.session) === String(saver.session)) return { db };
+  const resolved = await guestSaverRoles(db, saver);
+  if (resolved.reason) {
+    console.warn("acard button stopped", key, resolved.reason);
+    return { error: BUTTON_STOPPED, status: 403 };
+  }
+  const roles = new Map();
+  for (const [slug, role] of resolved.roles) {
+    const mine = db.acardRoles ? db.acardRoles.get(slug) || "none" : "full";
+    if (!WRITE_ROLES.includes(mine)) continue;
+    roles.set(slug, WRITE_ROLES.indexOf(mine) < WRITE_ROLES.indexOf(role) ? mine : role);
+  }
+  return { db: rolesView(db, roles) };
+}
+
+// db 에 다른 권한 맵을 씌운 같은 저장소(손님 viewDb 와 같은 모양). visible 을 주지 않으면 db 의 것을 그대로 쓴다.
+function rolesView(db, roles) {
+  const view = { prepare: (sql) => db.prepare(sql), batch: (list) => db.batch(list), dialect: db.dialect, acardKey: db.acardKey, acardVisible: db.acardVisible, acardRoles: roles, acardSaver: db.acardSaver };
+  if (typeof db.script === "function") view.script = (list) => db.script(list);
+  return view;
+}
+
 async function buttonActionsAllowed(db, actions, principal) {
   const list = normaliseButtonActions(actions);
   if (!list) return null;
@@ -3286,14 +3437,15 @@ async function guardAgentButtons(db, principal, oldBlocks, blocks) {
 
 // 저장 경로의 버튼 블록 검사: 바뀐 동작 목록만 본다(편집 손님이 페이지를 저장해도 오너가 만든 버튼은 그대로 남는다).
 // 저장하는 사람이 대상 DB 를 편집할 수 없거나 모양이 틀린 동작 목록은 저장하지 않는다.
-async function guardButtonBlocks(db, oldBlocks, blocks) {
+// changed(Set, 선택): 동작을 새로 저장하는 버튼 블록 id. 호출하는 저장 batch 가 저장한 사람을 기록한다(#107).
+async function guardButtonBlocks(db, oldBlocks, blocks, changed) {
   const before = new Map((oldBlocks || []).map((block) => [block.id, JSON.stringify(block.meta && block.meta.actions ? block.meta.actions : null)]));
   for (const block of blocks) {
     if (block.type !== "button" || !block.meta || block.meta.actions === undefined) continue;
     if (before.get(block.id) === JSON.stringify(block.meta.actions)) continue;
     const allowed = await buttonActionsAllowed(db, block.meta.actions);
     const meta = Object.assign({}, block.meta);
-    if (allowed && allowed.length) meta.actions = allowed; else delete meta.actions;
+    if (allowed && allowed.length) { meta.actions = allowed; if (changed) changed.add(block.id); } else delete meta.actions;
     block.meta = meta;
   }
   return blocks;
@@ -3410,11 +3562,14 @@ async function runActions(db, env, ctx, input) {
   return result;
 }
 
-async function dbRowRequest(db, slug, method, row, body) {
+// principal(에이전트, 선택): 페이지별 에이전트 규칙이 있으면 손님과 같은 권한 맵으로 행 페이지와 관계로 바뀌는 행까지 본다(#106).
+// 그 거부는 에이전트에게 403 이다(토큰은 있고 권한이 없다).
+async function dbRowRequest(db, slug, method, row, body, principal) {
+  const roles = principal && ACARD_FEATURES.services.agentRoles ? await ACARD_FEATURES.services.agentRoles(db, principal) : null;
   const target = new URL("https://acard.internal" + API + "/db/" + encodeURIComponent(slug) + "/rows" + (row ? "/" + encodeURIComponent(row) : ""));
-  const response = await handleApi(new Request(target, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), {}, db, target, false);
+  const response = await handleApi(new Request(target, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), {}, roles ? rolesView(db, roles) : db, target, false);
   const data = await response.json();
-  if (!response.ok) throw new AgentError(data && data.error ? data.error : "데이터베이스를 고치지 못했어요.", response.status);
+  if (!response.ok) throw new AgentError(data && data.error ? data.error : "데이터베이스를 고치지 못했어요.", roles && response.status === 401 ? 403 : response.status);
   return data;
 }
 
@@ -3636,7 +3791,7 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
     return json({ ok: true, deleted });
   }
   let cleanup;
-  const lifecycle = await handleEditorApi(request, db, url, { json, readPage, saveBlocks, normaliseBlocks, slugify,
+  const lifecycle = await handleEditorApi(request, db, url, { json, readPage, saveBlocks, normaliseBlocks, slugify, buttonSavers,
     permanentDeletePlan: async (db, slug) => (cleanup = await permanentDeletePlan(db, slug)) });
   if (lifecycle && permanent && lifecycle.ok && env[MEDIA_BINDING]) {
     for (const row of cleanup.media) await env[MEDIA_BINDING].delete("media/" + row.id).then(() => releaseMedia(env, Number(row.bytes))).catch(() => {});
@@ -3708,6 +3863,7 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
 
   // 노션 "Markdown & CSV" 내보내기 zip 을 그대로 받아 페이지와 데이터베이스로 만든다.
   if (path === "/import" && method === "POST") {
+    if (ACARD_FEATURES.services.importZipRequest) return await ACARD_FEATURES.services.importZipRequest(request, env, db);
     return await importZip(request, db);
   }
 
@@ -3718,7 +3874,7 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
 
   // 페이지 하나 또는 워크스페이스 전체를 마크다운·HTML·zip 으로 내보낸다.
   if (path === "/export" && method === "GET") {
-    return await exportPage(db, url);
+    return await exportPage(db, url, env);
   }
 
   if (path === "/tree" && method === "GET") {
@@ -3728,7 +3884,7 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
   if (path === "/search" && method === "GET") {
     const q = (url.searchParams.get("q") ?? "").trim();
     if (!q) return json({ results: [] });
-    if (ACARD_FEATURES.services.search) return json({ results: visibleOnly(db, await ACARD_FEATURES.services.search(db, q, db.acardVisible ? 400 : 40)).slice(0, 40) });
+    if (ACARD_FEATURES.services.search) return json({ results: visibleOnly(db, await ACARD_FEATURES.services.search(db, q, db.acardVisible ? 400 : 40, true)).slice(0, 40) });
     const like = "%" + q.replace(/[%_]/g, "") + "%";
     const rows = await db
       .prepare("SELECT p.slug, p.title, (SELECT text FROM blocks b WHERE b.page = p.slug AND b.text LIKE ? LIMIT 1) AS hit FROM pages p WHERE NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page=p.slug) AND (p.title LIKE ? OR EXISTS (SELECT 1 FROM blocks b WHERE b.page = p.slug AND b.text LIKE ?)) ORDER BY p.ord LIMIT 40")
@@ -3781,9 +3937,8 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
     const slug = resolveSlug(decodeURIComponent(pageMatch[1]));
 
     if (method === "GET") {
-      const found = await readPage(db, slug);
+      const [found, backlinks] = await Promise.all([readPage(db, slug), db.prepare("SELECT l.src AS slug, p.title FROM links l JOIN pages p ON p.slug = l.src WHERE l.dst = ? AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page=p.slug) ORDER BY l.src").bind(slug).all()]);
       if (!found) return json({ error: "없는 페이지예요." }, 404);
-      const backlinks = await db.prepare("SELECT l.src AS slug, p.title FROM links l JOIN pages p ON p.slug = l.src WHERE l.dst = ? AND NOT EXISTS (SELECT 1 FROM editor_trash t WHERE t.page=p.slug) ORDER BY l.src").bind(slug).all();
       const payload = { page: found.page, blocks: found.blocks, settings: found.settings, backlinks: visibleOnly(db, backlinks.results ?? []) };
       if (db.acardRoles) payload.access = db.acardRoles.get(slug) || "none";
       if (found.page.kind === "db") {
@@ -3825,7 +3980,8 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
       if (body.base_updated !== undefined && existing.updated !== body.base_updated) return conflict();
       const now = Math.max(Date.now(), existing.updated + 1);
       const [stored, agentPage] = await Promise.all([readPage(db, slug), humanAgentPage(db, slug)]);
-      const blocks = await guardButtonBlocks(db, stored ? stored.blocks : [], humanMarkSaves(stored ? stored.blocks : [], normaliseBlocks(pageStructure(body.blocks.slice(0, 2000))), now, agentPage));
+      const buttons = new Set();
+      const blocks = await guardButtonBlocks(db, stored ? stored.blocks : [], humanMarkSaves(stored ? stored.blocks : [], normaliseBlocks(pageStructure(body.blocks.slice(0, 2000))), now, agentPage), buttons);
       const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 200) : null;
       const snapshot = await snapshotPage(db, slug);
       if (!snapshot || (body.base_updated !== undefined && snapshot.page.updated !== body.base_updated)) return conflict();
@@ -3840,6 +3996,7 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
         db.prepare("DELETE FROM links WHERE src = ? AND " + guard).bind(slug, version),
         ...linksOf(blocks).map(dst => db.prepare("INSERT OR IGNORE INTO links (src, dst) SELECT ?, ? WHERE " + guard).bind(slug, dst, version)),
         db.prepare("UPDATE pages SET title = ?, updated = ?, source = 'editor', hash = NULL WHERE slug = ? AND " + guard).bind(title || snapshot.page.title, now, slug, version),
+        ...[...buttons].map((id) => buttonSaverStatement(db, blockButtonKey(slug, id), { sql: guard, binds: [version] })),
       ];
       const saved = await db.batch(statements);
       if (!Number(saved[0]?.meta?.changes)) return conflict();
@@ -4013,8 +4170,12 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
           const pairDenied = await assertCanWriteAllRows(db, database.id, message) || await assertCanWriteAllRows(db, pairTarget.id, message);
           if (pairDenied) return json({ error: pairDenied.error }, pairDenied.status);
         }
-        await db.prepare("INSERT INTO db_properties (id, database_id, name, type, config, ord, width, hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-          .bind(prop.id, database.id, prop.name, prop.type, JSON.stringify(prop.config), prop.ord, prop.width, prop.hidden ? 1 : 0).run();
+        await db.batch([
+          db.prepare("INSERT INTO db_properties (id, database_id, name, type, config, ord, width, hidden) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(prop.id, database.id, prop.name, prop.type, JSON.stringify(prop.config), prop.ord, prop.width, prop.hidden ? 1 : 0),
+          // #107: 누가 이 버튼 동작을 저장했는지(누를 때 그 사람 권한을 넘지 않는다).
+          ...(prop.type === "button" && prop.config.actions.length ? [buttonSaverStatement(db, propButtonKey(prop.id))] : []),
+        ]);
         if (prop.type === "unique_id") await ensureUniqueIds(db, database.id, prop.id, false);
         if (prop.type === "relation" && prop.config.synced) {
           const draft = Object.assign({}, prop, { config: Object.assign({}, prop.config, { synced: false, pair: "" }) });
@@ -4040,7 +4201,8 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
           width: Number.isFinite(body.width) ? body.width : current.width,
           hidden: body.hidden !== undefined ? body.hidden === true : current.hidden,
         }, 0);
-        if (next.type === "button" && next.config.actions.length && JSON.stringify(next.config.actions) !== JSON.stringify(current.type === "button" ? current.config.actions : [])) {
+        const newActions = next.type === "button" && next.config.actions.length && JSON.stringify(next.config.actions) !== JSON.stringify(current.type === "button" ? current.config.actions : []);
+        if (newActions) {
           const allowed = await buttonActionsAllowed(db, next.config.actions);
           if (!allowed) return json({ error: "버튼 동작을 저장할 수 없어요. 대상 데이터베이스를 편집할 권한을 확인해 주세요." }, 403);
           next.config.actions = allowed;
@@ -4063,6 +4225,9 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
         const turnsOff = wasSynced && (next.type !== "relation" || !next.config.synced);
         // #86: 양방향 끄기는 상대 DB 의 짝 속성을 바꾸고, 타입 바꾸기는 이 DB 의 모든 행을 다시 쓴다.
         if (turnsOff && !canEditDatabase(db, current.config.database)) return json({ error: "상대 데이터베이스를 편집할 권한이 없어요." }, 401);
+        // #107: 양방향을 끄면 양쪽 행의 연결이 모두 끊긴다. 연결된 행을 모두 편집할 수 있어야 한다.
+        const unlinkDenied = turnsOff ? await assertCanWriteLinkedRows(db, current, "편집할 수 없는 행이 연결돼 있어서 양방향을 끌 수 없어요.") : null;
+        if (unlinkDenied) return json({ error: unlinkDenied.error }, unlinkDenied.status);
         // #86: dropPair 는 상대 DB 의 짝 속성을 지워 그 DB 모든 행에서 값이 사라진다.
         if (turnsOff && body.dropPair === true) {
           const pairDb = await readDatabaseBySlug(db, current.config.database);
@@ -4077,6 +4242,7 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
           ...conversion.statements,
           db.prepare("UPDATE db_properties SET name = ?, type = ?, config = ?, ord = ?, width = ?, hidden = ? WHERE id = ?")
             .bind(next.name, next.type, JSON.stringify(next.config), next.ord, next.width, next.hidden ? 1 : 0, current.id),
+          ...(newActions ? [buttonSaverStatement(db, propButtonKey(current.id))] : []),
         ]);
         if (next.type !== current.type) {
           const rows = await db.prepare("SELECT id, props FROM db_rows WHERE database_id = ?").bind(database.id).all();
@@ -4101,6 +4267,9 @@ async function handleApi(request, env, db, url, dispatchFeatures = true) {
         const removing = properties.find((entry) => entry.id === target);
         const pairedRemoval = removing && removing.type === "relation" && removing.config.synced && removing.config.pair;
         if (pairedRemoval && !canEditDatabase(db, removing.config.database)) return json({ error: "상대 데이터베이스를 편집할 권한이 없어요." }, 401);
+        // #107: 양방향 속성을 지우면 상대 DB 행의 연결도 끊긴다.
+        const pairedDenied = pairedRemoval ? await assertCanWriteLinkedRows(db, removing, "편집할 수 없는 행이 연결돼 있어서 속성을 지울 수 없어요.") : null;
+        if (pairedDenied) return json({ error: pairedDenied.error }, pairedDenied.status);
         // #86: 속성을 지우면 모든 행에서 그 값이 사라진다(양방향이면 상대 DB 행의 연결도).
         const removeDenied = removing ? await assertCanWriteAllRows(db, database.id, "편집할 수 없는 행이 있어서 속성을 지울 수 없어요.") : null;
         if (removeDenied) return json({ error: removeDenied.error }, removeDenied.status);

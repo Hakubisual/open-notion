@@ -1,13 +1,128 @@
 // LAN mode of the local server: extra Host names pass the DNS-rebinding guard, and the password gate keeps every
-// page and API behind a signed session cookie.
+// human page behind a signed session cookie; agents use a separate bearer token.
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { guard, localEnv, passwordGate } from "../local/server";
+import { guard, localEnv, passwordGate, sameOrigin, type LocalOptions } from "../local/server";
 
 const req = (url: string, init: RequestInit & { host?: string } = {}) =>
   new Request(url, { ...init, headers: { host: init.host ?? new URL(url).host, ...(init.headers as Record<string, string>) } });
+
+async function localServer(options: Partial<LocalOptions> = {}) {
+  const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  const port = probe.port;
+  probe.stop(true);
+  const dataDir = mkdtempSync(join(tmpdir(), "lan-api-"));
+  // The core caches schema readiness by workspace id; each real sidecar owns one workspace for its whole process.
+  const child = Bun.spawn(["bun", join(import.meta.dir, "..", "local", "main.ts")], {
+    env: { ...process.env, ACARD_DATA_DIR: dataDir, ACARD_APP_DIR: join(import.meta.dir, "..", "dist"), ACARD_PORT: String(port),
+      ACARD_HOST: "127.0.0.1", ACARD_ALLOWED_HOSTS: "", ACARD_CLOUD_URL: "", ACARD_PASSWORD: options.password ?? "",
+      ACARD_LOCAL_API: options.localApi ? "1" : "0", ACARD_AGENT_TOKEN: options.agentToken ?? "" },
+    stdin: "pipe", stdout: "pipe", stderr: "inherit",
+  });
+  const reader = child.stdout.getReader();
+  const limit = setTimeout(() => child.kill(), 10_000);
+  try {
+    for (let seen = ""; !seen.includes("READY");) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("local server exited before READY: " + seen);
+      seen += new TextDecoder().decode(value);
+    }
+  } catch (error) {
+    child.kill();
+    await child.exited;
+    rmSync(dataDir, { recursive: true, force: true });
+    throw error;
+  } finally { clearTimeout(limit); reader.releaseLock(); }
+  const base = "http://127.0.0.1:" + port;
+  return {
+    base, port,
+    call: (path: string, init: RequestInit = {}) => fetch(base + path, { redirect: "manual", ...init }),
+    close: async () => { child.stdin.end(); child.kill(); await child.exited; rmSync(dataDir, { recursive: true, force: true }); },
+  };
+}
+
+test("local API opt-in serves loopback identity and discovery documents", async () => {
+  const local = await localServer({ localApi: true });
+  try {
+    const me = await local.call("/api/v1/me");
+    expect(me.status).toBe(200);
+    const identity = await me.json() as { agent: string; via: string; scopes: string[] };
+    expect(["로컬 에이전트", "Local agent"]).toContain(identity.agent);
+    expect(identity).toMatchObject({ via: "token", scopes: ["read", "write"] });
+    const spec = await local.call("/api/v1/openapi.json");
+    expect(spec.status).toBe(200);
+    expect(spec.headers.get("content-type")).toContain("application/json");
+    expect((await spec.json() as { openapi: string }).openapi).toBe("3.1.0");
+    for (const [path, type] of [["/AGENTS.md", "text/markdown"], ["/llms.txt", "text/plain"]]) {
+      const response = await local.call(path);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain(type);
+      expect(await response.text()).toContain(local.base + "/mcp");
+    }
+  } finally { await local.close(); }
+}, 30_000);
+
+test("local API stays off by default in the private server", async () => {
+  const local = await localServer();
+  try { expect((await local.call("/api/v1/me")).status).toBe(401); }
+  finally { await local.close(); }
+}, 30_000);
+
+test("LAN agent tokens and human cookies unlock only their own surfaces", async () => {
+  const agentToken = "a-local-agent-token-with-32-chars!";
+  const password = "correct horse";
+  const local = await localServer({ password, agentToken, localApi: true });
+  try {
+    expect((await local.call("/api/v1/pages", { headers: { authorization: "Bearer " + agentToken } })).status).toBe(200);
+    for (const authorization of [undefined, "Bearer wrong", "Bearer " + password, agentToken, "Bearer", "Bearer ", "Bearer " + "x".repeat(8192)]) {
+      const response = await local.call("/api/v1/pages", { headers: authorization === undefined ? {} : { authorization } });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: "invalid agent token" });
+    }
+    const login = await local.call("/__local/login", { method: "POST", body: new URLSearchParams({ password, next: "/edit/home/" }) });
+    expect(login.status).toBe(303);
+    const cookie = login.headers.get("set-cookie")!.split(";")[0];
+    expect((await local.call("/mcp", { method: "POST", headers: { cookie } })).status).toBe(401);
+    expect((await local.call("/api/v1/me", { headers: { cookie } })).status).toBe(401);
+    const page = await local.call("/edit/home/", { headers: { authorization: "Bearer " + agentToken, accept: "text/html" } });
+    expect(page.status).toBe(303);
+    expect(page.headers.get("location")).toBe("/__local/login?next=%2Fedit%2Fhome%2F");
+    expect((await local.call("/edit/home/", { headers: { cookie, accept: "text/html" } })).status).toBe(200);
+  } finally { await local.close(); }
+  const disabled = await localServer({ password, localApi: true });
+  try {
+    const response = await disabled.call("/api/v1/me");
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "agent access is off: set ACARD_AGENT_TOKEN on the server" });
+  } finally { await disabled.close(); }
+}, 30_000);
+
+test("tokenless agent reads and writes reject cross-site origins", async () => {
+  const local = await localServer({ localApi: true });
+  try {
+    for (const [path, method] of [["/api/v1/pages", "POST"], ["/api/v1/me", "GET"], ["/api/v1/me", "HEAD"], ["/AGENTS.md", "GET"], ["/llms.txt", "GET"], ["/mcp", "POST"]]) {
+      expect((await local.call(path, { method, headers: { origin: "http://evil.example" } })).status).toBe(403);
+    }
+    expect((await local.call("/api/v1/me", { headers: { origin: local.base } })).status).toBe(200);
+    for (const origin of ["null", "", "http://evil.example", local.base + ".evil.example"]) {
+      expect(sameOrigin(req(local.base, { headers: { origin } }), local.port)).toBe(false);
+    }
+    expect(sameOrigin(req(local.base), local.port)).toBe(true);
+    expect(sameOrigin(req(local.base, { headers: { origin: "http://notes.lan:" + local.port } }), local.port, ["notes.lan"])).toBe(true);
+    expect(sameOrigin(req(local.base, { headers: { origin: "http://evil.example" } }), local.port, ["*"])).toBe(false);
+  } finally { await local.close(); }
+}, 30_000);
+
+test("local agent API rejects DNS rebinding even with a valid bearer", async () => {
+  const agentToken = "a-local-agent-token-with-32-chars!";
+  const local = await localServer({ localApi: true, agentToken });
+  try {
+    expect((await local.call("/api/v1/me", { headers: { host: "evil.example:" + local.port } })).status).toBe(403);
+    expect((await local.call("/api/v1/me", { headers: { host: "evil.example:" + local.port, authorization: "Bearer " + agentToken } })).status).toBe(403);
+  } finally { await local.close(); }
+}, 30_000);
 
 test("guard allows configured LAN names and rejects others", () => {
   expect(guard(req("http://127.0.0.1:47811/"), 47811)).toBeNull();

@@ -20,7 +20,10 @@
         if (!row || row.type !== "button") return json({ error: "없는 버튼이에요." }, 404);
         const meta = parseJson(row.meta, {}) || {};
         if (!Array.isArray(meta.actions) || !meta.actions.length) return json({ error: "동작이 없는 버튼이에요." }, 400);
-        const result = await runActions(db, env, {}, meta.actions);
+        // issue 107: no more than the permission of whoever saved these actions (gate/_worker.js buttonPressDb).
+        const as = await buttonPressDb(db, blockButtonKey(slug, id));
+        if (as.error) return json({ error: as.error }, as.status);
+        const result = await runActions(as.db, env, {}, meta.actions);
         return json(result, result.error ? result.status : 200);
       }
       const slug = decodeURIComponent(prop[1]);
@@ -33,7 +36,9 @@
       if (!config.actions.length) return json({ error: "동작이 없는 버튼이에요." }, 400);
       const rowId = decodeURIComponent(prop[2]);
       if (!(await db.prepare("SELECT 1 AS x FROM db_rows WHERE id = ? AND database_id = ?").bind(rowId, database.id).first())) return json({ error: "없는 행이에요." }, 404);
-      const result = await runActions(db, env, { database, row: rowId }, config.actions);
+      const as = await buttonPressDb(db, propButtonKey(propId));
+      if (as.error) return json({ error: as.error }, as.status);
+      const result = await runActions(as.db, env, { database, row: rowId }, config.actions);
       return json(result, result.error ? result.status : 200);
     },
   });

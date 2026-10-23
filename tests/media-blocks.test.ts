@@ -178,7 +178,7 @@ describe("renderBlocks: 미디어·레이아웃 블록", () => {
       { slug: "akanesasu", title: "아카네사스", parent: "projects" },
     ];
     const html = renderBlocks(markdownToBlocks("- [breadcrumb]"), { page: pages[2], pages });
-    expect(html).toContain('<nav class="crumbs"><a href="/">홈</a><span class="sep"');
+    expect(html).toContain('<nav class="crumbs"><a href="/home/">홈</a><span class="sep"');
     expect(html.indexOf("프로젝트")).toBeLessThan(html.indexOf("아카네사스"));
   });
 

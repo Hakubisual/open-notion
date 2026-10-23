@@ -16,12 +16,13 @@
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/editor.css">
 <link rel="stylesheet" href="/db.css">
+<link rel="preload" as="script" href="/lazy/recent-cache.js?v=__RECENT_CACHE_JS__">
 </head>
 <body class="editing">
 <a class="skip" href="#doc">본문으로</a>
 <header class="topbar">
   <button class="icon" id="menu" aria-label="메뉴" aria-expanded="false"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="18" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/></svg></button>
-  <a class="brand" href="/"><svg class="wordmark" viewBox="0 0 416.7 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
+  <a class="brand" href="/home/"><svg class="wordmark" viewBox="0 0 375.59 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg></a>
   <span class="save-state on" id="save-state">불러오는 중…</span>
   <div class="grow"></div>
   <div class="menuwrap">
@@ -29,7 +30,7 @@
     <div class="menu" id="more-menu" hidden>
       <div class="menu-width" role="group" aria-labelledby="mw"><span class="menu-label" id="mw">페이지 너비</span><div class="seg"><button type="button" data-width="default" aria-pressed="true">좁게</button><button type="button" data-width="normal" aria-pressed="false">보통</button><button type="button" data-width="full" aria-pressed="false">넓게</button></div></div>
       <hr>
-      <button type="button" class="menuitem" id="import-open">노션 내보내기 가져오기 (zip)</button>
+      <a class="menuitem" id="import-open" href="/import">노션·옵시디언에서 가져오기</a>
       <a href="/api/export?slug=home&format=acard-md" download="home.md">이 페이지 마크다운으로 내보내기</a>
       <a href="/api/export?slug=home&format=md" download="home.notion.md">이 페이지 노션용 마크다운으로 내보내기</a>
       <a href="/api/export?slug=home&format=html" download="home.html">이 페이지 HTML로 내보내기</a>
@@ -39,7 +40,7 @@
       <button type="button" class="menuitem" id="quick-note-open">빠른 메모</button>
     </div>
   </div>
-  <a class="icon" id="viewlink" href="/" aria-label="읽기 화면으로" title="읽기"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></a>
+  <a class="icon" id="viewlink" href="/home/" aria-label="읽기 화면으로" title="읽기"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></a>
   <button class="icon" id="theme" aria-label="테마 바꾸기" title="테마 바꾸기"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg></button>
 </header>
 <button type="button" class="icon" id="side-open" aria-label="사이드바 열기" title="사이드바 열기 (Ctrl+\)" aria-controls="sidebar"><svg class="ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18m5-12 3 3-3 3"/></svg></button>
@@ -56,7 +57,6 @@
       <script>document.getElementById("title").addEventListener("keydown",function(e){if(!window.AcardTitleKeys&&!this.readOnly&&e.key==="Enter"&&!e.isComposing&&e.keyCode!==229){e.preventDefault();this.dataset.enterPending="1"}})</script>
       <span class="meta" id="meta"></span>
     </div>
-    <button type="button" class="mini" id="ask-notes-btn" aria-haspopup="dialog" disabled>노트에 묻기</button>
     <div class="fd-headtags" id="fd-headtags"></div>
     <div id="blocks" class="blocks" aria-label="본문"></div>
     <button class="addblock" id="add-block">+ 블록 추가</button>
@@ -65,18 +65,6 @@
 </div>
 <div id="slash" class="slash" hidden role="menu" aria-label="블록 종류"></div>
 <div id="ctx" class="ctxmenu" hidden role="menu" aria-label="블록 메뉴"></div>
-<div class="overlay" id="import-dialog" hidden role="dialog" aria-modal="true" aria-label="노션 내보내기 가져오기">
-  <div class="sheet">
-    <h2>노션 내보내기 가져오기</h2>
-    <p class="hint">노션에서 <strong>Markdown &amp; CSV</strong>로 내보낸 zip 을 올려 주세요. 파일 안의 .md 는 페이지로, .csv 는 표(데이터베이스)로 만들어요.</p>
-    <input id="import-file" type="file" accept=".zip,application/zip" aria-label="zip 파일">
-    <input id="import-md-file" type="file" accept=".md,.markdown,.txt" multiple aria-label="마크다운 파일">
-    <button type="button" id="import-go" class="primary">zip 가져오기</button>
-    <button type="button" id="import-md-go" class="primary">마크다운 가져오기</button>
-    <p class="import-status" id="import-status" role="status"></p>
-    <button type="button" class="close" id="import-close" aria-label="닫기">닫기</button>
-  </div>
-</div>
 <div class="overlay" id="shortcuts" hidden role="dialog" aria-modal="true" aria-label="키보드 단축키">
   <div class="sheet">
     <h2>키보드 단축키</h2>
@@ -105,16 +93,16 @@
   </div>
 </div>
 <script src="/site-config.js"></script>
-<script src="/equation-html.js"></script>
-<script src="/db-model.js"></script>
-<script src="/db-formula.js"></script>
-<script src="/db-views.js"></script>
-<script src="/db.js"></script>
 <script src="/editor-model.js"></script>
 <script src="/columns-model.js"></script>
 <script src="/editor-pages-ui.js"></script>
 <script src="/editor-format.js"></script>
 <script src="/editor.js"></script>
+<script src="/equation-html.js"></script>
+<script src="/db-model.js"></script>
+<script src="/db-formula.js"></script>
+<script src="/db-views.js"></script>
+<script src="/db.js"></script>
 <link rel="stylesheet" href="/features.css">
 <script src="/features.js"></script>
 </body>

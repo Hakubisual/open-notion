@@ -13,7 +13,7 @@ test("quick nav lists home and the four sidebar actions under the search field",
   const html = sideNavHtml(PAGES, "b", "Acard");
   const nav = /<div class="side-nav">([\s\S]*?)<\/div>/.exec(html)![1];
   expect([...nav.matchAll(/data-act="(\w+)"/g)].map((m) => m[1])).toEqual(["all", "recent", "favorites", "trash"]);
-  expect(nav).toContain('<a href="/">');
+  expect(nav).toContain('<a href="/home/">');
   expect(html.indexOf('id="palette-open"')).toBeLessThan(html.indexOf('class="side-nav"'));
   expect(html.indexOf('class="side-nav"')).toBeLessThan(html.indexOf('class="side-ws"'));
   const app = read("assets/app.js");
@@ -21,8 +21,8 @@ test("quick nav lists home and the four sidebar actions under the search field",
 });
 
 test("home is marked current only on the home page", () => {
-  expect(sideNavHtml(PAGES, "index", "Acard")).toContain('<a href="/" class="on" aria-current="page">');
-  expect(sideNavHtml(PAGES, "b", "Acard")).not.toContain('<a href="/" class="on"');
+  expect(sideNavHtml(PAGES, "index", "Acard")).toContain('<a href="/home/" class="on" aria-current="page">');
+  expect(sideNavHtml(PAGES, "b", "Acard")).not.toContain('<a href="/home/" class="on"');
   expect(sideNavHtml(PAGES, "b", "Acard")).toContain('href="/b/" class="on" aria-current="page"');
 });
 

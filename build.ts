@@ -5,6 +5,8 @@ import { mkdir, rm, readdir, readFile, writeFile, cp, stat } from "node:fs/promi
 import { markdownToBlocks, blocksHash, type Block } from "./markdown-blocks.ts";
 import { renderBlocks, pageHeadHtml, bylineHtml, overviewHtml, thumbBarHtml, sideNavHtml, sideFootHtml, mobileBarHtml, sidePanelHtml, pageActionsHtml, sideImageHtml, introSplit } from "./block-html.js";
 import siteConfig from "./site-config.json";
+import { IMPORT_CORE_FILES } from "./import-core-files.ts";
+import { existsSync } from "node:fs";
 
 const ROOT = import.meta.dir;
 const NOTES = join(ROOT, "notes");
@@ -140,7 +142,7 @@ function shortcutsHtml(): string {
   ].join("");
 }
 
-function href(slug: string): string { return slug === "index" ? "/" : "/" + slug + "/"; }
+function href(slug: string): string { return slug === "index" ? "/home/" : "/" + slug + "/"; }
 
 // 읽기 화면 상단의 더보기 메뉴 (gate/_worker.js 의 moreMenu 와 같은 마크업을 쓴다)
 function moreMenuHtml(slug: string): string {
@@ -297,9 +299,17 @@ if (!editorBuild.success) throw new AggregateError(editorBuild.logs, "editor.js 
 await writeFile(join(DIST, "editor.js"), await editorBuild.outputs[0].text());
 // Keep reader delivery under the fixed first-screen cap as features accumulate.
 // 읽기 화면 CSS 는 주석과 공백만 걷어 낸다(규칙 순서와 값은 그대로).
+// style.css starts with @import url("/tokens.css"), a second serial CSS round trip before first paint on every page, so
+// dist/style.css carries the minified tokens in its place (same rule order). dist/tokens.css stays for local/cloud-page.ts.
+const TOKENS_IMPORT = '@import url("/tokens.css");';
+const tokensCss = minifyCss(await readFile(join(ASSETS, "tokens.css"), "utf8"));
 for (const name of ["style.css", "tokens.css", ...UI_CSS, "acard-table.css", "editor.css", "db.css"]) {
-  const css = await readFile(join(ASSETS, name), "utf8");
-  await writeFile(join(DIST, name), minifyCss(css) + "\n", "utf8");
+  let css = minifyCss(await readFile(join(ASSETS, name), "utf8"));
+  if (name === "style.css") {
+    if (!css.startsWith(TOKENS_IMPORT)) throw new Error("assets/style.css must start with " + TOKENS_IMPORT);
+    css = tokensCss + css.slice(TOKENS_IMPORT.length);
+  }
+  await writeFile(join(DIST, name), css + "\n", "utf8");
 }
 const uiVersions: Record<string, string> = {};
 await rm(join(DIST, "ui"), { recursive: true, force: true });
@@ -317,22 +327,76 @@ await writeFile(join(DIST, "acard-table-static.css"), staticTableCss(minifyCss(a
 // "components" chunk (assets/features/lazy/components.js carries the //__COMPONENT_SOURCE__ marker).
 const componentFiles = ["component-registry.js", ...(await readdir(join(ROOT, "components"))).filter((name) => name.endsWith(".js") && name !== "index.js").sort().map((name) => "components/" + name)];
 const componentSource = (await Promise.all(componentFiles.map(async (name) => (await readFile(join(ROOT, name), "utf8")).replace(/^import[^\n]*\n/gm, "").replace(/^export /gm, "").trim()))).join("\n");
+// Visual kit: the worker gets every component (componentSource above); the editor's "components" chunk gets the
+// registry and the basic family plus a slash manifest of every component, and each other family ships as its own lazy
+// chunk components-<family> that the editor loads when such a block is shown or inserted. A file's family comes from
+// its name (chart-*, _chart-core.js -> chart) and must match the family its registerComponent calls declare.
+const COMPONENT_FAMILY_PREFIX: Record<string, string> = { chart: "chart", diagram: "diagram", ix: "interactive", block: "block", asset: "asset" };
+const componentFamilyOf = (file: string) => COMPONENT_FAMILY_PREFIX[/^components\/_?([a-z]+)-/.exec(file)?.[1] ?? ""] ?? "basic";
+const componentRegistry = await import(join(ROOT, "component-registry.js"));
+await import(join(ROOT, "components", "index.js"));
+const componentFamilyFiles: Record<string, string[]> = {};
+for (const file of componentFiles.slice(1)) (componentFamilyFiles[componentFamilyOf(file)] ||= []).push(file);
+for (const c of componentRegistry.listComponents()) {
+  const files = componentFamilyFiles[c.family] || [];
+  if (c.family !== "basic" && !files.length) throw new Error("component " + c.id + " declares family " + c.family + " but no components/" + c.family + "-*.js file holds it");
+}
+// One lazy chunk per component file (components-<file>) and one per family core (components-<family>-core, from
+// components/_<family>-core.js) that the file chunks need first. The manifest names each component's chunk.
+const componentIdsByFile: Record<string, string[]> = {};
+for (const file of componentFiles.slice(1)) componentIdsByFile[file] = [...(await readFile(join(ROOT, file), "utf8")).matchAll(/registerComponent\(\{\s*id:\s*"([a-z][a-z0-9-]{1,39})"/g)].map((m) => m[1]);
+const componentChunkOf = (file: string) => "components-" + file.replace(/^components\/_?/, "").replace(/\.js$/, "");
+const componentManifest = componentRegistry.listComponents().filter((c: any) => c.family !== "basic").map((c: any) => {
+  const file = Object.keys(componentIdsByFile).find((f) => componentIdsByFile[f].includes(c.id));
+  if (!file) throw new Error("component " + c.id + " is registered but no components/*.js file declares it as registerComponent({ id: \"" + c.id + "\"");
+  const core = (componentFamilyFiles[c.family] || []).find((f) => f.startsWith("components/_"));
+  return { id: c.id, name: c.name, family: c.family, slash: c.slash, chunk: componentChunkOf(file), ...(core ? { core: componentChunkOf(core) } : {}) };
+});
+const moduleText = async (name: string) => (await readFile(join(ROOT, name), "utf8")).replace(/^import[^\n]*\n/gm, "").replace(/^export /gm, "").trim();
+const basicComponentSource = [await moduleText("component-registry.js"), ...(await Promise.all((componentFamilyFiles.basic || []).map(moduleText)))].join("\n");
+await mkdir(join(ROOT, ".build"), { recursive: true });
+const componentFamilyChunks: Record<string, string> = {};
+for (const [family, files] of Object.entries(componentFamilyFiles)) {
+  if (family === "basic") continue;
+  for (const file of files) {
+    const chunk = componentChunkOf(file);
+    const entry = join(ROOT, ".build", chunk + ".js");
+    await writeFile(entry, "(function () {\n  var C = window.AcardComponents;\n  if (!C) return;\n  var registerComponent = C.registerComponent, registerHelpers = C.registerHelpers, registerFamilyCss = C.registerFamilyCss, UI_TONES = C.UI_TONES;\n" +
+      (await moduleText(file)) + "\n  C.familyLoaded(" + JSON.stringify(family) + ");\n  window.AcardEditor && window.AcardEditor.provide(" + JSON.stringify(chunk) + ", { family: " + JSON.stringify(family) + " });\n})();\n", "utf8");
+    const built = await Bun.build({ entrypoints: [entry], minify: true, format: "iife" });
+    if (!built.success) throw new AggregateError(built.logs, chunk + " minify failed");
+    componentFamilyChunks[chunk] = await built.outputs[0].text();
+  }
+}
 const lazyVersions: Record<string, Record<string, string>> = Object.create(null);
 const lazyDir = join(ASSETS, "features", "lazy");
 for (const file of (await readdir(lazyDir).catch(() => [] as string[])).sort()) {
   const match = /^([a-z0-9-]+)\.(js|css)$/.exec(file);
   if (!match) continue;
-  const source = (await readFile(join(lazyDir, file), "utf8")).replace("//__COMPONENT_SOURCE__", () => componentSource);
+  const source = (await readFile(join(lazyDir, file), "utf8")).replace("//__COMPONENT_SOURCE__", () => basicComponentSource)
+    .replace("//__COMPONENT_MANIFEST__", () => "var COMPONENT_MANIFEST = " + JSON.stringify(componentManifest) + ";");
   // Lazy chunks ship whitespace-minified (behaviour unchanged); the chat panel chunk also gets syntax minify (its loader rides on every page).
   let bytes: Buffer;
-  if (["reader-navigation", "reader-enhancements", "import", "toc"].includes(match[1]) && match[2] === "js") {
-    const built = await Bun.build({ entrypoints: [join(lazyDir, file)], minify: true, format: "iife" });
-    if (!built.success) throw new AggregateError(built.logs, "reader navigation minify failed");
+  // folders (#16): one IIFE that talks to the page only through window.AcardFolders and DOM events, so full minify is safe.
+  // graph and db-tools (#124 #123) are IIFEs too: the graph talks only to /api/graph and the DOM, db-tools only through window.AcardDbTools.
+  if (["reader-navigation", "reader-enhancements", "import", "toc", "folders", "part-form", "part-register", "part-gallery", "graph", "db-tools", "import-engine", "import-obsidian", "import-notion", "paste-md", "plugins", "components"].includes(match[1]) && match[2] === "js") {
+    // components holds the inlined registry source, so it is bundled from a temp copy with the markers filled in.
+    const entryFile = match[1] === "components" ? join(ROOT, ".build", "lazy-components.js") : join(lazyDir, file);
+    if (match[1] === "components") await writeFile(entryFile, source, "utf8");
+    const built = await Bun.build({ entrypoints: [entryFile], minify: true, format: "iife" });
+    if (!built.success) throw new AggregateError(built.logs, file + " minify failed");
     bytes = Buffer.from(await built.outputs[0].text());
   } else bytes = Buffer.from(match[2] === "js" ? new Bun.Transpiler({ minifyWhitespace: true, minifySyntax: match[1] === "agent-chat" }).transformSync(source) : minifyCss(source) + "\n");
   await mkdir(join(DIST, "lazy"), { recursive: true });
   await writeFile(join(DIST, "lazy", file), bytes);
   (lazyVersions[match[1]] ||= {})[match[2]] = Bun.hash(bytes).toString(36).slice(0, 8);
+}
+// Family chunks only ship next to the editor's components chunk that loads them (a build without it has no editor).
+componentFamilyChunks["components-index"] = "window.AcardEditor&&window.AcardEditor.provide(\"components-index\",{list:" + JSON.stringify(componentManifest).replace(/</g, "\\u003c") + "});\n";
+for (const [chunk, code] of Object.entries(lazyVersions.components ? componentFamilyChunks : {})) {
+  const bytes = Buffer.from(code);
+  await writeFile(join(DIST, "lazy", chunk + ".js"), bytes);
+  lazyVersions[chunk] = { js: Bun.hash(bytes).toString(36).slice(0, 8) };
 }
 for (const [name, versions] of Object.entries(lazyVersions)) {
   if (!versions.js) throw new Error("Lazy feature needs JavaScript: " + name);
@@ -345,7 +409,7 @@ if (lazyVersions.toc && lazyVersions["reader-enhancements"]) {
   lazyVersions["reader-enhancements"].js = Bun.hash(bytes).toString(36).slice(0, 8);
 }
 // db.js is built before the lazy chunks; its button cells load /lazy/buttons and /lazy/button-editor by these hashes.
-await writeFile(join(DIST, "db.js"), (await readFile(join(DIST, "db.js"), "utf8")).replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0").replaceAll("__BUTTON_EDITOR_JS__", lazyVersions["button-editor"]?.js ?? "0").replaceAll("__BUTTON_EDITOR_CSS__", lazyVersions["button-editor"]?.css ?? "0"));
+await writeFile(join(DIST, "db.js"), (await readFile(join(DIST, "db.js"), "utf8")).replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0").replaceAll("__BUTTON_EDITOR_JS__", lazyVersions["button-editor"]?.js ?? "0").replaceAll("__BUTTON_EDITOR_CSS__", lazyVersions["button-editor"]?.css ?? "0").replaceAll("__DB_TOOLS_JS__", lazyVersions["db-tools"]?.js ?? "0").replaceAll("__DB_TOOLS_CSS__", lazyVersions["db-tools"]?.css ?? "0"));
 // The reader share button loads /lazy/share-dialog.js; app.js carries its content hash.
 // Full minify (names + syntax) keeps the reader first screen under its gzip cap; app.js is one classic IIFE script.
 const appBuild = await Bun.build({ entrypoints: [join(ASSETS, "app.js")], minify: true, format: "iife" });
@@ -360,13 +424,14 @@ for (const ext of ["js", "css"] as const) {
       : !name.endsWith(".reader." + ext));
     const parts = await Promise.all(selected.map((name) => readFile(join(ASSETS, "features", name), "utf8")));
     const manifest = !reader && ext === "js" && Object.keys(lazyVersions).length
-      ? "window.AcardLazy = " + JSON.stringify(Object.fromEntries(Object.entries(lazyVersions).filter(([name]) => name !== "import" && name !== "toc"))) + ";\n" : "";
+      ? "window.AcardLazy = " + JSON.stringify(Object.fromEntries(Object.entries(lazyVersions).filter(([name]) => !["import", "import-engine", "import-obsidian", "import-notion", "toc"].includes(name)))) + ";\n" : "";
     const content = (manifest + parts.filter((part) => part.trim()).join(ext === "js" ? "\n;\n" : "\n")).replace("__AGENT_CHAT_JS__", lazyVersions["agent-chat"]?.js ?? "0").replace("__AGENT_CHAT_CSS__", lazyVersions["agent-chat"]?.css ?? "0").replace('"/lazy/quick-note.js"', '"/lazy/quick-note.js?v=' + (lazyVersions["quick-note"]?.js ?? "0") + '"');
     if (reader) readerFeatures[ext] = content.length > 0;
     let output = content;
-    if (reader && ext === "js" && content) {
-      const built = await Bun.build({ entrypoints: ["features-reader.js"], files: { "features-reader.js": content }, minify: { whitespace: true, identifiers: true, syntax: false }, format: "esm" });
-      if (!built.success) throw new AggregateError(built.logs, "reader features minify failed");
+    // Both bundles are joined IIFEs that talk to the page only through window.*, so names + whitespace minify is safe.
+    if (ext === "js" && content) {
+      const built = await Bun.build({ entrypoints: ["features.js"], files: { "features.js": content }, minify: { whitespace: true, identifiers: true, syntax: false }, format: "esm" });
+      if (!built.success) throw new AggregateError(built.logs, (reader ? "reader" : "editor") + " features minify failed");
       output = (await built.outputs[0].text()).trimEnd();
     }
     await writeFile(join(DIST, "features" + (reader ? "-reader" : "") + "." + ext), output, "utf8");
@@ -374,7 +439,12 @@ for (const ext of ["js", "css"] as const) {
 }
 await rm(join(DIST, "features"), { recursive: true, force: true });
 const siteNameHtml = SITE.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-await writeFile(join(DIST, "editor.html"), (await readFile(join(ASSETS, "editor.html"), "utf8")).replaceAll("__SITE_NAME__", siteNameHtml), "utf8");
+// The editor's first content render waits for /lazy/recent-cache.js after DOMContentLoaded (editor.js), so the head
+// preloads it by the URL the lazy loader builds (/lazy/<name>.js?v=<AcardLazy hash>); without the chunk the line goes.
+const recentCacheLine = /<link rel="preload" as="script" href="\/lazy\/recent-cache\.js\?v=__RECENT_CACHE_JS__">\r?\n/;
+const editorHtml = await readFile(join(ASSETS, "editor.html"), "utf8");
+if (!recentCacheLine.test(editorHtml)) throw new Error("assets/editor.html is missing the recent-cache preload line");
+await writeFile(join(DIST, "editor.html"), editorHtml.replace(recentCacheLine, (line) => lazyVersions["recent-cache"]?.js ? line.replace("__RECENT_CACHE_JS__", lazyVersions["recent-cache"].js) : "").replaceAll("__SITE_NAME__", siteNameHtml), "utf8");
 await writeFile(join(DIST, "agents.html"), (await readFile(join(ASSETS, "agents.html"), "utf8")).replaceAll("__SITE_NAME__", siteNameHtml).replaceAll("__PROJECTS_JS__", lazyVersions.projects?.js ?? "0").replaceAll("__PROJECTS_CSS__", lazyVersions.projects?.css ?? "0"), "utf8");
 await writeFile(join(DIST, "gallery.html"), (await readFile(join(ASSETS, "gallery.html"), "utf8")).replaceAll("__SITE_NAME__", siteNameHtml), "utf8");
 await writeFile(join(DIST, "site-config.js"), "window.DoriSite = " + JSON.stringify(siteConfig).replace(/</g, "\\u003c") + ";\n", "utf8");
@@ -448,7 +518,8 @@ await writeFile(join(DIST, "404.html"), notFound, "utf8");
 const gateLogo = "data:image/svg+xml;base64," + Buffer.from(await readFile(join(ASSETS, "logo.svg"), "utf8")).toString("base64");
 const workerSource = (await readFile(join(ROOT, "gate", "_worker.js"), "utf8")).replaceAll("__GATE_LOGO__", gateLogo).replaceAll("__SITE_NAME__", siteNameHtml.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\r/g, "\\r").replace(/\n/g, "\\n"));
 const equationSource = await readFile(join(ROOT, "equation-html.js"), "utf8");
-const inline = async (name: string) => stripModule(await readFile(join(ROOT, name), "utf8")).trim();
+const writeCore = "";
+const inline = async (name: string) => stripModule(await readFile(join(ROOT, name), "utf8")).replace("//__WRITE_CORE__", () => writeCore).trim();
 // TS 모듈은 타입을 떼고 넣는다 (notion-import/notion-export 는 워커 안에서도 그대로 돈다).
 const inlineTs = async (name: string) => stripModule(new Bun.Transpiler({ loader: "ts" }).transformSync(await readFile(join(ROOT, name), "utf8"))).trim();
 const featureFiles = (await readdir(join(ROOT, "features"))).filter((name) => name.endsWith(".js")).sort();
@@ -456,7 +527,7 @@ const inlines: Record<string, string> = {
   "//__READER_FEATURE_CSS__": readerFeatures.css ? "'<link rel=\"stylesheet\" href=\"/features-reader.css\">'," : "",
   "//__READER_FEATURE_JS__": readerFeatures.js ? "'<script src=\"/features-reader.js\"></script>'," : "",
   "//__FEATURES__": (await Promise.all(featureFiles.map((name) => inline("features/" + name)))).join("\n;\n"),
-  "//__EQUATION_HTML__": stripModule(equationSource).trim() + "\n" + await inline("visual-html.js") + "\n" + await inline("part-html.js") + "\n" + componentSource,
+  "//__EQUATION_HTML__": stripModule(equationSource).trim() + "\n" + await inline("sandbox-policy.js") + "\n" + await inline("plugin-ui.js") + "\n" + await inline("visual-html.js") + "\n" + await inline("part-html.js") + "\n" + componentSource,
   "//__BLOCK_HTML__": (await readFile(join(ROOT, "assets/editor-model.js"), "utf8")) + "\n" + (await readFile(join(ROOT, "assets/columns-model.js"), "utf8")) + "\n" + await inline("block-html.js"),
   "//__EDITOR_PAGES__": await inline("editor-pages.js"),
   "//__AGENT_API__": await inline("agent-api.js"),
@@ -466,6 +537,7 @@ const inlines: Record<string, string> = {
   "//__MARKDOWN_BLOCKS__": await inlineTs("markdown-blocks.ts"),
   "//__NOTION_IMPORT__": await inlineTs("notion-import.ts"),
   "//__NOTION_EXPORT__": await inlineTs("notion-export.ts"),
+  "//__IMPORT_CORE__": (await Promise.all(IMPORT_CORE_FILES.filter((name) => existsSync(join(ROOT, name))).map((name) => inlineTs(name)))).join("\n"),
 };
 let workerOut = workerSource.replace("//__BLOCK_HTML__", "globalThis.ACARD_ASSET_VERSIONS = " + JSON.stringify(imageVersions) + ";\nglobalThis.ACARD_PAGE_META = " + JSON.stringify(pageMeta).replace(/</g, "\\u003c") + ";\n//__BLOCK_HTML__");
 workerOut = workerOut.replaceAll("__LIVE_JS__", lazyVersions.live?.js ?? "0");
@@ -473,14 +545,22 @@ workerOut = workerOut.replaceAll("__FOLDERS_JS__", lazyVersions.folders?.js ?? "
 workerOut = workerOut.replaceAll("__HOME_JS__", uiVersions["home.js"]).replaceAll("__HOME_CSS__", uiVersions["home.css"]).replaceAll("__UI_KIT_CSS__", uiVersions["kit.css"]);
 workerOut = workerOut.replaceAll("__PROJECTS_JS__", lazyVersions.projects?.js ?? "0").replaceAll("__PROJECTS_CSS__", lazyVersions.projects?.css ?? "0");
 workerOut = workerOut.replaceAll("__JOURNAL_JS__", lazyVersions.journal?.js ?? "0").replaceAll("__JOURNAL_CSS__", lazyVersions.journal?.css ?? "0");
-const stampChecks = (text: string) => text.replaceAll("__CHECKS_JS__", lazyVersions.checks?.js ?? "0").replaceAll("__CHECKS_CSS__", lazyVersions.checks?.css ?? "0").replaceAll("__PARTS_JS__", lazyVersions.parts?.js ?? "0").replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0");
+const stampChecks = (text: string) => text.replaceAll("__CHECKS_JS__", lazyVersions.checks?.js ?? "0").replaceAll("__CHECKS_CSS__", lazyVersions.checks?.css ?? "0").replaceAll("__PARTS_JS__", lazyVersions.parts?.js ?? "0").replaceAll("__PLUGINS_JS__", lazyVersions.plugins?.js ?? "0").replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0");
 workerOut = stampChecks(workerOut);
 for (const [marker, code] of Object.entries(inlines)) {
   if (!workerOut.includes(marker)) throw new Error("gate/_worker.js is missing the " + marker + " marker");
   workerOut = workerOut.replace(marker, () => code);
 }
 // 편집기 미리보기는 같은 소스를 브라우저 전역으로 노출한 사본을 쓴다 (단일 소스 규칙, README 참고).
-await writeFile(join(DIST, "equation-html.js"), equationSource.replace(/^export /gm, "") + "\nwindow.EquationHtml = { renderLatex, equationHtml };\n", "utf8");
+// Wrapped in an IIFE and fully minified like db-model.js; window.EquationHtml is its only output.
+{
+  const tmp = join(DIST, "__equation-html.js");
+  await writeFile(tmp, "(function(){\n" + stripModule(equationSource) + "\nwindow.EquationHtml = { renderLatex, equationHtml };\n})();\n", "utf8");
+  const built = await Bun.build({ entrypoints: [tmp], minify: true, format: "iife" });
+  await rm(tmp);
+  if (!built.success) throw new AggregateError(built.logs, "equation-html.js minify failed");
+  await writeFile(join(DIST, "equation-html.js"), await built.outputs[0].text(), "utf8");
+}
 // Files in fonts/ and _site/ (and the font and image URLs inside CSS, and the font CSS paths in app.js) get a content-hash ?v=
 // too, so every static file a page loads is served immutable (gate/static-cache.ts). Leaves are hashed first, then CSS/JS are
 // stamped and re-hashed until stable, so a font change changes fonts.css?v= and a tokens.css change changes style.css?v=.
@@ -511,8 +591,9 @@ const assetVersion = new Map<string, string>();
 for (const name of await readdir(DIST)) {
   if (/\.(css|js|svg|png|ico|webmanifest)$/.test(name) && name !== "_worker.js" && name !== "sw.js") assetVersion.set(name, Bun.hash(await readFile(join(DIST, name))).toString(36).slice(0, 8));
 }
-// A #fragment (<use href="/wordmark-symbol.svg#w">) stays after the version.
-const stampAssets = (text: string) => stampNested(text.replace(/((?:href|src|content)=\\?["']|url\(\\?["']?)\/([\w.-]+\.(?:css|js|svg|png|ico|webmanifest))(?=(?:#[\w-]+)?\\?["')])/g, (all, lead: string, name: string) => assetVersion.has(name) ? lead + "/" + name + "?v=" + assetVersion.get(name) : all));
+// A #fragment (<use href="/wordmark-symbol.svg#w">) stays after the version. Absolute https://notes.example.com/ URLs (og:image on the
+// public pages) are stamped too, so a new og.png gets a new URL and link previews stop reusing the cached card (#118).
+const stampAssets = (text: string) => stampNested(text.replace(/((?:href|src|content)=\\?["'](?:https:\/\/notes\.example\.com)?|url\(\\?["']?)\/([\w.-]+\.(?:css|js|svg|png|ico|webmanifest))(?=(?:#[\w-]+)?\\?["')])/g, (all, lead: string, name: string) => assetVersion.has(name) ? lead + "/" + name + "?v=" + assetVersion.get(name) : all));
 // Versioned files are served immutable (gate/static-cache.ts), so style.css is stamped before its own hash: a tokens.css change must change style.css?v=.
 await writeFile(join(DIST, "style.css"), stampAssets(await readFile(join(DIST, "style.css"), "utf8")), "utf8");
 assetVersion.set("style.css", Bun.hash(await readFile(join(DIST, "style.css"))).toString(36).slice(0, 8));

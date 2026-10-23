@@ -1,7 +1,7 @@
 {
   "name": "acard-cli",
   "version": "0.1.0",
-  "description": "Acard 노트 로컬 CLI: pull/push 마크다운 동기화와 stdio MCP 프록시",
+  "description": "Acard CLI: sync pages with local Markdown files and bridge the MCP endpoint over stdio",
   "type": "module",
   "bin": {
     "acard": "bin/acard.js"

@@ -1,10 +1,10 @@
 // Acard local mode (Windows build). Runs the same core worker as the hosted site (.build/acard-core.js, made by build.ts)
 // inside Bun. The workspace store, media KV and static assets are local shims with the same contracts as the
-// Cloudflare bindings (workers/acard-workspace WorkspaceStore, KV, ASSETS). Only scripts/build-windows.ts imports this
+// Cloudflare bindings (workers/acard-workspace WorkspaceStore, KV, ASSETS). Only local/main.ts imports this
 // file, so the cloud build never includes it.
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { join, normalize, resolve as resolvePath, sep } from "node:path";
 import core, { acardHost } from "../.build/acard-core.js";
 import { workspaceEnv } from "../gate/tenancy";
@@ -18,6 +18,7 @@ import { cloudPage } from "./cloud-page";
 import { CLOUD_URL } from "./cloud-host";
 import { startAutoBackup } from "./auto-backup";
 import { startSync } from "./sync";
+import { openapiSpec, agentsMd, llmsTxt } from "../agent-docs.js";
 
 // The local half of the live feed the app already listens to (assets/features/lazy/live.js, /api/live on notes.example.com):
 // hello with the last id and anything missed, then change notices. Sync uses it so pages that arrive from another PC
@@ -47,7 +48,7 @@ const CLOUD_ONLY = "This feature needs the hosted service and is not available o
 // host: listen address (default 127.0.0.1). allowedHosts: extra Host names (LAN IP, DNS name) or "*".
 // password: when set, every page needs a login (/__local/login). Required whenever host is not loopback.
 // lang: UI language for app pages (en / ko / zh). Unset keeps the Korean source copy.
-export type LocalOptions = { dataDir: string; appDir: string; port: number; host?: string; allowedHosts?: string[]; password?: string; lang?: string; cloudUrl?: string };
+export type LocalOptions = { dataDir: string; appDir: string; port: number; host?: string; allowedHosts?: string[]; password?: string; lang?: string; cloudUrl?: string; localApi?: boolean; agentToken?: string };
 
 function clean(params: unknown[] = []) {
   return params.map((v) => (v === undefined ? null : v === true ? 1 : v === false ? 0 : v)) as any[];
@@ -197,6 +198,19 @@ export function guard(request: Request, port: number, extraHosts: string[] = [])
   return null;
 }
 
+// Tokenless agent reads need the same origin protection as writes; guard() keeps its existing method rules.
+export function sameOrigin(request: Request, port: number, extraHosts: string[] = []): boolean {
+  const origin = request.headers.get("origin");
+  if (origin === null) return true;
+  const allowed = new Set(["127.0.0.1:" + port, "localhost:" + port]);
+  for (const name of extraHosts) allowed.add((name.includes(":") ? name : name + ":" + port).toLowerCase());
+  const host = (request.headers.get("host") ?? "").toLowerCase();
+  if (extraHosts.includes("*") && host) allowed.add(host);
+  return /^https?:\/\//.test(origin) && allowed.has(origin.replace(/^https?:\/\//, "").toLowerCase());
+}
+
+const AGENT_PATHS = /^(?:\/mcp|\/api\/v1\/.*|\/AGENTS\.md|\/llms\.txt)$/;
+
 // Cloud-only surfaces (accounts, Google login, OAuth/MCP, agent runner) live in gate/agent-entry.ts, which local mode
 // does not load. Their paths answer with one clear message instead of a broken page.
 const CLOUD_PATHS = /^\/(?:login|signup|forgot|reset|onboarding|oauth\/|mcp|sse|api\/account|api\/agents|settings\/agents|\.well-known\/)/;
@@ -204,8 +218,8 @@ const CLOUD_PATHS = /^\/(?:login|signup|forgot|reset|onboarding|oauth\/|mcp|sse|
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1"]);
 
 // Local MCP for the user's own agents (Claude Code, Codex ...): http://127.0.0.1:<port>/mcp. The local server has no
-// accounts, so this has the same reach as the editor on this PC; in LAN mode the password gate runs before it.
-const LOCAL_AGENT = { name: "로컬 에이전트", via: "token" as const, scopes: ["read", "write"] };
+// accounts, so this has the same reach as the editor on this PC; LAN agents need their own bearer token.
+const LOCAL_AGENT = { name: "Local agent", via: "token" as const, scopes: ["read", "write"] };
 async function localMcp(request: Request, env: unknown): Promise<Response> {
   if (request.method === "GET") return new Response(null, { status: 405, headers: { allow: "POST, DELETE" } });
   const run = async (operation: AgentOperation, input: Record<string, unknown>) => {
@@ -328,6 +342,13 @@ export async function withLang(response: Response, lang: Lang): Promise<Response
   return new Response(html, { status: response.status, statusText: response.statusText, headers });
 }
 
+// The "내 데이터" page allows inline scripts only; with a language set it also loads the dictionary loader /i18n-app.js.
+function withScriptSelf(response: Response): Response {
+  const csp = response.headers.get("content-security-policy");
+  if (csp) response.headers.set("content-security-policy", csp.replace("script-src 'unsafe-inline'", "script-src 'self' 'unsafe-inline'"));
+  return response;
+}
+
 export function startServer(options: LocalOptions) {
   const host = options.host || "127.0.0.1";
   if (!LOOPBACK.has(host) && !options.password) throw new Error("Listening on " + host + " needs a password (ACARD_PASSWORD).");
@@ -353,6 +374,7 @@ export function startServer(options: LocalOptions) {
     server?.publish("live", JSON.stringify({ type: "change", ...event }));
   } });
   const gate = options.password ? passwordGate(options.dataDir, options.password) : null;
+  const agentDigest = options.agentToken ? createHash("sha256").update(options.agentToken).digest() : null;
   const lang: Lang | null = isLang(options.lang) ? options.lang : null;
   server = Bun.serve<{ since: number }>({
     hostname: host,
@@ -368,8 +390,32 @@ export function startServer(options: LocalOptions) {
       if (blocked) return blocked;
       await seeding;
       const url = new URL(request.url);
-      const locked = gate ? await gate(request, url) : null;
+      const agentPath = AGENT_PATHS.test(url.pathname);
+      let agentAuthenticated = false;
+      if (agentPath) {
+        const authorization = request.headers.get("authorization");
+        if (agentDigest && authorization !== null) {
+          const token = /^Bearer (\S+)$/.exec(authorization)?.[1];
+          if (!token || !timingSafeEqual(createHash("sha256").update(token).digest(), agentDigest)) {
+            return Response.json({ error: "invalid agent token" }, { status: 401 });
+          }
+          agentAuthenticated = true;
+        }
+        if (gate && !agentAuthenticated) {
+          return Response.json({ error: agentDigest ? "invalid agent token" : "agent access is off: set ACARD_AGENT_TOKEN on the server" }, { status: 401 });
+        }
+        if (!agentAuthenticated && options.localApi && !sameOrigin(request, options.port, options.allowedHosts)) {
+          return Response.json({ error: "Requests from other sites are not accepted." }, { status: 403 });
+        }
+      }
+      const localApi = agentPath && (agentAuthenticated || options.localApi);
+      const locked = gate && !agentAuthenticated ? await gate(request, url) : null;
       if (locked) return locked;
+      if (localApi && request.method === "GET") {
+        if (url.pathname === "/api/v1/openapi.json") return Response.json(openapiSpec(url.origin));
+        if (url.pathname === "/AGENTS.md") return new Response(agentsMd(url.origin), { headers: { "content-type": "text/markdown; charset=utf-8" } });
+        if (url.pathname === "/llms.txt") return new Response(llmsTxt(url.origin), { headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
       if (url.pathname === "/api/live" && request.method === "GET") {
         if (srv.upgrade(request, { data: { since: Math.max(0, Number(url.searchParams.get("since")) || 0) } })) return undefined;
         return new Response(JSON.stringify({ error: "websocket only" }), { status: 426, headers: { "content-type": "application/json; charset=utf-8" } });
@@ -395,7 +441,7 @@ export function startServer(options: LocalOptions) {
         return res;
       }
       if (url.pathname === "/api/profile") return profile.route(request, url);
-      if (url.pathname === "/__local/cloud" || url.pathname === "/__local/cloud/") return cloudPage();
+      if (url.pathname === "/__local/cloud" || url.pathname === "/__local/cloud/") return lang ? await withLang(withScriptSelf(cloudPage()), lang) : cloudPage();
       if (url.pathname === "/__local/cloud/sync") {
         const body = request.method === "POST" ? ((await request.json().catch(() => ({}))) as { enabled?: boolean; now?: boolean }) : {};
         if (typeof body.enabled === "boolean") await sync.setEnabled(body.enabled);
@@ -406,7 +452,9 @@ export function startServer(options: LocalOptions) {
       // The hosted entry serves the app dictionaries; local mode skips that entry, so answer them here.
       if (/^\/i18n\/app-(?:en|zh)\.json$/.test(url.pathname)) return assets.fetch(request);
       try {
-        const raw = await core.fetch(request, env);
+        const raw = localApi && url.pathname.startsWith("/api/v1/")
+          ? await acardHost.serveV1(request, env, LOCAL_AGENT)
+          : await core.fetch(request, env);
         if (request.method !== "GET" && request.method !== "HEAD" && raw.ok && url.pathname.startsWith("/api/")) sync.edited();
         const response = await localShell(raw, Boolean(gate));
         return lang ? await withLang(response, lang) : response;

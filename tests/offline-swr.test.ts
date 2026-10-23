@@ -93,6 +93,16 @@ test("telemetry posts on every load keep the cache", async () => {
   expect((await f.handle(req("/api/tree"))).headers.get("x-acard-swr")).toBe("hit");
 });
 
+test("a plugin saving its own storage keeps the cache; installing or switching a plugin drops it (issue 144)", async () => {
+  const f = fixture();
+  await f.handle(req("/api/tree"));
+  await f.settle();
+  await f.handle(req("/api/plugins/qa-counter/storage", "PUT"));
+  expect((await f.handle(req("/api/tree"))).headers.get("x-acard-swr")).toBe("hit");
+  await f.handle(req("/api/plugins/qa-counter", "PATCH"));
+  expect((await f.handle(req("/api/tree"))).headers.get("x-acard-swr")).toBeNull();
+});
+
 test("a 401 during refresh wipes the cache and tells the page", async () => {
   const f = fixture();
   await f.handle(req("/api/tree"));
@@ -135,4 +145,64 @@ test("a tree refresh that started before a write does not put the old tree back 
   await Promise.all(pending.splice(0));
   slow = false;
   expect(await (await handle(req("/api/folders/tree"))).text()).toBe("new");
+});
+
+// The editor posts /api/sync on every open; for members it imports nothing and must keep the reader cache warm.
+function syncFixture() {
+  const caches = new MemoryCaches();
+  let sync: unknown = { imported: 0, updated: 0, skipped: 0, databases: { imported: 0, rows: 0, skipped: 0 } };
+  let body = "v1";
+  const pending: Promise<unknown>[] = [];
+  const sw = createOfflineWorker({
+    caches, origin, report: () => {}, notify: () => {},
+    fetch: async (r: Request) => new URL(r.url).pathname === "/api/sync"
+      ? new Response(typeof sync === "string" ? sync : JSON.stringify(sync), { status: 200, headers: { "content-type": "application/json", "x-acard-id": id } })
+      : new Response(body, { status: 200, headers: { "content-type": "text/html", "x-acard-id": id } }),
+  }, { version: "t", shell: [] });
+  const handle = (r: Request) => sw.handle(r, (p: Promise<unknown>) => pending.push(p));
+  const settle = () => Promise.all(pending.splice(0));
+  const warm = async () => { await handle(req("/api/tree")); await handle(req("/one/")); await settle(); };
+  const state = async () => ({ tree: (await handle(req("/api/tree"))).headers.get("x-acard-swr"), html: (await handle(req("/one/"))).headers.get("x-acard-swr") });
+  return { caches, handle, settle, warm, state, sync(v: unknown) { sync = v; }, set(b: string) { body = b; } };
+}
+
+test("a member /api/sync that imported nothing keeps the cached tree and reader HTML", async () => {
+  const f = syncFixture();
+  await f.warm();
+  const r = await f.handle(req("/api/sync", "POST"));
+  expect(await r.json()).toEqual({ imported: 0, updated: 0, skipped: 0, databases: { imported: 0, rows: 0, skipped: 0 } });
+  expect(await f.state()).toEqual({ tree: "hit", html: "hit" });
+});
+
+test("an /api/sync that imported or updated something drops the cached tree and reader HTML", async () => {
+  for (const result of [
+    { imported: 2, updated: 0, skipped: 0, databases: { imported: 0, rows: 0, skipped: 0 } },
+    { imported: 0, updated: 1, skipped: 0, databases: { imported: 0, rows: 0, skipped: 0 } },
+    { imported: 0, updated: 0, skipped: 0, databases: { imported: 1, rows: 0, skipped: 0 } },
+    { imported: 0, updated: 0, skipped: 0, databases: { imported: 0, rows: 3, skipped: 0 } },
+    "not json",
+    { ok: true },
+  ]) {
+    const f = syncFixture();
+    await f.warm();
+    f.sync(result);
+    f.set("after-sync");
+    const r = await f.handle(req("/api/sync", "POST"));
+    expect(await r.text()).toBe(typeof result === "string" ? result : JSON.stringify(result));
+    expect(await f.state()).toEqual({ tree: null, html: "miss" });
+    expect(await (await f.handle(req("/one/"))).text()).toBe("after-sync");
+  }
+});
+
+test("the reader's ?acard-revalidate refresh is never stored, so revalidation cannot grow the pages cache", async () => {
+  const f = syncFixture();
+  await f.warm();
+  const r = await f.handle(new Request(origin + "/one/?acard-revalidate=1760000000000", { headers: { "x-acard-nav": "1" }, cache: "no-store" }));
+  expect(r.status).toBe(200);
+  expect(r.headers.get("x-acard-swr")).toBeNull();
+  await f.settle();
+  const keys = (await (await f.caches.open("acard-pages-t-" + id)).keys()).map(k => k.url);
+  expect(keys.some(k => k.includes("acard-revalidate"))).toBe(false);
+  expect(keys).toContain(origin + "/one/");
+  expect((await f.handle(req("/one/"))).headers.get("x-acard-swr")).toBe("hit");
 });

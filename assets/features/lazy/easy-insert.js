@@ -21,7 +21,7 @@
     toggle_heading1: "toggle heading collapse h1", toggle_heading2: "toggle heading collapse h2", toggle_heading3: "toggle heading collapse h3",
     callout: "callout note box info tip", quote: "quote blockquote citation", code: "code snippet program", diagram: "diagram flowchart mermaid mindmap",
     chart: "chart graph bar line pie", visual: "visual animation svg", html: "html web demo custom", divider: "divider line separator hr",
-    database: "database table board kanban calendar", image: "image photo picture img", "photo-text": "ocr photo text scan", video: "video youtube movie",
+    database: "database table board kanban calendar", image: "image photo picture img", video: "video youtube movie",
     audio: "audio sound music", file: "file attachment upload pdf", embed: "embed iframe map", bookmark: "bookmark link card url",
     columns: "columns layout split side", table: "table simple grid sheet", equation: "equation math latex formula", subpage: "page subpage child new",
     toc: "toc contents outline", breadcrumb: "breadcrumb path", button: "button link cta", progress: "progress bar percent", db_ref: "database linked view reference"
@@ -32,13 +32,13 @@
     toggle_heading1: "아래 내용을 접는 큰 제목", toggle_heading2: "아래 내용을 접는 중간 제목", toggle_heading3: "아래 내용을 접는 작은 제목",
     callout: "아이콘과 색으로 눈에 띄는 상자", quote: "다른 사람의 말이나 글을 인용", code: "글꼴과 줄이 그대로인 코드", diagram: "흐름도·순서도·마인드맵 그림",
     chart: "숫자를 막대·선·원 그래프로", visual: "움직이는 SVG·HTML 시각 자료", html: "직접 쓴 HTML을 그대로 보여 줘요", divider: "내용 사이를 나누는 가로줄",
-    database: "속성이 있는 표·보드·캘린더", image: "사진을 올리거나 붙여넣기", "photo-text": "사진 속 글자를 읽어 글로", video: "유튜브 주소나 영상 파일",
+    database: "속성이 있는 표·보드·캘린더", image: "사진을 올리거나 붙여넣기", video: "유튜브 주소나 영상 파일",
     audio: "소리·음악 파일 재생", file: "문서 파일을 첨부", embed: "지도·코드 같은 바깥 화면", bookmark: "링크를 제목·그림 카드로",
     columns: "내용을 2~3열로 나란히", table: "칸만 있는 가벼운 표", equation: "LaTeX 수식을 보기 좋게", subpage: "이 페이지 안에 새 페이지",
     toc: "이 페이지 제목으로 목차", breadcrumb: "위 페이지 경로 표시", button: "누르면 링크로 가는 버튼", progress: "얼마나 했는지 막대로", db_ref: "다른 데이터베이스를 여기서 보기"
   };
-  var SLASH_GROUPS = [["basic", "기본 블록"], ["component", "컴포넌트"], ["media", "미디어·임베드"], ["advanced", "고급"]];
-  var SLASH_MEDIA = { image: 1, "photo-text": 1, video: 1, audio: 1, file: 1, embed: 1, bookmark: 1 };
+  var SLASH_GROUPS = [["basic", "기본 블록"], ["part", "부품"], ["mine", "내 부품"], ["component", "컴포넌트"], ["plugin", "플러그인"], ["media", "미디어·임베드"], ["advanced", "고급"]];
+  var SLASH_MEDIA = { image: 1, video: 1, audio: 1, file: 1, embed: 1, bookmark: 1 };
   var SLASH_ADVANCED = { code: 1, diagram: 1, chart: 1, visual: 1, html: 1, database: 1, equation: 1, subpage: 1, toc: 1, breadcrumb: 1, button: 1, progress: 1, db_ref: 1 };
   var SLASH_KEYS = { heading1: "#", heading2: "##", heading3: "###", heading4: "####", bulleted: "-", numbered: "1.", to_do: "[]", quote: ">", code: "```", divider: "---" };
   // Compatibility jamo: initial consonants (ㅈㅁ) and a half-composed IME syllable still find 제목.
@@ -54,7 +54,7 @@
   function slashCho(s) { return s.replace(/[\uac00-\ud7a3]/g, function (ch) { return CHO.charAt(Math.floor((ch.charCodeAt(0) - 0xac00) / 588)); }); }
   function slashFlat(s) { return String(s || "").toLowerCase().replace(/\s+/g, ""); }
   function slashDesc(entry) { return entry.desc || SLASH_DESC[entry.type] || entry.hint || ""; }
-  function slashGroupOf(entry) { var t = entry.type; return /^component:/.test(t) ? "component" : SLASH_MEDIA[t] ? "media" : SLASH_ADVANCED[t] ? "advanced" : "basic"; }
+  function slashGroupOf(entry) { var t = entry.type; return /^part:/.test(t) ? (entry.mine ? "mine" : "part") : /^component:/.test(t) ? "component" : /^plugin:/.test(t) ? "plugin" : SLASH_MEDIA[t] ? "media" : SLASH_ADVANCED[t] ? "advanced" : "basic"; }
   // -1 = no match; higher = better. Tiers are 20+ apart so personal use (slashBoost, max 18) only breaks ties.
   function slashScore(entry, query) {
     var raw = slashFlat(query);
@@ -154,7 +154,7 @@
   var SLASH_SK = {
     paragraph: "LLl", heading1: "1Ll", heading2: "2Ll", heading3: "3Ll", heading4: "3l", bulleted: "BBB", numbered: "NNN", to_do: "CcC",
     toggle: "TII", toggle_heading1: "TII", toggle_heading2: "TII", toggle_heading3: "TII", quote: "Q", callout: "K", code: "X", divider: "L-L",
-    database: "G", table: "G", db_ref: "G", columns: "W", image: "M", "photo-text": "M", video: "M", embed: "M", bookmark: "M", audio: "M", file: "M"
+    database: "G", table: "G", db_ref: "G", columns: "W", image: "M", video: "M", embed: "M", bookmark: "M", audio: "M", file: "M"
   };
   function slashSkeleton(type) {
     var out = "", spec = SLASH_SK[type] || "";
@@ -172,7 +172,10 @@
   }
   function slashPreview(entry) {
     var ui = /^component:(.+)$/.exec(entry.type), C = window.AcardComponents, comp = ui && C && C.getComponent(ui[1]);
+    // A component whose family chunk is not loaded yet: load it and draw the preview again when it arrives.
+    if (ui && C && !comp && C.ensure) C.ensure(ui[1]).then(function (c) { var pv = document.querySelector('.sx-pv[data-type="' + entry.type + '"]'); if (c && pv) pv.innerHTML = slashPreview(entry); });
     var art = comp ? '<div class="sx-pv-ui">' + C.renderComponentBlock({ type: "component", text: JSON.stringify(comp.sample), meta: { ui: comp.id } }) + "</div>"
+      : entry.preview ? '<div class="sx-pv-ui sx-pv-part">' + entry.preview() + "</div>"
       : '<div class="sx-pv-sk">' + (slashSkeleton(entry.type) || '<span class="sx-pv-ico">' + entry.ico + "</span>") + "</div>";
     var key = SLASH_KEYS[entry.type];
     return '<div class="sx-pv-art">' + art + '</div><p class="sx-pv-name">' + slashEsc(entry.label) + '</p><p class="sx-pv-desc">' + slashEsc(slashDesc(entry)) + "</p>" +
@@ -185,8 +188,43 @@
     b.scrollIntoView({ block: "nearest" });
     if (pv && b.dataset.type !== pv.dataset.type) { pv.dataset.type = b.dataset.type || ""; pv.innerHTML = menu.sxItems[i] ? slashPreview(menu.sxItems[i]) : ""; }
   }
+  // #38: parts join the menu as 부품 (5 defaults) and 내 부품 (GET /api/parts). They arrive after the first menu, so an open
+  // menu is drawn again in place: the returned array is the editor's keyboard list, refilled rather than replaced.
+  var parts = null, last = null;
+  editor.lazy("parts").then(function (p) {
+    parts = p;
+    if (last && !last.el.hidden) menu.apply(null, last.args);
+    return p.load(editor.api).then(function () { if (last && !last.el.hidden) menu.apply(null, last.args); });
+  }, function () {});
+  // The last 부품 row opens the gallery (lazy part-gallery) on the slash line's index; the typed "/" goes away first.
+  var GALLERY = { type: "part:gallery", label: "모든 부품 보기", hint: "부품", desc: "갤러리에서 찾아 넣기", part: "gallery", aliases: "부품 part 갤러리 gallery 모두 전체 all 찾기",
+    ico: '<svg class="acp-thumb" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="5" width="11" height="9" rx="2" class="t-soft"/><rect x="18" y="5" width="11" height="9" rx="2" class="t-acc"/><rect x="3" y="18" width="11" height="9" rx="2" class="t-bar"/><rect x="18" y="18" width="11" height="9" rx="2" class="t-soft"/></svg>' };
+  function openGallery(block) {
+    var index = editor.state.blocks.indexOf(block);
+    if (/^\/[^\s/]{0,12}$/.test(block.text)) { block.text = ""; if (block.meta) delete block.meta.richText; editor.render(); editor.scheduleSave(); }
+    editor.lazy("part-gallery").then(function (g) { g.open(index); }, function () { window.alert("부품 갤러리를 불러오지 못했어요. 새로고침해 주세요."); });
+    return true;
+  }
+  // issue 144: Acard plugin blocks join as 플러그인, only for accounts with plugins on (the page sets data-plugins="on").
+  var plugins = null;
+  if (document.documentElement.getAttribute("data-plugins") === "on") editor.lazy("plugins").then(function (p) {
+    plugins = p;
+    return p.load().then(function () { if (last && !last.el.hidden) menu.apply(null, last.args); });
+  }, function () {});
+  function applyPart(block, type) {
+    if (type === GALLERY.type) return openGallery(block);
+    if (/^plugin:/.test(type)) { if (!plugins || !plugins.pick(block, type)) return false; remember(type); editor.render(); editor.scheduleSave(); return true; }
+    if (!/^part:/.test(type) || !parts || !parts.pick(block, type.slice(5))) return false;
+    remember(type);
+    editor.render();
+    editor.scheduleSave();
+    return true;
+  }
   // Draws the grouped menu into the #slash element and returns the items in button order (the editor's keyboard index).
   function menu(el, items, query, anchor, apply) {
+    var keep = last && last.el === el && last.args[1] === items ? last.flat : [];
+    last = { el: el, args: [el, items, query, anchor, apply], flat: keep };
+    items = items.concat(parts ? parts.slashItems() : [], plugins ? plugins.slashItems() : [], [GALLERY]);
     var sections = slashSections(items, query, stored(RECENT_KEY, []), stored(FREQ_KEY, {})), flat = [];
     var wide = innerWidth >= 900, sheet = innerWidth < 640;
     el.className = "slash slash-x" + (wide ? " sx-wide" : "") + (sheet ? " sx-sheet" : "");
@@ -231,7 +269,10 @@
     }
     el.hidden = false;
     select(el, 0);
-    return flat;
+    keep.length = 0;
+    Array.prototype.push.apply(keep, flat);
+    el.sxItems = keep;
+    return keep;
   }
   // templates.js appends its "new page from template" button to #slash; keep it as the last list row.
   var slashEl = document.getElementById("slash");
@@ -252,28 +293,6 @@
     var r = document.createRange(); r.selectNodeContents(t); r.collapse(false); var s = getSelection(); s.removeAllRanges(); s.addRange(r);
     t.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  (function (e) {
-  function go(f) { e.lazy("ai-write").then(f, function () {}); }
-  function block(n) { n = n && (n.nodeType === 1 ? n : n.parentElement); n = n && n.closest(".blk[data-id]"); return n && n.dataset.id; }
-  document.addEventListener("keydown", function (v) {
-    var t = v.target, id = t.closest && t.matches(".text[contenteditable]") && block(t);
-    if (!id) return;
-    if ((v.ctrlKey || v.metaKey) && v.key.toLowerCase() === "j") { v.preventDefault(); v.stopImmediatePropagation(); var s = getSelection().toString(); go(function (a) { a.open(id, s); }); }
-    else if (v.key === " " && !t.textContent && !v.isComposing) { v.preventDefault(); go(function (a) { a.open(id, ""); }); }
-    else if (v.key === "Enter") go(function (a) { setTimeout(function () { a.suggest(id); }, 0); });
-  }, true);
-  document.addEventListener("paste", function (v) { var id = v.target.closest && v.target.closest(".text[contenteditable]") && !v.target.closest(".easy-table") && block(v.target); if (id && /\t/.test(v.clipboardData.getData("text/plain"))) { var p = v.clipboardData.getData("text/plain").replace(/\r/g, "").replace(/\n+$/, ""); if (p.indexOf("\n") > 0) { var b = e.state.blocks.find(function (x) { return x.id === id; }); if (b) { v.preventDefault(); v.stopImmediatePropagation(); b.text = p.split("\n")[0]; b.meta = Object.assign({}, b.meta, { tsv: p }); delete b.meta.richText; e.render(); e.scheduleSave(); go(function (a) { a.suggest(id); }); } } } }, true);
-  var ask = document.createElement("button");
-  ask.type = "button"; ask.className = "ai-polish-trigger ai-ask-trigger"; ask.textContent = "✦ AI에게 묻기"; ask.hidden = true;
-  document.body.appendChild(ask);
-  ask.addEventListener("pointerdown", function (v) { v.preventDefault(); });
-  ask.addEventListener("click", function () { var s = getSelection(), id = block(s.anchorNode), t = s.toString(); ask.hidden = true; if (id) go(function (a) { a.open(id, t); }); });
-  var polish = document.querySelector(".ai-polish-trigger:not(.ai-ask-trigger)");
-  if (polish) new MutationObserver(function () {
-    ask.hidden = polish.hidden;
-    if (!ask.hidden) { ask.style.left = "calc(" + polish.style.left + " + " + (polish.offsetWidth + 8) + "px)"; ask.style.top = polish.style.top; }
-  }).observe(polish, { attributes: true, attributeFilter: ["hidden", "style"] });
-  })(editor);
   function imageHandles() {
     document.querySelectorAll("#blocks .mb-image figure.img:not([data-handles])").forEach(function (fig) {
       fig.dataset.handles = "1";
@@ -304,5 +323,5 @@
   }
   new MutationObserver(imageHandles).observe(document.getElementById("blocks"), { childList: true });
   imageHandles();
-  editor.provide("easy-insert", { menu: menu, select: select, matches: matches, remember: remember, shortcut: shortcut, pipeTable: pipeTable });
+  editor.provide("easy-insert", { menu: menu, apply: applyPart, select: select, matches: matches, remember: remember, shortcut: shortcut, pipeTable: pipeTable });
 })();

@@ -90,7 +90,7 @@ export function openapiSpec(origin) {
     },
     paths: {
       '/agent-skills': {
-        get: op('getAgentSkills', 'Read the editable agent-skills page, seeding Korean defaults only if missing', {}, { 200: ok('Rules', ref('Page')) }),
+        get: op('getAgentSkills', "Read the 'agent-skills' page if one exists", {}, { 200: ok('Rules', ref('Page')) }),
       },
       '/pages/{slug}/blocks': {
         get: op('readBlocks', 'Read ordered blocks and their page version', { parameters: [slugParam] }, {
@@ -247,33 +247,27 @@ export function openapiSpec(origin) {
 export function llmsTxt(origin) {
   return `# Acard
 
-> Acard is a private Notion-like notes app. AI agents write markdown pages and work logs; the human owner (주인님) reads and edits them. Connect over MCP or the HTTP API with an agent token or OAuth.
+> Acard is a Notion-style notes app. Agents read and write pages as Markdown over MCP or the HTTP API; people read and edit the same pages in a block editor.
 
 ## Connect
 
-- [MCP (Streamable HTTP)](${origin}/mcp): main endpoint for MCP clients
-- [MCP (legacy SSE)](${origin}/sse): for clients that only speak SSE
+- [MCP (Streamable HTTP)](${origin}/mcp): endpoint for MCP clients
 - [OpenAPI 3.1 spec](${origin}/api/v1/openapi.json): HTTP API under ${origin}/api/v1
-- Auth: header \`Authorization: Bearer acard_...\` (token made by the owner in 설정 > 에이전트 연결), or OAuth 2.1 with PKCE S256 and dynamic client registration at ${origin}/oauth/register
-- Local stdio: \`npx -y --package=${origin}/acard-cli.tgz acard mcp\` with env ACARD_TOKEN and ACARD_URL=${origin}
+- Auth: on this computer no token is needed; on a team server send \`Authorization: Bearer <ACARD_AGENT_TOKEN>\`
+- Local stdio: \`npx -y --package=${origin}/acard-cli.tgz acard mcp\` with env ACARD_URL=${origin}
 
 ## Conventions
 
-- [AGENTS.md](${origin}/AGENTS.md): full rules. Read it before writing.
-- [Agent skills](${origin}/api/v1/agent-skills): call get_agent_skills first. The owner edits the agent-skills page; missing rules are seeded in Korean.
+- [AGENTS.md](${origin}/AGENTS.md): tools, Markdown blocks and rules.
 - Prefer read_blocks and update_block/insert_blocks/delete_block with expected_version from the read. On 409 re-read and merge.
-- Visuals (cards, tables with totals, charts, heatmaps, flows): pick a part with list_parts and send only JSON data (\`\`\`acard-part fence or set_part_data), not a new HTML block.
-- Flows: a flow, process, pipeline or structure (전체 흐름, 구조도, 구성도) is the \`dag\` part: \`nodes\` [{id, label, desc, items, tags [{text, kind: agent|api|lib|person}], gate, state}], \`edges\` [[from, to, label?]], \`numbered\`, \`callout\` {title, text}. It draws step cards joined by arrows (left to right, top-down on phones) in the page theme. Never hand-write stacked HTML cards with ▼/→ arrows or white/black boxes; such a write returns \`htmlWarnings\` naming the part to use. To change an HTML block send only the changed text with patch_block.
-- One work-log page per project; add to existing logs with append, don't rewrite them.
-- Flag owner decisions with a callout \`> [!decision] 주인님 결정 필요: <question>\`. They show up in GET /api/v1/decisions.
-- Contents: never hand-write a \`## 목차\` list. One \`- [toc]\` line makes linked contents from the page's headings. A workflow, pipeline or structure diagram is the dag part, not stacked HTML cards or an uploaded image. Change one section with the block tools (GET/PATCH/POST /api/v1/pages/{slug}/blocks), not a text replace over the whole page markdown.
+- Parts (badge, table, chart, heatmap, dag): list_parts gives each one's JSON data schema and a ready fence; write the fence with JSON data only, or change one with set_part_data.
+- Decisions: a callout \`> [!decision] <question>\` shows up in GET /api/v1/decisions and list_decisions.
+- Contents: a \`- [toc]\` line shows a linked table of contents built from the page's headings.
 - Never put secrets, tokens or passwords in pages.
-- Write for the owner in Korean.
 
-## Optional
+## MCP tools
 
-- [Webhooks](${origin}/webhooks.md): Acard POSTs to your https URL when pages change (signed, debounced, retried)
-- [MCP tools](${origin}/AGENTS.md): whoami, get_agent_skills, read_blocks, update_block, insert_blocks, delete_block, list_pages, read_page, create_page, update_page, append_to_page, list_databases, read_database, add_database_row, update_database_row, list_decisions, upload_media, list_components, set_component_data
+whoami, list_pages, read_page, create_page, update_page, append_to_page, read_blocks, update_block, insert_blocks, delete_block, list_databases, read_database, add_database_row, update_database_row, list_decisions, upload_media, list_parts, set_part_data, patch_block, list_components, set_component_data
 `;
 }
 
@@ -409,38 +403,27 @@ For a summary, key numbers, steps, a comparison or a timeline, write a component
 export function agentsMd(origin, components) {
   return `# AGENTS.md (Acard)
 
-Acard (${origin}) is a Notion-like notes app. Agents write markdown. The human owner, called 주인님, reads and edits the same pages in a block editor on phone and PC. Your pages are their window into your work, so keep them tidy and readable.
+Acard (${origin}) is a Notion-style notes app. Agents read and write pages as Markdown; people read and edit the same pages in a block editor.
 
 ## Authenticate
 
-- MCP Streamable HTTP: ${origin}/mcp (legacy SSE: ${origin}/sse)
+- MCP Streamable HTTP: ${origin}/mcp
 - HTTP API: ${origin}/api/v1 (spec: ${origin}/api/v1/openapi.json)
-- Send \`Authorization: Bearer acard_...\`. The owner creates tokens in "설정 > 에이전트 연결". Or use OAuth 2.1 (PKCE S256, dynamic registration at ${origin}/oauth/register).
-- Command-only clients: \`npx -y --package=${origin}/acard-cli.tgz acard mcp\` with env ACARD_TOKEN and ACARD_URL=${origin}.
-- Call \`whoami\` (GET /api/v1/me) first to check your identity and scopes.
-- Call \`get_agent_skills\` (GET /api/v1/agent-skills) before writing. It reads the editable \`agent-skills\` page and seeds Korean defaults only if missing. Preserve the owner's changes to these rules.
+- On this computer no token is needed. On a team server send \`Authorization: Bearer <ACARD_AGENT_TOKEN>\` (the token the server was started with).
+- Command-only clients: \`npx -y --package=${origin}/acard-cli.tgz acard mcp\` with env ACARD_URL=${origin}.
+- \`whoami\` (GET /api/v1/me) shows your identity and scopes.
 
 ## Edit individual blocks
 
 - \`read_blocks\` takes \`page\` (slug), returning ordered \`{id,type,text,markdown}\` blocks and \`version\`/\`updated\` stamps. HTTP: GET /api/v1/pages/{slug}/blocks.
 - \`update_block\` takes \`page, block_id, markdown, expected_version\`. Markdown must describe exactly one block; its ID and indentation stay unchanged. HTTP: PATCH /api/v1/pages/{slug}/blocks/{id}.
 - \`insert_blocks\` takes \`page, after_block_id, markdown, expected_version\`. A null anchor inserts at the start; an ID inserts immediately after that block. HTTP: POST /api/v1/pages/{slug}/blocks.
-- Visuals: write \`\`\`mermaid (flowchart, sequenceDiagram, timeline, gantt, mindmap), \`\`\`acard-chart (JSON {type,labels,series}) or \`\`\`acard-visual (sandboxed HTML/SVG, no network, 64 KB) fences, or, only when no part fits and the user asked for it, \`\`\`html-embed for an HTML block (HTML/CSS/JS charts, interactive demos, styled layouts; runs in a sandboxed iframe with scripts but no network, cookies or parent access, 64 KB) with {"caption":...,"alt":...} after the language. The block follows the page's light/dark theme and grows to its content: use the Acard CSS variables (var(--fg), var(--fg-dim), var(--bg), var(--bg-soft), var(--surface), var(--line), var(--accent), var(--tag-<color>-bg/-fg)) instead of hard-coded white/black, and leave fonts, body font size and height alone; plain table, h2-h4, .card, .pill/.tag and .muted already look like the page. Blocks are never cut: a visual/chart/diagram/HTML block over 64 KB (UTF-8) or any other block over 100,000 characters makes the whole write fail with 413 and a message naming the block, so split it into several blocks. Images: \`upload_media\` takes \`page, data\` (base64 png/jpeg/webp/gif, 4 MB; SVG is refused) and returns a markdown image line. HTTP: POST /api/v1/media (multipart file, page, mime).
-- Parts first: when a page needs a visual (status cards, a table with totals or shares, a chart, a heatmap, a step flow), do not write a new HTML block. Call \`list_parts\` (the 5 defaults badge, table, chart, heatmap, dag plus parts registered from HTML blocks, each with its JSON data schema and fence) and write \`\`\`acard-part {"part":"table","v":1} with only the JSON data, or call \`set_part_data\` with \`page\`, \`block_id\` (or \`part\` and optional \`after_block_id\`, \`caption\`), \`data\` and \`expected_version\` from \`read_blocks\`. Data is checked against the part's schema (a mismatch fails and names the field); the part's code is never in the page, it runs in the same sandbox as HTML blocks, computes sums/averages/ratios itself and follows the page's dark theme. To change a number, send only the new data with \`set_part_data\`. A part block a person edited keeps the person's data; yours becomes an update suggestion. Measured on a 5-block sample: parts are about 5% of the tokens of the same HTML blocks to write, and a one-number change is 180 tokens instead of 3,900.
-- Editing an HTML block: do not resend the whole block. Call \`patch_block\` with \`page\`, \`block_id\`, \`expected_version\` and \`edits\` (a list of {find, replace}; each find must appear exactly once in the block) and only that text changes. If the HTML block draws cards, a table, a chart, a heatmap or a flow, suggest to the user turning it into a part with data and do it with \`set_part_data\` (\`part\` + \`after_block_id\`, then \`delete_block\` on the old one) once they agree.
 - \`delete_block\` takes \`page, block_id, expected_version\`. It deletes only that block, leaving descendants untouched. HTTP: DELETE /api/v1/pages/{slug}/blocks/{id} with a JSON body.
-- Prefer these tools over replacing a whole page. Send the exact \`version\` you read as \`expected_version\`; each successful write returns a new version. A stale version is HTTP 409, or MCP \`isError: true\` with \`structuredContent.status: 409\`. Re-read and merge instead of forcing a write.
-
+- Parts: \`list_parts\` returns the part types (badge, table, chart, heatmap, dag, plus parts made from HTML blocks) with their JSON data schema and a ready fence. Write the \`\`\`acard-part fence with JSON data only, or change one with \`set_part_data\` (\`page\`, \`block_id\`, \`data\`, \`expected_version\`).
+- HTML blocks: \`patch_block\` changes part of an existing HTML block with \`edits\` (a list of {find, replace}; each find appears exactly once in the block).
+- Prefer these tools over replacing a whole page. Send the exact \`version\` you read as \`expected_version\`; each successful write returns a new version. A stale version is HTTP 409, or MCP \`isError: true\` with \`structuredContent.status: 409\`. Re-read and merge.
 
 ${componentsMd(components)}
-## Where to write work logs
-
-- You'll be told a parent page. Create one page per project under it (create_page with \`parent\`).
-- A project or topic page is a folder: create it with \`view: folder\` and a one-line \`description\`, and write every long text (overview, log, plan, notes) as its own sub-page under it. Never put a long write-up into the folder page itself.
-- A person decides whether a page is a folder or an article (⋯ 폴더로 보기 / 글로 보기). update_page, append_to_page and block edits on a folder page are refused with 409; add a sub-page instead. An article page is written as before. \`set_page_view\` (PUT /api/v1/pages/{slug}/view) changes it only on pages no person has set.
-- If a log page already exists, add to it with \`append_to_page\` (POST /api/v1/pages/{slug}/append). Don't rewrite the whole page to add an entry.
-- Search first with \`list_pages\` (GET /api/v1/pages?q=) so you don't make duplicates.
-
 ## Frontmatter
 
 \`\`\`yaml
@@ -448,7 +431,7 @@ ${componentsMd(components)}
 title: Page title
 parent: parent-slug
 icon: "📒"
-tags: [log, project]
+tags: [notes]
 ---
 \`\`\`
 
@@ -458,135 +441,50 @@ tags: [log, project]
 
 | Markdown | Block |
 | --- | --- |
-| \`# H1\` to \`### H3\` | headings |
+| \`# H1\` to \`#### H4\` | headings |
 | \`- item\` / \`1. item\` | bulleted / numbered list |
-| \`- [ ] task\` / \`- [x] task\` | to-do (the owner ticks it; use this for any checklist) |
+| \`- [ ] task\` / \`- [x] task\` | to-do |
 | \`- [toggle] Title\` | toggle |
 | \`- [toc]\` | table of contents built from the headings |
 | \`> [!tip] text\` | callout |
 | \`> quote\` | quote |
 | fenced \`\`\` code \`\`\` | code |
 | \`---\` | divider |
-| \`| a | b |\` table | database (table/board) |
+| \`| a | b |\` table | table |
 | \`![caption](url "60")\` | image (last number is width %) |
-| \`![a](url "g=drafts")\` lines in a row | images with the same g= sit in one row (a set of drafts or screenshots) |
 | \`[[slug]]\` | page link (shows in backlinks) |
 
-## Asking the owner to decide
+## Decisions
 
-When you need 주인님 to choose something, add a callout:
+To ask a person to decide something, add a callout:
 
 \`\`\`
-> [!decision] 주인님 결정 필요: <one-sentence question>
+> [!decision] <one-sentence question>
 \`\`\`
 
-It shows up in GET /api/v1/decisions and the \`list_decisions\` tool. The owner answers by editing the page and removing the callout. Check \`list_decisions\` before you act on something you flagged; if the callout is gone, read the page for the answer.
+It shows up in GET /api/v1/decisions and the \`list_decisions\` tool. The person answers by editing the page and removing the callout.
 
 ## Rules
 
 - Never put secrets, tokens, passwords or private keys in a page.
-- Read before you overwrite. Prefer append over replace.
-- Long documents: one write takes up to 400,000 characters and a page up to 2,000 blocks. Up to ~50 KB (~1,000 blocks) saves in a few seconds; for more, create the page with the first sections and add the rest with \`append_to_page\` (POST /api/v1/pages/{slug}/append) in 30-50 KB pieces split at \`##\` headings, or put big sections in sub-pages. Over the limit is a 413 that says how to split.
-- Retries are safe: a create or append is saved whole or not at all, and the same call sent again (same body, or the same \`Idempotency-Key\` header / \`idempotencyKey\` field) returns the first result with \`duplicate: true\` instead of a second page or a second copy. After a timeout send the same call again; don't create under a new title.
-- Always pass \`expectedUpdated\` (the \`updated\` value you read) to update_page, or send \`If-Match\` with the ETag from GET /api/v1/pages/{slug}. Without it, a page a person edited after your last write is refused with 409. A 409 means the page changed since you read it: re-read, merge your change with theirs, then write again. Never drop the owner's edits.
-- Write in Korean when the text is for the owner.
-- Keep pages short. Lead with what changed and what's next.
+- Read before you overwrite. Pass \`expectedUpdated\` (the \`updated\` value you read) to update_page, or send \`If-Match\` with the ETag from GET /api/v1/pages/{slug}. A 409 means the page changed since you read it: re-read, merge, then write again.
+- One write takes up to 400,000 characters and a page up to 2,000 blocks; add more with \`append_to_page\` (POST /api/v1/pages/{slug}/append).
+- Retries are safe: the same create or append sent again (same body, or the same \`Idempotency-Key\` header / \`idempotencyKey\` field) returns the first result with \`duplicate: true\`.
 `;
 }
 
 export function connectClients(origin) {
   const mcp = origin + '/mcp';
-  const pkg = '--package=' + origin + '/acard-cli.tgz';
-  const stdioJson = (key) =>
-    JSON.stringify({
-      [key]: {
-        acard: {
-          command: 'npx',
-          args: ['-y', pkg, 'acard', 'mcp'],
-          env: { ACARD_TOKEN: '<TOKEN>', ACARD_URL: origin },
-        },
-      },
-    }, null, 2);
-  const headerJson = (outer, inner) =>
-    JSON.stringify({ [outer]: { acard: { ...inner, headers: { Authorization: 'Bearer <TOKEN>' } } } }, null, 2);
   const c = (id, name, docUrl, note, methods) => ({ id, name, status: 'unverified', docUrl, note, methods });
-  const verified = (client) => ({ ...client, status: 'verified' });
-
   return [
-    verified(c('omo', 'OMO', origin + '/AGENTS.md',
-      '이 PC 의 OMO 로 실제 페이지를 만들고 덧붙여 확인했어요. 토큰은 ACARD_TOKEN 환경변수에 넣어 둡니다. 프로젝트 파일(.omo/mcp.json)은 OMO 를 --approve 로 켜야 읽혀요.',
+    c('claude-code', 'Claude Code', 'https://code.claude.com/docs/en/mcp', 'Adds Acard as an MCP server.',
+      [{ label: 'Command', kind: 'command', code: `claude mcp add --transport http acard ${mcp}` }]),
+    c('codex', 'Codex CLI', 'https://developers.openai.com/codex/mcp', 'Adds Acard as an MCP server.',
+      [{ label: 'Command', kind: 'command', code: `codex mcp add acard --url ${mcp}` }]),
+    c('mcp', 'Other MCP clients', 'https://modelcontextprotocol.io/docs/getting-started/intro', 'Any client that speaks MCP over Streamable HTTP or stdio.',
       [
-        { label: '설정 파일에 추가', kind: 'file', path: '~/.omo/agent/mcp.json', code: JSON.stringify({ mcpServers: { acard: { type: 'http', url: mcp, auth: 'bearer', bearerTokenEnv: 'ACARD_TOKEN' } } }, null, 2) },
-        { label: '명령 방식(주소가 안 될 때)', kind: 'file', path: '~/.omo/agent/mcp.json', code: stdioJson('mcpServers') },
-      ])),
-    verified(c('claude-code', 'Claude Code', 'https://code.claude.com/docs/en/mcp',
-      '이 PC 의 Claude Code 로 실제 페이지를 만들고 고쳐서 확인했어요. 토큰 줄을 빼고 추가한 뒤 Claude Code 안에서 /mcp 를 실행하면 로그인으로 연결할 수도 있어요.',
-      [
-        { label: '명령 한 줄', kind: 'command', code: `claude mcp add --transport http acard ${mcp} --header "Authorization: Bearer <TOKEN>"` },
-        { label: '프로젝트 설정 파일', kind: 'file', path: '.mcp.json', code: headerJson('mcpServers', { type: 'http', url: mcp }) },
-      ])),
-    c('claude-desktop', 'Claude Desktop', 'https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp',
-      '설정 > 커넥터 > 사용자 지정 커넥터 추가에 주소를 넣으면 로그인 창이 뜹니다. 안 되면 아래 설정 파일 방식을 씁니다.',
-      [
-        { label: '커넥터 주소', kind: 'command', code: mcp },
-        { label: '설정 파일(명령 방식)', kind: 'file', path: '%APPDATA%\\Claude\\claude_desktop_config.json', code: stdioJson('mcpServers') },
+        { label: 'Config file', kind: 'file', path: 'mcp.json', code: JSON.stringify({ mcpServers: { acard: { url: mcp } } }, null, 2) },
+        { label: 'stdio command', kind: 'command', code: `npx -y --package=${origin}/acard-cli.tgz acard mcp` },
       ]),
-    c('codex', 'Codex CLI', 'https://developers.openai.com/codex/mcp',
-      '토큰은 ACARD_TOKEN 환경변수에 넣어 둡니다. 로그인 방식은 두 번째 명령을 씁니다.',
-      [
-        { label: '설정 파일에 추가', kind: 'file', path: '~/.codex/config.toml', code: `[mcp_servers.acard]\nurl = "${mcp}"\nbearer_token_env_var = "ACARD_TOKEN"` },
-        { label: '로그인으로 연결', kind: 'command', code: `codex mcp add acard --url ${mcp}` },
-      ]),
-    c('amp', 'Amp', 'https://ampcode.com/docs/customize/mcp',
-      '명령으로 추가하면 로그인 창이 뜹니다. 토큰을 쓰려면 설정 파일 방식을 씁니다.',
-      [
-        { label: '명령 한 줄', kind: 'command', code: `amp mcp add acard ${mcp}` },
-        { label: '설정에 추가', kind: 'file', path: 'settings.json', code: JSON.stringify({ 'amp.mcpServers': { acard: { url: mcp, headers: { Authorization: 'Bearer <TOKEN>' } } } }, null, 2) },
-      ]),
-    c('openclaw', 'OpenClaw (가재)', 'https://docs.openclaw.ai/cli/mcp',
-      '전송 방식을 빼면 기본값이 SSE 라서, streamable-http 를 꼭 적어야 합니다.',
-      [
-        { label: '로그인으로 연결', kind: 'command', code: `openclaw mcp add acard --url ${mcp} --transport streamable-http --auth oauth\nopenclaw mcp login acard` },
-        { label: '토큰으로 연결', kind: 'command', code: `openclaw mcp set acard '${JSON.stringify({ url: mcp, transport: 'streamable-http', headers: { Authorization: 'Bearer <TOKEN>' } })}'` },
-      ]),
-    c('cursor', 'Cursor', 'https://cursor.com/docs/context/mcp',
-      'headers 를 빼면 Cursor 가 로그인 창을 띄웁니다.',
-      [{ label: '설정 파일에 추가', kind: 'file', path: '~/.cursor/mcp.json', code: headerJson('mcpServers', { url: mcp }) }]),
-    c('windsurf', 'Windsurf', 'https://docs.windsurf.com/windsurf/cascade/mcp',
-      '윈도우에서는 %APPDATA%\\devin\\mcp_config.json 에 있습니다(현재 문서 기준).',
-      [{ label: '설정 파일에 추가', kind: 'file', path: '%APPDATA%\\devin\\mcp_config.json', code: headerJson('mcpServers', { serverUrl: mcp }) }]),
-    c('cline', 'Cline', 'https://docs.cline.bot/mcp/configuring-mcp-servers',
-      'type 을 빼면 SSE 로 연결되니 streamableHttp 를 꼭 적습니다.',
-      [{ label: '설정 파일에 추가', kind: 'file', path: 'cline_mcp_settings.json', code: headerJson('mcpServers', { type: 'streamableHttp', url: mcp }) }]),
-    c('continue', 'Continue', 'https://docs.continue.dev/customize/deep-dives/mcp',
-      '공식 문서에 토큰 넣는 방법이 없어서, 명령을 실행하는 방식을 권합니다.',
-      [{
-        label: '설정 파일 만들기', kind: 'file', path: '.continue/mcpServers/acard.yaml',
-        code: `name: Acard\nversion: 0.0.1\nschema: v1\nmcpServers:\n  - name: acard\n    command: npx\n    args:\n      - "-y"\n      - "${pkg}"\n      - acard\n      - mcp\n    env:\n      ACARD_TOKEN: <TOKEN>\n      ACARD_URL: ${origin}`,
-      }]),
-    c('gemini-cli', 'Gemini CLI', 'https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md',
-      'headers 를 빼면 처음 연결할 때 로그인 창이 뜹니다. SSE 를 쓰려면 "url": "' + origin + '/sse" 로 바꿉니다.',
-      [{ label: '설정 파일에 추가', kind: 'file', path: '~/.gemini/settings.json', code: headerJson('mcpServers', { httpUrl: mcp }) }]),
-    c('opencode', 'opencode', 'https://opencode.ai/docs/mcp-servers/',
-      '로그인 방식은 headers 를 빼고 opencode mcp auth acard 를 실행합니다.',
-      [{ label: '설정 파일에 추가', kind: 'file', path: 'opencode.json', code: JSON.stringify({ mcp: { acard: { type: 'remote', url: mcp, headers: { Authorization: 'Bearer <TOKEN>' } } } }, null, 2) }]),
-    c('goose', 'Goose', 'https://goose-docs.ai/docs/getting-started/using-extensions',
-      '처음 연결할 때 로그인 창이 뜹니다. 토큰을 직접 넣는 방법은 공식 문서에 없습니다.',
-      [{
-        label: '설정 파일에 추가', kind: 'file', path: '~/.config/goose/config.yaml',
-        code: `extensions:\n  acard:\n    name: Acard\n    type: streamable_http\n    uri: ${mcp}\n    enabled: true\n    timeout: 300`,
-      }]),
-    c('zed', 'Zed', 'https://zed.dev/docs/ai/mcp',
-      'headers 를 빼면 Zed 가 로그인 창을 띄웁니다.',
-      [{ label: '설정 파일에 추가', kind: 'file', path: 'settings.json', code: headerJson('context_servers', { url: mcp }) }]),
-    c('vscode-copilot', 'VS Code (Copilot 에이전트)', 'https://code.visualstudio.com/docs/copilot/customization/mcp-servers',
-      '처음 쓸 때 VS Code 가 토큰을 물어봅니다. 파일에 토큰을 직접 적지 않아도 됩니다.',
-      [{
-        label: '설정 파일에 추가', kind: 'file', path: '.vscode/mcp.json',
-        code: JSON.stringify({
-          servers: { acard: { type: 'http', url: mcp, headers: { Authorization: 'Bearer ${input:acard-token}' } } },
-          inputs: [{ type: 'promptString', id: 'acard-token', description: 'Acard token', password: true }],
-        }, null, 2),
-      }]),
   ];
 }

@@ -34,7 +34,6 @@
     { type: "divider", label: "구분선", hint: "가로줄", ico: "―" },
     { type: "database", label: "표", hint: "표·보드", ico: "▤" },
     { type: "image", label: "이미지", hint: "올리거나 붙여넣기", ico: "▣" },
-    { type: "photo-text", label: "사진에서 글 가져오기", hint: "글 읽기", ico: "▣" },
     { type: "video", label: "영상", hint: "주소나 파일", ico: "▶" },
     { type: "audio", label: "오디오", hint: "소리 파일", ico: "♪" },
     { type: "file", label: "파일", hint: "문서 올리기", ico: "🗎" },
@@ -55,7 +54,7 @@
   function loadEasy() { return Promise.all([lazy("easy-insert").then(function (e) { easy = e; }, function () {}), loadComponents()]); }
   // ds10: registered components join the slash list once the components chunk is loaded (with easy-insert).
   var componentItems = [];
-  function loadComponents() { return lazy("components").then(function (c) { componentItems = c.slashItems(); }, function () {}); }
+  function loadComponents() { return lazy("components").then(function (c) { return c.ready; }).then(function () { return lazy("components"); }).then(function (c) { componentItems = c.slashItems(); }, function () {}); }
   function slashMatches(query) { var all = BLOCK_TYPES.concat(componentItems); return easy ? easy.matches(all, query) : all; }
 
   var MEDIA_TYPES = { image: 1, video: 1, audio: 1, file: 1, embed: 1, bookmark: 1 };
@@ -223,6 +222,7 @@
 
   var saveTimer = null;
   var activeSave = null;
+  var hasToc = false;
   var undoStack = [], redoStack = [], previousSnapshot = null, restoring = false;
   function snapshot() { return JSON.stringify({ title: state.title, blocks: state.blocks }); }
   function restoreEdit(from, to) {
@@ -237,7 +237,9 @@
     render(); scheduleSave();
     restoring = false;
   }
-  function scheduleSave() {
+  // edited: the block whose text just changed (wireText). The TOC lists headings only, so typing in any other
+  // block (or on a page without a TOC) does not repaint it; structural edits pass nothing and always repaint.
+  function scheduleSave(edited) {
     startupEdited = true;
     var current = snapshot();
     if (!restoring && previousSnapshot && current !== previousSnapshot) {
@@ -247,7 +249,7 @@
     }
     previousSnapshot = current;
     state.dirty = true;
-    paintTocs();
+    if (hasToc && !(edited && edited.id && !/^heading[1-4]$/.test(edited.type))) paintTocs();
     emitFeature("change", { title: state.title, blocks: state.blocks, base_updated: state.baseUpdated });
     setSave("저장 중…", true);
     if (saveTimer) clearTimeout(saveTimer);
@@ -298,6 +300,7 @@
     var shaped = structure(state.blocks);
     if (shaped !== state.blocks) state.blocks = shaped;
     els.blocks.innerHTML = "";
+    hasToc = state.blocks.some(function (block) { return block.type === "toc"; });
     var parents = [];
     state.blocks.forEach(function (block, index) {
       while (parents.length && model.depth(parents[parents.length - 1].block) >= model.depth(block)) parents.pop();
@@ -411,6 +414,15 @@
       return row;
     }
 
+    if (block.type === "plugin") {
+      var ph = document.createElement("div");
+      ph.textContent = "불러오는 중…";
+      lazy("plugins").then(function (p) { p.mount(ph, block); }, function () { ph.textContent = "플러그인을 불러오지 못했어요."; });
+      body.appendChild(ph);
+      row.appendChild(body);
+      return row;
+    }
+
     if (/^(diagram|chart|visual|html|part)$/.test(block.type)) {
       var vh = document.createElement("div");
       vh.textContent = "불러오는 중…";
@@ -490,14 +502,16 @@
 
   function wireText(text, block, row, index) {
     text.addEventListener("focus", loadEasy, { once: true });
-    text.addEventListener("input", function () {
+    text.addEventListener("input", function (ev) {
       block.text = text.textContent;
       if (block.type !== "code") block.meta = Object.assign({}, block.meta, { richText: model.readRich(text) });
-      if (block.type === "paragraph" && /^\/[^\s/]{0,12}$/.test(text.textContent)) { openSlash(text, index, text.textContent.slice(1)); loadEasy().then(function () { if (slashIndex == index) openSlash(text, index, text.textContent.slice(1)); }); }
-      else if (!els.slash.hidden && slashIndex === index) hideSlash();
-      if (easy && easy.shortcut(text.textContent, block, index)) return;
-      if (formatContext) formatContext.mention(text, block);
-      scheduleSave();
+      if (!ev.isComposing) {
+        if (block.type === "paragraph" && /^\/[^\s/]{0,12}$/.test(text.textContent)) { openSlash(text, index, text.textContent.slice(1)); loadEasy().then(function () { if (slashIndex == index) openSlash(text, index, text.textContent.slice(1)); }); }
+        else if (!els.slash.hidden && slashIndex === index) hideSlash();
+        if (easy && easy.shortcut(text.textContent, block, index)) return;
+        if (formatContext) formatContext.mention(text, block);
+      }
+      scheduleSave(block);
     });
     text.addEventListener("paste", function (ev) {
       ev.preventDefault();
@@ -509,6 +523,19 @@
       insert();
     });
     text.addEventListener("keydown", function (ev) {
+      if (ev.isComposing || ev.keyCode === 229) return;
+      var mod = ev.ctrlKey || ev.metaKey;
+      if (mod && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "d") {
+        ev.preventDefault();
+        focusBlock(duplicate(index).id);
+        return;
+      }
+      if (mod && ev.shiftKey && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) {
+        ev.preventDefault();
+        moveSibling(index, ev.key === "ArrowUp" ? -1 : 1);
+        focusBlock(block.id);
+        return;
+      }
       if (!els.slash.hidden && ["Enter", "ArrowUp", "ArrowDown"].indexOf(ev.key) >= 0) return;
       if (ev.key === "Enter" && !ev.shiftKey) {
         ev.preventDefault();
@@ -1473,11 +1500,6 @@
     if (index < 0) return;
     var block = state.blocks[index];
     if (!block) return;
-    if (type === "photo-text") {
-      lazy("photo-text").then(function (feature) { feature.open(block.id); })
-        .catch(function () { window.alert("사진 도구를 불러오지 못했어요. 새로고침해 주세요."); });
-      return;
-    }
     if (type === "subpage") {
       if (easy) easy.remember(type);
       createSubpage(block);
@@ -1492,6 +1514,7 @@
       render(); focusBlock(made[2].id); scheduleSave();
       return;
     }
+    if (easy && easy.apply(block, type)) return;
     var ui = /^component:([a-z][a-z0-9-]{1,39})$/.exec(type);
     if (ui) {
       if (easy) easy.remember(type);
@@ -1570,7 +1593,7 @@
       ["아래로 내리기", function () { move(index, 1); undoToast("블록을 옮겼어요"); }],
       ["들여쓰기", function () { indent(index, 1); }],
       ["내어쓰기", function () { indent(index, -1); }],
-      ["복제", function () { var copies = JSON.parse(JSON.stringify(state.blocks.slice(index, model.endOf(state.blocks, index)))); copies.forEach(function (copy) { copy.id = uid(); }); state.blocks.splice.apply(state.blocks, [model.endOf(state.blocks, index), 0].concat(copies)); render(); scheduleSave(); }],
+      ["복제", function () { duplicate(index); }],
       ["블록 링크 복사", function () { navigator.clipboard.writeText(location.origin + "/edit/" + encodeURIComponent(slug) + "/#block-" + encodeURIComponent(block.id)).then(function () { setSave("블록 링크 복사됨", false); }).catch(function (error) { setSave("복사 실패: " + error.message, true); }); }],
       ["종류 바꾸기", function () { openSlash(anchor, index); }],
       cm.columnOf(state.blocks, index) ? ["왼쪽 열로", function () { moveToColumn(index, -1); }] : null,
@@ -1580,6 +1603,8 @@
         if (meta.toggle) { delete meta.toggle; delete meta.open; } else { meta.toggle = true; meta.open = true; }
         block.meta = meta; render(); scheduleSave();
       }] : null,
+      block.type === "plugin" ? ["공개 화면에 이 모습 쓰기", function () { lazy("plugins").then(function (p) { return p.snapshot(block); }).then(function (s) { setSave(s ? "공개 화면 모습을 저장했어요" : "플러그인 화면을 읽지 못했어요", !s); }, function () { setSave("플러그인 화면을 읽지 못했어요", true); }); }] : null,
+      /^(html|visual)$/.test(block.type) && window.AcardFolders ? ["부품으로 등록", function () { lazy("part-register").then(function (r) { r.open(block, index); }); }] : null,
       ["색", function () { lazy("block-style").then(function (s) { s.open(anchor, block); }); }],
       ["댓글", function () { if (pageContext) pageContext.comments(block.id); }],
       ["삭제", function () { state.blocks.splice(index, model.endOf(state.blocks, index) - index); render(); scheduleSave(); undoToast("블록을 지웠어요"); }]
@@ -1595,6 +1620,27 @@
       els.ctx.appendChild(button);
     });
     els.ctx.hidden = false;
+  }
+
+  function duplicate(index) {
+    var copies = JSON.parse(JSON.stringify(state.blocks.slice(index, model.endOf(state.blocks, index))));
+    copies.forEach(function (copy) { copy.id = uid(); });
+    state.blocks.splice.apply(state.blocks, [model.endOf(state.blocks, index), 0].concat(copies));
+    render();
+    scheduleSave();
+    return copies[0];
+  }
+
+  // Ctrl/Cmd+Shift+Up/Down: past the previous / next sibling only, so a first or last child stays in its parent.
+  function moveSibling(index, delta) {
+    var depth = model.depth(state.blocks[index]);
+    var target = delta < 0 ? index - 1 : model.endOf(state.blocks, index);
+    while (delta < 0 && target >= 0 && model.depth(state.blocks[target]) > depth) target -= 1;
+    if (target < 0 || target >= state.blocks.length || model.depth(state.blocks[target]) !== depth) return;
+    if (delta > 0) target = model.endOf(state.blocks, target);
+    if (!model.move(state.blocks, index, target, depth)) return;
+    render();
+    scheduleSave();
   }
 
   function move(index, delta) {
@@ -1891,7 +1937,7 @@
     if ((ev.ctrlKey || ev.metaKey) && ev.key === "\\") { ev.preventDefault(); toggleSide(); }
   });
 
-  // --- 더보기 메뉴 + 노션 내보내기 가져오기 ---
+  // --- 더보기 메뉴 ---
   var moreBtn = document.getElementById("more");
   var moreMenu = document.getElementById("more-menu");
   if (moreBtn && moreMenu) {
@@ -1908,111 +1954,6 @@
       }
     });
   }
-
-  var importDialog = document.getElementById("import-dialog");
-  var importFile = document.getElementById("import-file");
-  var importGo = document.getElementById("import-go");
-  var importStatus = document.getElementById("import-status");
-  var importOpen = document.getElementById("import-open");
-  var importClose = document.getElementById("import-close");
-
-  function setImportStatus(text, busy) {
-    if (!importStatus) return;
-    importStatus.textContent = text;
-    importStatus.classList.toggle("busy", !!busy);
-  }
-
-  function runImport() {
-    if (!importFile || !importFile.files || !importFile.files[0]) {
-      setImportStatus("zip 파일을 골라 주세요.", false);
-      return;
-    }
-    var file = importFile.files[0];
-    if (file.size > 30 * 1024 * 1024) {
-      setImportStatus("파일이 너무 커요. 30MB 아래로 나눠 주세요.", false);
-      return;
-    }
-    setImportStatus("가져오는 중… (" + Math.round(file.size / 1024) + " KB)", true);
-    if (importGo) importGo.disabled = true;
-    file.arrayBuffer().then(function (buffer) {
-      return net("/api/import", {
-        method: "POST",
-        headers: { "content-type": "application/zip" },
-        body: buffer,
-      }).then(function (res) {
-        return res.json().catch(function () { return {}; }).then(function (body) {
-          if (!res.ok) throw new Error(body.error || String(res.status));
-          return body;
-        });
-      });
-    }).then(function (body) {
-      var lines = [];
-      if (body.imported) lines.push("페이지 " + body.imported + "개를 가져왔어요.");
-      if (body.warnings && body.warnings.length) lines.push("알림: " + body.warnings.join(" / "));
-      if (body.skipped && body.skipped.length) lines.push("건너뛴 파일 " + body.skipped.length + "개");
-      setImportStatus(lines.join(" ") || "가져올 페이지를 찾지 못했어요.", false);
-      if (body.imported) {
-        loadTree();
-        var first = (body.pages || [])[0];
-        if (first && first.slug) {
-          window.setTimeout(function () {
-            location.href = "/edit/" + encodeURIComponent(first.slug) + "/";
-          }, 900);
-        }
-      }
-    }).catch(function (error) {
-      setImportStatus("가져오기 실패: " + error.message, false);
-    }).then(function () {
-      if (importGo) importGo.disabled = false;
-    });
-  }
-
-  if (importOpen) importOpen.addEventListener("click", function () {
-    if (moreMenu) moreMenu.hidden = true;
-    importDialog.hidden = false;
-    setImportStatus("", false);
-    if (importFile) importFile.focus();
-  });
-  if (importClose) importClose.addEventListener("click", function () { importDialog.hidden = true; });
-  if (importDialog) importDialog.addEventListener("mousedown", function (ev) {
-    if (ev.target === importDialog) importDialog.hidden = true;
-  });
-  if (importGo) importGo.addEventListener("click", runImport);
-
-  var importMdFile = document.getElementById("import-md-file");
-  var importMdGo = document.getElementById("import-md-go");
-  function runMarkdownImport() {
-    if (!importMdFile || !importMdFile.files || !importMdFile.files.length) {
-      setImportStatus("마크다운 파일을 골라 주세요.", false);
-      return;
-    }
-    var form = new FormData();
-    var names = [];
-    for (var i = 0; i < importMdFile.files.length; i++) {
-      var f = importMdFile.files[i];
-      if (f.size > 2 * 1024 * 1024) { setImportStatus(f.name + " 이 너무 커요. 2MB 아래로 나눠 주세요.", false); return; }
-      form.append("file", f);
-      names.push(f.name);
-    }
-    setImportStatus("가져오는 중… (" + names.length + "개 파일)", true);
-    if (importMdGo) importMdGo.disabled = true;
-    net("/api/import/md", { method: "POST", body: form })
-      .then(function (res) { return res.json().catch(function () { return {}; }).then(function (body) { if (!res.ok) throw new Error(body.error || String(res.status)); return body; }); })
-      .then(function (body) {
-        var lines = [];
-        if (body.imported) lines.push("페이지 " + body.imported + "개를 가져왔어요.");
-        if (body.warnings && body.warnings.length) lines.push("알림: " + body.warnings.join(" / "));
-        setImportStatus(lines.join(" ") || "가져올 페이지를 찾지 못했어요.", false);
-        if (body.imported) {
-          loadTree();
-          var first = (body.pages || [])[0];
-          if (first && first.slug) window.setTimeout(function () { location.href = "/edit/" + encodeURIComponent(first.slug) + "/"; }, 900);
-        }
-      })
-      .catch(function (error) { setImportStatus("가져오기 실패: " + error.message, false); })
-      .then(function () { if (importMdGo) importMdGo.disabled = false; });
-  }
-  if (importMdGo) importMdGo.addEventListener("click", runMarkdownImport);
 
   // --- 키보드 단축키 ---
   var shortcutsEl = document.getElementById("shortcuts");
@@ -2146,7 +2087,6 @@
     if (ev.key === "Escape") {
       palette.hidden = true;
       shortcutsEl.hidden = true;
-      importDialog.hidden = true;
       if (moreMenu) moreMenu.hidden = true;
     }
   });
@@ -2234,7 +2174,7 @@
         els.title.value = "";
         els.title.focus();
       }
-      document.getElementById("viewlink").href = "/" + (slug === "index" ? "" : slug + "/");
+      document.getElementById("viewlink").href = "/" + (slug === "index" ? "home" : slug) + "/";
       document.title = state.title + " 고치기 · " + window.DoriSite.name;
       els.meta.textContent = (data.page.source === "markdown" ? "AI가 쓴 페이지" : "직접 고친 페이지") + " · 블록 " + state.blocks.length + "개";
       if (!same) render();

@@ -22,6 +22,7 @@ ul.list{list-style:none;padding:0;margin:8px 0 0}ul.list li{display:flex;gap:8px
 ul.list a{color:var(--accent,#7c3aed);word-break:break-all}
 .auto{font-size:14px;margin:12px 0 0}.auto strong{color:var(--fg,#1c1917)}
 .guide{border-left:3px solid var(--accent,#7c3aed);padding:8px 12px;background:var(--bg,#faf5ff);border-radius:6px}
+.guide .incl{margin:4px 0 8px;padding-left:20px;line-height:1.7}.guide a{color:var(--accent,#7c3aed)}
 </style></head><body><main>
 <a class="back" href="/">← 내 페이지로</a>
 <h1>내 데이터</h1>
@@ -35,11 +36,11 @@ ul.list a{color:var(--accent,#7c3aed);word-break:break-all}
 <div class="msg" id="local-msg" role="status"></div></section>
 
 <section id="agents"><h2>AI 에이전트 연결 (로컬 MCP)</h2>
-<p>Claude Code, Codex 같은 에이전트를 이 PC 의 문서에 바로 붙여요. 가입·토큰 없이 아래 주소를 MCP 서버로 넣으면 돼요.</p>
+<p>MCP 를 쓰는 AI 에이전트를 이 PC 의 문서에 연결해요. 아래 주소를 MCP 서버로 추가하면 돼요.</p>
 <div class="row"><code id="mcp-url"></code><button id="copy-mcp">복사</button></div>
-<p style="font-size:13px">예: <code id="mcp-cmd"></code></p></section>
+<p style="font-size:13px">Claude Code: <code id="mcp-cmd"></code><br>Codex: <code id="mcp-cmd-codex"></code></p></section>
 
-<section id="account"><h2>notes.example.com 연결 <span class="badge" id="state">확인 중</span></h2>
+<section id="account" hidden><h2>notes.example.com 연결 <span class="badge" id="state">확인 중</span></h2>
 <p id="account-text">연결하면 웹에 게시하고, 클라우드에 백업할 수 있어요. 로그인은 브라우저에서 해요.</p>
 <div class="row" id="account-actions"></div>
 <div class="guide" id="guide" hidden></div>
@@ -67,7 +68,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 async function call(path, init) {
   const res = await fetch(path, init);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error === "subscription_required" ? "구독이 필요해요." : data.error || "실패했어요 (" + res.status + ")"), { data, status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error === "subscription_required" ? "구독이 필요해요. 아래 안내에서 구독하면 무엇이 열리는지 볼 수 있어요." : data.error || "실패했어요 (" + res.status + ")"), { data, status: res.status });
   return data;
 }
 function confirmRestore(what) { return confirm(what + "\\n\\n지금 데이터는 먼저 backups 폴더에 저장한 뒤 바꿔요. 계속할까요?"); }
@@ -82,7 +83,10 @@ function guide(g) {
   const box = $("guide");
   if (!g) { box.hidden = true; return; }
   box.hidden = false;
-  box.innerHTML = "<strong>" + esc(g.title) + "</strong><p>" + esc(g.text) + "</p><p>" + esc(g.price) + " · " + esc(g.contact) + "</p>"
+  box.innerHTML = "<strong>" + esc(g.title) + "</strong><p>" + esc(g.text) + "</p>"
+    + (Array.isArray(g.includes) ? '<ul class="incl">' + g.includes.map((t) => "<li>" + esc(t) + "</li>").join("") + "</ul>" : "")
+    + "<p>" + esc(g.price) + " · " + esc(g.contact) + "</p>"
+    + (g.compareUrl ? '<p><a href="' + esc(g.compareUrl) + '" target="_blank" rel="noopener">노션·옵시디언과 비교 →</a></p>' : "")
     + (g.checkout ? '<div class="row"><button class="primary" id="subscribe">구독하기</button></div>' : "");
   if (g.checkout) $("subscribe").onclick = subscribe;
 }
@@ -122,7 +126,8 @@ async function loadBackups() {
 async function refresh() {
   const s = await call("/__local/cloud/status");
   const actions = $("account-actions");
-  if (!s.enabled) { $("state").textContent = "꺼짐"; $("account-text").textContent = "이 설치본은 클라우드 기능이 꺼져 있어요."; actions.innerHTML = ""; return; }
+  if (!s.enabled) { $("account").hidden = true; $("publish").hidden = $("cloud").hidden = $("sync").hidden = true; return; }
+  $("account").hidden = false;
   if (!s.connected) {
     $("state").textContent = s.expired ? "다시 연결 필요" : "연결 안 됨";
     actions.innerHTML = '<button class="primary" id="connect">notes.example.com 연결</button>';
@@ -142,13 +147,14 @@ async function refresh() {
   guide(account.guide);
   $("publish").hidden = $("cloud").hidden = $("sync").hidden = false;
   $("do-publish").disabled = $("do-backup").disabled = !sub.active;
+  if (!sub.active) { say("publish-msg", "구독하면 게시할 수 있어요. 무엇이 열리는지는 위 안내에 있어요."); say("cloud-msg", "구독하면 클라우드에 백업할 수 있어요."); }
   syncActive = Boolean(sub.active); loadSync();
   await Promise.all([loadPages(), loadPubs().catch((e) => say("publish-msg", e.message, false)), loadBackups().catch((e) => say("cloud-msg", e.message, false))]);
 }
 $("do-publish").onclick = async () => {
   say("publish-msg", "올리는 중…");
   try { const r = await call("/__local/cloud/publish", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ slug: $("page").value }) }); say("publish-msg", "게시했어요: " + r.url, true); loadPubs(); }
-  catch (e) { say("publish-msg", e.message, false); if (e.data && e.data.guide) guide(e.data.guide); }
+  catch (e) { say("publish-msg", e.message, false); if (e.data && e.data.guide) { guide(e.data.guide); $("guide").scrollIntoView({ block: "center" }); } }
 };
 $("pubs").onclick = async (ev) => {
   const slug = ev.target.dataset && ev.target.dataset.unpub; if (!slug || !confirm("게시를 내릴까요? 원본은 그대로 있어요.")) return;
@@ -200,6 +206,7 @@ $("sync-now").onclick = async () => { say("sync-msg", "맞추는 중…"); try {
 setInterval(() => { if (!$("sync").hidden) loadSync(); }, 10000);
 $("mcp-url").textContent = location.origin + "/mcp";
 $("mcp-cmd").textContent = "claude mcp add --transport http acard " + location.origin + "/mcp";
+$("mcp-cmd-codex").textContent = "codex mcp add acard --url " + location.origin + "/mcp";
 $("copy-mcp").onclick = () => navigator.clipboard.writeText(location.origin + "/mcp").then(() => { $("copy-mcp").textContent = "복사됨"; });
 // The desktop app opens the login in the system browser and stays on this page, so it watches for the callback.
 function waitConnected() {

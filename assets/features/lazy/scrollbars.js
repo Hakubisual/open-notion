@@ -60,10 +60,14 @@
 
   const edge = (el) => el.classList.toggle("sb-more", el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
   const WIDE = ".dbtable, .editable-table, .board, .blocks pre, .table-wrap, .tablewrap";
-  const scan = () => document.querySelectorAll(WIDE).forEach((el) => {
-    if (el.scrollWidth > el.clientWidth + 2) { el.classList.add("sb-x"); edge(el); }
-    else el.classList.remove("sb-x", "sb-more");
-  });
+  const scan = () => {
+    // Read every width before the first class write so no element's write forces layout for the next read.
+    const measured = Array.from(document.querySelectorAll(WIDE), (el) => ({ el, wide: el.scrollWidth > el.clientWidth + 2, more: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 }));
+    measured.forEach(({ el, wide, more }) => {
+      if (wide) { el.classList.add("sb-x"); el.classList.toggle("sb-more", more); }
+      else el.classList.remove("sb-x", "sb-more");
+    });
+  };
   scan();
   let queued = false;
   new MutationObserver(() => { if (queued) return; queued = true; setTimeout(() => { queued = false; scan(); }, 400); }).observe(document.body, { childList: true, subtree: true });

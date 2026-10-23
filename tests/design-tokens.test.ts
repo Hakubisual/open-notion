@@ -8,8 +8,7 @@ const ROOT = join(import.meta.dir, "..");
 // have none. Lower the fixture when a file is cleaned up (the test says so).
 const SOURCES = ["assets/**/*.css","assets/**/*.js","features/*.js","editor-next/*.css","editor-next/*.js","block-html.js","editor-pages.js","db-html.js","visual-html.js","equation-html.js","component-registry.js","components/*.js"];
 const COLOR = /#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d/g;
-// tokens-report.css is the token file of the research report page style, loaded only on those pages (first-screen budget).
-const exempt = (file: string) => file === "assets/tokens.css" || file === "assets/tokens-report.css" || /^assets\/(fonts|_site|img)\//.test(file);
+const exempt = (file: string) => file === "assets/tokens.css" || /^assets\/(fonts|_site|img)\//.test(file);
 
 async function counts() {
   const out: Record<string, number> = {};

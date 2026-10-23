@@ -262,6 +262,35 @@ describe("registering and sharing parts", () => {
     expect((await send("GET", "/api/parts", undefined, "none")).status).toBe(401);
     expect((await send("GET", "/p/" + "A".repeat(43) + "/acard-part.json", undefined, "none")).status).toBe(404);
   });
+  test("#38 stage 2: a part carries a description, its maker renames it, and only its maker can rename, share or delete it", async () => {
+    const { slug, block } = await htmlPage();
+    env.ACARD_USER_EMAIL = "maker@example.com";
+    const made = await send("POST", "/api/parts", { id: "week", name: "주간 카드", description: "  주간 매출을 보여 줘요  ", page: slug, block, sample: { msg: "hi" } }, "person");
+    expect(made.data).toMatchObject({ id: "week", name: "주간 카드", description: "주간 매출을 보여 줘요" });
+    expect((await run("listParts", {})).parts.find((p: any) => p.id === "week").description).toStartWith("주간 매출을 보여 줘요 - registered from an HTML block");
+    env.ACARD_USER_EMAIL = "other@example.com";
+    expect((await send("PATCH", "/api/parts/week", { name: "남의 이름" }, "person")).status).toBe(403);
+    expect((await send("POST", "/api/parts/week/share", { link: true }, "person")).status).toBe(403);
+    expect((await send("DELETE", "/api/parts/week", undefined, "person")).status).toBe(403);
+    expect((await send("GET", "/api/parts/week", undefined, "person")).data).toMatchObject({ name: "주간 카드", shared: false });
+    env.ACARD_USER_EMAIL = "maker@example.com";
+    const renamed = await send("PATCH", "/api/parts/week", { name: "주간 판매 카드", description: "판매액·건수" }, "person");
+    expect(renamed.status).toBe(200);
+    expect(renamed.data).toMatchObject({ name: "주간 판매 카드", description: "판매액·건수", version: 1 });
+    expect((await send("PATCH", "/api/parts/week", { name: "  " }, "person")).status).toBe(400);
+    expect((await send("DELETE", "/api/parts/week", undefined, "person")).status).toBe(200);
+    expect((await send("GET", "/api/parts/week", undefined, "person")).status).toBe(404);
+    delete env.ACARD_USER_EMAIL;
+  });
+  test("a store made before the description column gets it on the next start", async () => {
+    sqlite.exec("ALTER TABLE parts DROP COLUMN description");
+    sqlite.exec("INSERT INTO parts (id, name, code) VALUES ('old', 'Old', '<p>x</p>')");
+    worker = new Function(WORKER_SOURCE)();
+    const list = await send("GET", "/api/parts", undefined, "person");
+    expect(list.status).toBe(200);
+    expect(list.data.parts.find((p: any) => p.id === "old")).toMatchObject({ name: "Old" });
+    expect((sqlite.query("PRAGMA table_info(parts)").all() as any[]).map((c) => c.name)).toContain("description");
+  });
 });
 
 describe("published and link pages", () => {
