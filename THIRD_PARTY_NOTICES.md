@@ -38,7 +38,7 @@ SOFTWARE.
 
 The font files in `assets/fonts/` are woff2 subsets of the fonts below. Glyphs are not changed; each file keeps its
 copyright notice and the OFL 1.1 license description and URL in its `name` table (name IDs 0, 13, 14). The font
-software stays under the SIL Open Font License 1.1, not the MIT License of this repository. The full license text,
+software stays under the SIL Open Font License 1.1, not the AGPL-3.0 license of this repository. The full license text,
 with each font's copyright lines, is in `LICENSES/`.
 
 | Font | Files | Copyright | Source | License text |
@@ -68,4 +68,4 @@ The OFL 1.1 text online: https://openfontlicense.org/open-font-license-official-
 | zod | MIT |
 | electron, electron-builder (desktop/ only, dev) | MIT |
 
-All are compatible with distributing Acard under the MIT License.
+All are compatible with distributing Acard under the AGPL-3.0 license.

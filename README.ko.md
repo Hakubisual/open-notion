@@ -32,10 +32,10 @@ SQLite 파일에 저장하며, 브라우저·데스크톱 앱(Acard Local)·내 
 | | Acard | Notion | Obsidian |
 | --- | --- | --- | --- |
 | 데이터 위치 | 내가 고른 폴더의 SQLite 파일 | Notion 클라우드 | 로컬 볼트의 마크다운 파일 |
-| 팀용 서버 직접 운영 | 됨: 프로세스 하나, MIT | 안 됨 | 기본 기능 없음 (공유 볼트는 Obsidian Sync) |
+| 팀용 서버 직접 운영 | 됨: 프로세스 하나, AGPL-3.0 | 안 됨 | 기본 기능 없음 (공유 볼트는 Obsidian Sync) |
 | 블록 편집 + 데이터베이스 | 됨: 보기 7종, 관계, 롤업, 수식 | 됨 | 마크다운 노트, Bases 로 데이터베이스 보기 |
 | AI 에이전트 읽기·쓰기 | 내 서버에 MCP·REST 내장 | Notion API·호스팅 MCP (Notion 클라우드) | 커뮤니티 플러그인 |
-| 소스 코드 | 공개 (MIT) | 비공개 | 앱 비공개, 플러그인 API 공개 |
+| 소스 코드 | 공개 (AGPL-3.0) | 비공개 | 앱 비공개, 플러그인 API 공개 |
 
 Notion 과 Obsidian 은 둘 다 훌륭한 도구입니다. Acard 는 노션처럼 블록과 데이터베이스로 쓰고 싶지만 문서를 외부 서비스에
 맡기고 싶지 않은 사람을 위한 선택입니다. 항목마다 근거 코드를 단 자세한 비교는 [docs/why-acard.ko.md](docs/why-acard.ko.md)
@@ -142,7 +142,7 @@ v0.1.0 까지는 OpenNotion 이라는 이름이었습니다. 데이터와 설정
 
 ## 라이선스
 
-[MIT](LICENSE). 서드파티 고지: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[AGPL-3.0](LICENSE). 서드파티 고지: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Acard 는 독립 오픈소스 프로젝트이며 Notion Labs, Inc. 나 Obsidian 개발사와 제휴·보증·후원 관계가 없습니다.
 "Notion" 과 "Obsidian" 은 각 소유자의 상표이며, 여기서는 설명과 비교를 위해서만 씁니다.

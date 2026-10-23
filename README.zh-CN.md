@@ -31,10 +31,10 @@ Acard 是一个自托管的 Notion 风格工作区。一个 Bun 进程提供编�
 | | Acard | Notion | Obsidian |
 | --- | --- | --- | --- |
 | 数据存放位置 | 你选定文件夹里的 SQLite 文件 | Notion 云端 | 本地仓库（vault）里的 Markdown 文件 |
-| 为团队自建服务器 | 可以：一个进程，MIT 许可 | 不可以 | 没有内置（共享仓库需使用 Obsidian Sync） |
+| 为团队自建服务器 | 可以：一个进程，AGPL-3.0 许可 | 不可以 | 没有内置（共享仓库需使用 Obsidian Sync） |
 | 块编辑与数据库 | 支持：7 种视图、关联、汇总、公式 | 支持 | Markdown 笔记，Bases 提供数据库视图 |
 | AI 智能体读写页面 | 你的服务器内置 MCP 与 REST | Notion API 与托管 MCP（在 Notion 云端） | 社区插件 |
-| 源代码 | 开源（MIT） | 闭源 | 应用闭源，插件 API 开放 |
+| 源代码 | 开源（AGPL-3.0） | 闭源 | 应用闭源，插件 API 开放 |
 
 Notion 和 Obsidian 都是优秀的工具。Acard 适合想要 Notion 式块与数据库编辑、又不想把文档交给托管服务的人。
 每一项都附有代码依据的完整对比见 [docs/why-acard.zh-CN.md](docs/why-acard.zh-CN.md)。
@@ -137,7 +137,7 @@ Acard 服务器响应后，在独立窗口中打开。它与托管版 Acard 应�
 
 ## 许可证
 
-[MIT](LICENSE)。第三方声明：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+[AGPL-3.0](LICENSE)。第三方声明：[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 Acard 是独立的开源项目，与 Notion Labs, Inc. 及 Obsidian 的开发者没有任何隶属、背书或赞助关系。
 "Notion" 和 "Obsidian" 是其各自所有者的商标，此处仅用于说明和比较。

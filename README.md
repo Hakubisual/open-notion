@@ -19,7 +19,7 @@
 
 <p align="center">
   <a href="https://github.com/Hakubisual/open-notion-acard/actions/workflows/ci.yml"><img src="https://github.com/Hakubisual/open-notion-acard/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1C1C1E" alt="MIT license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-1C1C1E" alt="AGPL-3.0 license"></a>
   <a href="https://github.com/Hakubisual/open-notion-acard/releases/latest"><img src="https://img.shields.io/github/v/release/Hakubisual/open-notion-acard?color=6450DC" alt="Latest release"></a>
 </p>
 
@@ -38,10 +38,10 @@ It works for one person on a laptop, and for a team that keeps a server on an of
 | | Acard | Notion | Obsidian |
 | --- | --- | --- | --- |
 | Where your data lives | SQLite files in a folder you choose | Notion's cloud | Markdown files in a local vault |
-| Run your own server for a team | Yes: one process, MIT licensed | No | Not built in (shared vaults use Obsidian Sync) |
+| Run your own server for a team | Yes: one process, AGPL-3.0 licensed | No | Not built in (shared vaults use Obsidian Sync) |
 | Block editor with databases | Yes: 7 database views, relations, rollups, formulas | Yes | Markdown notes; Bases adds database views |
 | AI agents read and write pages | MCP and REST built into your own server | Notion's API and hosted MCP, in Notion's cloud | Community plugins |
-| Source code | Open (MIT) | Closed | Closed app, open plugin API |
+| Source code | Open (AGPL-3.0) | Closed | Closed app, open plugin API |
 
 Notion and Obsidian are both excellent tools. Acard is for people who want Notion's block-and-database editing
 without handing their documents to a hosted service. The full comparison, with the code each claim rests on, is in
@@ -161,7 +161,7 @@ up the server saved in the old desktop app on its first start.
 
 ## License
 
-[MIT](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[AGPL-3.0](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 Acard is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Notion Labs, Inc.
 or the makers of Obsidian. "Notion" and "Obsidian" are trademarks of their owners and are used here only to describe

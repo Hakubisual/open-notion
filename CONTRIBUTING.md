@@ -44,4 +44,4 @@ explains how the pieces fit.
 
 ## License
 
-By contributing you agree that your contribution is licensed under the [MIT License](LICENSE).
+By contributing you agree that your contribution is licensed under the [GNU Affero General Public License v3.0](LICENSE).

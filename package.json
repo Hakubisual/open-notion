@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "version": "0.2.0",
-  "description": "Acard Local: a self-hosted, local-first Notion-style workspace. Server + desktop app, MIT.",
+  "description": "Acard Local: a self-hosted, local-first Notion-style workspace. Server + desktop app, AGPL-3.0.",
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261015.1",
     "@electric-sql/pglite": "^0.5.10",
@@ -23,7 +23,7 @@
     "postgres": "3",
     "zod": "^4.6.7"
   },
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "homepage": "https://acard.dev",
   "repository": {
     "type": "git",

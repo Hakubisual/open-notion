@@ -20,7 +20,7 @@ from their own help pages (linked at the end) as of October 2026; they may chang
 | Works offline | Always: the server runs on your machine | Pages you download in the desktop and mobile apps | Always |
 | Agents and scripts | MCP endpoint and REST API on your own server | API and hosted MCP in Notion's cloud | Community plugins, or edit the files |
 | Backup format | One zip: every table, every file, a Markdown copy of each page | Export to Markdown/CSV, HTML or PDF | The vault folder itself |
-| Source | MIT licensed | Closed | Closed app, open plugin API |
+| Source | AGPL-3.0 licensed | Closed | Closed app, open plugin API |
 
 ## Compared with Notion
 
@@ -34,7 +34,7 @@ with password sign-in and a host allow-list against DNS rebinding (`local/main.t
 
 **Familiar editing, open code.** Pages are blocks with `/` commands, columns, toggles, callouts and databases with
 table, board, gallery, list, calendar, timeline and chart views (`db-model.js`, `editor-next/`). You can read and
-change every line under the MIT license.
+change every line under the AGPL-3.0 license.
 
 **Notion pages come with you.** `notion-import.ts` reads Notion's "Markdown & CSV" export zip, pages and databases
 included. `notion-export.ts` writes Markdown, standalone HTML and a workspace zip back out.

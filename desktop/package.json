@@ -5,7 +5,7 @@
   "private": true,
   "description": "Acard Local desktop client: connects to an Acard server on your machine or network",
   "author": "Acard contributors",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",

@@ -19,7 +19,7 @@ Acard 是一个可以在本地运行的开源 Notion。本文把它与常被拿�
 | 离线使用 | 始终可用：服务器就在你的设备上 | 桌面和移动应用中已下载的页面 | 始终可用 |
 | 智能体与脚本 | 你自己服务器上的 MCP 端点和 REST API | Notion 云端的 API 与托管 MCP | 社区插件，或直接编辑文件 |
 | 备份格式 | 一个 zip：所有表、所有文件、每个页面的 Markdown | 导出为 Markdown/CSV、HTML 或 PDF | 仓库文件夹本身 |
-| 源代码 | MIT 许可 | 闭源 | 应用闭源，插件 API 开放 |
+| 源代码 | AGPL-3.0 许可 | 闭源 | 应用闭源，插件 API 开放 |
 
 ## 与 Notion 相比
 
@@ -32,7 +32,7 @@ Acard 是一个可以在本地运行的开源 Notion。本文把它与常被拿�
 介绍了如何注册为 Windows 或 Linux 服务。Notion 没有自托管版本。
 
 **熟悉的编辑方式，开放的代码。** 页面由块组成，支持 `/` 命令、分栏、折叠块、标注，以及带表格、看板、画廊、列表、
-日历、时间线和图表视图的数据库（`db-model.js`、`editor-next/`）。所有代码都可以在 MIT 许可下阅读和修改。
+日历、时间线和图表视图的数据库（`db-model.js`、`editor-next/`）。所有代码都可以在 AGPL-3.0 许可下阅读和修改。
 
 **Notion 页面可以直接迁移。** `notion-import.ts` 读取 Notion 的 "Markdown & CSV" 导出 zip，包括页面和数据库。
 `notion-export.ts` 可以再导出为 Markdown、独立 HTML 和工作区 zip。
