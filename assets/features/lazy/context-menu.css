@@ -20,4 +20,4 @@
 .cm-fmt:hover, .cm-fmt:focus-visible { background: color-mix(in srgb, var(--color-accent) 9%, transparent); outline: none; }
 .cm-hint { margin: 6px 10px 2px; padding-top: 6px; border-top: 1px solid var(--line); font-size: var(--fs-12); color: var(--fg-dim); }
 @media (pointer: coarse) { .cm-item { min-height: 44px; } .cm-fmt { height: 44px; } }
-.cm-open :is(.format-toolbar, .ai-polish-trigger) { display: none !important; }
+.cm-open .format-toolbar { display: none !important; }
