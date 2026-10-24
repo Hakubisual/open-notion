@@ -69,7 +69,10 @@ test("every bundled woff2 carries its OFL copyright and license (name IDs 0, 13,
 
 test("each bundled font family has its full OFL text in LICENSES/ and a notice in THIRD_PARTY_NOTICES.md", async () => {
   const notices = await readFile(join(ROOT, "THIRD_PARTY_NOTICES.md"), "utf8");
-  for (const [family, file] of [["Pretendard", "OFL-Pretendard.txt"], ["Noto Serif KR", "OFL-NotoSerifKR.txt"], ["JetBrains Mono", "OFL-JetBrainsMono.txt"]]) {
+  const catalog = JSON.parse(await readFile(join(ROOT, "assets/fonts/catalog.json"), "utf8"));
+  const library = catalog.fonts.filter((f: { basedOn?: string }) => f.basedOn).map((f: { basedOn: string }) => [f.basedOn, "OFL-" + f.basedOn.replace(/\s+/g, "") + ".txt"]);
+  expect(library.length).toBeGreaterThan(0);
+  for (const [family, file] of [["Pretendard", "OFL-Pretendard.txt"], ["Noto Serif KR", "OFL-NotoSerifKR.txt"], ["JetBrains Mono", "OFL-JetBrainsMono.txt"], ["D2Coding", "OFL-D2Coding.txt"], ...library]) {
     const text = await readFile(join(ROOT, "LICENSES", file), "utf8");
     expect(text).toContain("SIL OPEN FONT LICENSE Version 1.1");
     expect(text).toMatch(/Copyright/);

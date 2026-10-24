@@ -2149,7 +2149,7 @@ function pageShell(page, blocks, pages, extras, settings = {}) {
     if (side) top = '<div class="page-top"><div class="page-top-main">' + heading + (split[0].length ? '<div class="blocks">' + renderBlocks(split[0], ctx) + "</div>" : "") + "</div>" + side + "</div>";
     body = '<div class="blocks">' + renderBlocks(side ? split[1] : blocks, ctx) + "</div>";
   }
-  const mainClass = [settings.width === "full" ? "full-width" : settings.width === "normal" ? "width-normal" : "", page.kind === "db" ? "wide" : "", report ? "rp" : ""].filter(Boolean).join(" ");
+  const mainClass = [settings.width === "full" ? "full-width" : settings.width === "normal" ? "width-normal" : "", page.kind === "db" ? "wide" : "", report ? "rp" : "", settings.small === true ? "small-text" : ""].filter(Boolean).join(" ");
   return [
     "<!doctype html>",
     '<html lang="ko">',
@@ -3044,7 +3044,7 @@ export default {
         stage("metadata");
         if (appearance.trashed) return readerResponse(new Response(missingPageHtml(slug, true), { status: 404, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } }));
         const liveDatabase = row && slug === "board" && row.kind === "db" && await db.prepare("SELECT id FROM databases WHERE slug = ?").bind(slug).first();
-        if (row && (slug === "board" && row.kind === "db" && !isGuest(env) ? liveDatabase : (isGuest(env) || row.source === "editor" || appearance.settings.icon || appearance.settings.cover || appearance.settings.font !== "default" || appearance.settings.width !== "default"))) {
+        if (row && (slug === "board" && row.kind === "db" && !isGuest(env) ? liveDatabase : (isGuest(env) || row.source === "editor" || appearance.settings.icon || appearance.settings.cover || appearance.settings.font !== "default" || appearance.settings.width !== "default" || appearance.settings.small === true))) {
           const found = await readPage(db, slug, { page: row, meta: appearance, rows: blockRows });
           stage("blocks");
           if (found) {

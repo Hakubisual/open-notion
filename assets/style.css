@@ -420,3 +420,4 @@ button{transition:background-color var(--dur-1),color var(--dur-1)}
 .byline > span, .thname, .table-person, .side-search { line-height: normal; }
 .brand svg.wordmark { display: block; height: 20px; aspect-ratio: 375.59/100; color: var(--fg); overflow: visible }
 .side-brand .brand svg.wordmark { height: 20px; }
+:is(#main,.sv-wrap).small-text .blocks{font-size:.9em}

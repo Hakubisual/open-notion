@@ -139,7 +139,7 @@ export function prefixedKv(kv: Kv, prefix: string): Kv {
 
 // Build output also contains the owner's notes (page HTML, seeds, search index, covers, avatars).
 // Other workspaces only get the app shell files.
-const MEMBER_ASSET = /^\/(?:[\w.-]+\.(?:css|js|svg|png|ico|webmanifest)|templates-seed\.json|editor\.html|agents\.html|acard-cli\.tgz|lazy\/[\w.-]+\.(?:css|js)|_site\/[\w.-]+)$/;
+const MEMBER_ASSET = /^\/(?:[\w.-]+\.(?:css|js|svg|png|ico|webmanifest)|templates-seed\.json|editor\.html|agents\.html|acard-cli\.tgz|lazy\/[\w.-]+\.(?:css|js)|fonts\/lib\/[a-z]+\.css|_site\/[\w.-]+)$/;
 const OWNER_ONLY_ROOT = new Set(["/notes-seed.json", "/db-seed.json", "/search-index.json", "/index.html", "/404.html"]);
 
 export function memberAssetAllowed(pathname: string): boolean {

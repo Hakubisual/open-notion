@@ -911,10 +911,14 @@
     // Inline existing reader styles: private static asset routes remain cookie-gated. dist/style.css already carries
     // tokens.css in front (build.ts), so the :root vars and dark rules below come from it.
     // #73: lazy/checks.css draws "[ ]" table cells; a link visitor gets no checks chunk, so it rides inline.
-    const styles = await Promise.all(["style.css", "lazy/checks.css"].map(async name => {
+    // A font-library page font (fonts/lib/<id>.css) rides inline too, its #main rules moved to this page's .sv-main (the CSP
+    // takes inline styles and same-origin font files only). 명조 and 고정폭 shares keep their earlier look.
+    const libraryFont = /^[a-z]+$/.test(String(found.settings?.font || "")) && !["default", "serif", "mono", "report"].includes(found.settings.font) ? found.settings.font : "";
+    const styles = await Promise.all(["style.css", "lazy/checks.css", ...(libraryFont ? ["fonts/lib/" + libraryFont + ".css"] : [])].map(async name => {
       const asset = await env.ASSETS.fetch(new Request(new URL("/" + name, request.url)));
       return asset.ok ? (await asset.text()).replace(/@import\s+[^;]+;/g, "") : "";
     }));
+    if (libraryFont) styles[2] = styles[2].replace(/#main\[data-font="[a-z]+"\]/g, ".sv-main");
     const lightVars = [...styles[0].matchAll(/(?:^|\})\s*:root\s*\{([^}]*)\}/g)].map(m => m[1]).join(";");
     // The toggle shows the other theme: system pages flip against prefers-color-scheme, fixed pages against their theme.
     styles[0] = styles[0].replace(/html\[data-theme="dark"\]/g, 'html[data-theme="dark"], html:has(#sv-tt:checked):not(#sv-none)') + "@media (prefers-color-scheme: dark){html:not([data-theme]):has(#sv-tt:checked):not(#sv-none){color-scheme:light;" + lightVars + "}}" +
@@ -985,7 +989,7 @@
     const html = svPage(title,
       '<header class="sv-bar"><nav class="sv-path" aria-label="위치">' + crumb + '</nav><span class="sv-grow"></span><a class="sv-made" href="/" aria-label="Acard로 만들었어요"><svg class="wordmark sv-wm" viewBox="0 0 375.59 100" role="img" aria-label="Acard" focusable="false"><use href="/wordmark-symbol.svg#w"/></svg><span>로 만들었어요</span></a><label for="sv-tt" class="sv-theme" title="테마 바꾸기">' + SV_MOON + "</label></header>" +
       '<div class="sv-cover">' + cover + "</div>" +
-      '<div class="sv-wrap' + (toc ? " has-toc" : "") + (pageSettings.width === "full" ? " sv-full" : pageSettings.width === "normal" ? " sv-normal" : "") + (isReportPage(pageSettings) ? " rp" : "") + '"><main class="sv-main"><article><div class="sv-icon" aria-hidden="true">' + shareIcon(pageIconHtml(found.page, pageSettings, 88)) + "</div>" +
+      '<div class="sv-wrap' + (toc ? " has-toc" : "") + (pageSettings.width === "full" ? " sv-full" : pageSettings.width === "normal" ? " sv-normal" : "") + (isReportPage(pageSettings) ? " rp" : "") + (pageSettings.small === true ? " small-text" : "") + '"><main class="sv-main"><article><div class="sv-icon" aria-hidden="true">' + shareIcon(pageIconHtml(found.page, pageSettings, 88)) + "</div>" +
       '<h1 class="sv-title">' + escapeHtml(found.page.title) + '</h1><p class="sv-meta">' + (updated ? '<span class="sv-when">' + SV_CLOCK + "<span>" + updated + "</span></span>" : "") + '<span class="sv-pill"><span class="sv-pill-in">' + (rule.principal === "link" ? SV_LOCK : SV_GLOBE) + stamp + "</span></span></p>" + upgradeHtml +
       '<div class="sv-toc-narrow">' + toc + '</div><div class="blocks">' + bodyHtml + "</div>" + cards + "</article></main>" + toc.replace('class="sv-toc"', 'class="sv-toc sv-toc-wide"') + "</div>" +
       '<footer class="sv-foot"><a href="/"><img src="/logo.svg" alt="" width="16" height="16">Acard로 만들었어요</a></footer>', og, theme);

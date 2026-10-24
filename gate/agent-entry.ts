@@ -28,7 +28,7 @@ import { migrateMediaPage, quarantineOriginal, r2Usage, restoreOriginal, withR2M
 import { scanWorkspace } from "./media-orphans";
 import { checkAgentWrites, isRestWrite, mcpWriteCalls, type WriteLimitEnv } from "./agent-write-limit";
 import { BILLING_ROUTES, checkoutFor, donePage as billingDone, webhook as billingWebhook, type BillingEnv } from "./hosted-billing";
-import { CLOUD_V1, cloudAdmin, cloudV1, cookieExport, isPublishWorkspace, planOf, publicGate, reportRoute, withReportFooter, type CloudEnv, type CloudHost } from "./hosted-cloud";
+import { CLOUD_V1, cloudAdmin, cloudV1, cookieExport, isPublishWorkspace, planOf, publicGate, reportRoute, sb, withReportFooter, type CloudEnv, type CloudHost } from "./hosted-cloud";
 import { queueWebhooks, routeHints, watchWrites, webhookApi, webhookTick, type Actor, type WebhookEnv } from "./webhooks";
 
 const VERSION = "1.0.0";
@@ -607,6 +607,22 @@ async function sitePage(request: Request, env: Env, name: string, extra: string[
   return withCookies(translated, extra);
 }
 
+// Right-click tools and the Tab palette (acard-human-edit): HUMAN_EDIT "on" = everyone, "flagged" = accounts whose admin
+// console flags have humanEdit on, anything else = nobody. html[data-human-edit=on] turns them on in the editor; without it
+// right-click and Tab keep their old behaviour.
+export function humanEditFlagCheck(env: Env, request: Request, human: Human): Promise<boolean> | null {
+  const mode = (env as unknown as { HUMAN_EDIT?: string }).HUMAN_EDIT;
+  if (mode !== "on" && mode !== "flagged") return null;
+  if (!human.session || request.method !== "GET" || !new URL(request.url).pathname.startsWith("/edit")) return null;
+  if (mode === "on") return Promise.resolve(true);
+  return sb(env as unknown as Parameters<typeof sb>[0], `/user_roles?user_id=eq.${encodeURIComponent(human.session.user.sub)}&select=flags`)
+    .then((rows) => Array.isArray(rows) && rows[0]?.flags?.humanEdit === true).catch(() => false);
+}
+export function withHumanEditFlag(res: Response, on: boolean): Response {
+  if (!on || !(res.headers.get("content-type") ?? "").includes("text/html")) return res;
+  return new HTMLRewriter().on("html", { element(el) { el.setAttribute("data-human-edit", "on"); } }).transform(res);
+}
+
 async function settingsPage(request: Request, env: Env): Promise<Response> {
   const asset = await env.ASSETS.fetch(new Request(new URL("/agents.html", request.url)));
   if (!asset.ok) return new Response("설정 화면을 찾지 못했어요.", { status: 500 });
@@ -662,7 +678,9 @@ async function routeLoggedIn(request: Request, env: Env, url: URL, ctx: unknown,
       if (profile?.onboarded_at) await env.OUTBOX?.put(onboardedKey(human.session.user.sub), "1", { expirationTtl: 60 * 60 * 24 }).catch(() => undefined);
     }
   }
-  const response = withEarlyHints(await core.fetch(request, human.env, ctx), path);
+  const humanEdit = humanEditFlagCheck(env, request, human);
+  const [coreResponse, editOn] = await Promise.all([core.fetch(request, human.env, ctx), humanEdit ?? false]);
+  const response = withHumanEditFlag(withEarlyHints(coreResponse, path), editOn);
   // A one-word address that is no page of this workspace may be someone's notes.example.com/<handle>. Asked only after the 404,
   // so a page read never waits on it; the own handle opens the own home, another one shows a notice with no content.
   const handle = response.status === 404 && request.method === "GET" && human.session ? handleFromPath(path) : null;

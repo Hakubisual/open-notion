@@ -40,22 +40,18 @@ export type BlockType =
   | "visual"
   | "html"
   | "part"
-  | "component"
-  | "plugin";
+  | "component";
 
 // Visual blocks are fenced blocks: ```mermaid / ```acard-chart / ```acard-visual, with an optional JSON meta object
 // after the language. Format: research/visuals/format.md.
 // ```acard-part {"part":"chart","v":1} holds a part's JSON data; the part's code is a versioned file (#38).
 // ```acard-ui {"ui":"stat"} holds a component's JSON data; component-registry.js draws it (ds10).
-// ```acard-plugin {"plugin":"word-count","block":"counter"} holds a plugin block's saved state (#144); the code runs in
-// the plugin sandbox, and meta.snapshot (what an editor chose to show on public pages) is kept as JSON in the fence info.
-const VISUAL_FENCES: Record<string, BlockType> = { mermaid: "diagram", "acard-chart": "chart", "acard-visual": "visual", "html-embed": "html", "acard-part": "part", "acard-ui": "component", "acard-plugin": "plugin" };
-const VISUAL_LANGS: Record<string, string> = { diagram: "mermaid", chart: "acard-chart", visual: "acard-visual", html: "html-embed", part: "acard-part", component: "acard-ui", plugin: "acard-plugin" };
+const VISUAL_FENCES: Record<string, BlockType> = { mermaid: "diagram", "acard-chart": "chart", "acard-visual": "visual", "html-embed": "html", "acard-part": "part", "acard-ui": "component" };
+const VISUAL_LANGS: Record<string, string> = { diagram: "mermaid", chart: "acard-chart", visual: "acard-visual", html: "html-embed", part: "acard-part", component: "acard-ui" };
 const VISUAL_META_KEYS = ["caption", "alt", "height"];
 const PART_META_KEYS = ["part", "v", "theme", "caption", "alt", "height"];
 const COMPONENT_META_KEYS = ["ui"];
-const PLUGIN_META_KEYS = ["plugin", "block", "snapshot", "caption"];
-const fenceMetaKeys = (type: BlockType | string) => type === "part" ? PART_META_KEYS : type === "component" ? COMPONENT_META_KEYS : type === "plugin" ? PLUGIN_META_KEYS : VISUAL_META_KEYS;
+const fenceMetaKeys = (type: BlockType | string) => type === "part" ? PART_META_KEYS : type === "component" ? COMPONENT_META_KEYS : VISUAL_META_KEYS;
 
 function visualMeta(info: string, part: boolean | BlockType = false): Record<string, unknown> | null {
   if (!info.startsWith("{")) return null;
@@ -648,7 +644,7 @@ export function blocksToMarkdown(blocks: Block[], options: MarkdownOptions = {})
       case "callout": text = "> [!" + String(block.meta?.tone || "note") + "] " + text.replace(/\n/g, "\n> "); break;
       case "quote": text = text.split("\n").map(line => "> " + line).join("\n"); break;
       case "code": text = "```" + String(block.meta?.lang || "") + "\n" + text + "\n```"; break;
-      case "diagram": case "chart": case "visual": case "html": case "part": case "component": case "plugin": {
+      case "diagram": case "chart": case "visual": case "html": case "part": case "component": {
         const picked: Record<string, unknown> = {};
         for (const key of fenceMetaKeys(block.type)) if (meta[key] !== undefined && meta[key] !== "" && meta[key] !== null) picked[key] = meta[key];
         const fence = "`".repeat(Math.max(3, ...[...block.text.matchAll(/^\s*(`{3,})/gm)].map((m) => m[1].length + 1)));

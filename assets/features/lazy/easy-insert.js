@@ -37,7 +37,7 @@
     columns: "내용을 2~3열로 나란히", table: "칸만 있는 가벼운 표", equation: "LaTeX 수식을 보기 좋게", subpage: "이 페이지 안에 새 페이지",
     toc: "이 페이지 제목으로 목차", breadcrumb: "위 페이지 경로 표시", button: "누르면 링크로 가는 버튼", progress: "얼마나 했는지 막대로", db_ref: "다른 데이터베이스를 여기서 보기"
   };
-  var SLASH_GROUPS = [["basic", "기본 블록"], ["part", "부품"], ["mine", "내 부품"], ["component", "컴포넌트"], ["plugin", "플러그인"], ["media", "미디어·임베드"], ["advanced", "고급"]];
+  var SLASH_GROUPS = [["basic", "기본 블록"], ["part", "부품"], ["mine", "내 부품"], ["component", "컴포넌트"], ["media", "미디어·임베드"], ["advanced", "고급"]];
   var SLASH_MEDIA = { image: 1, video: 1, audio: 1, file: 1, embed: 1, bookmark: 1 };
   var SLASH_ADVANCED = { code: 1, diagram: 1, chart: 1, visual: 1, html: 1, database: 1, equation: 1, subpage: 1, toc: 1, breadcrumb: 1, button: 1, progress: 1, db_ref: 1 };
   var SLASH_KEYS = { heading1: "#", heading2: "##", heading3: "###", heading4: "####", bulleted: "-", numbered: "1.", to_do: "[]", quote: ">", code: "```", divider: "---" };
@@ -54,7 +54,7 @@
   function slashCho(s) { return s.replace(/[\uac00-\ud7a3]/g, function (ch) { return CHO.charAt(Math.floor((ch.charCodeAt(0) - 0xac00) / 588)); }); }
   function slashFlat(s) { return String(s || "").toLowerCase().replace(/\s+/g, ""); }
   function slashDesc(entry) { return entry.desc || SLASH_DESC[entry.type] || entry.hint || ""; }
-  function slashGroupOf(entry) { var t = entry.type; return /^part:/.test(t) ? (entry.mine ? "mine" : "part") : /^component:/.test(t) ? "component" : /^plugin:/.test(t) ? "plugin" : SLASH_MEDIA[t] ? "media" : SLASH_ADVANCED[t] ? "advanced" : "basic"; }
+  function slashGroupOf(entry) { var t = entry.type; return /^part:/.test(t) ? (entry.mine ? "mine" : "part") : /^component:/.test(t) ? "component" : SLASH_MEDIA[t] ? "media" : SLASH_ADVANCED[t] ? "advanced" : "basic"; }
   // -1 = no match; higher = better. Tiers are 20+ apart so personal use (slashBoost, max 18) only breaks ties.
   function slashScore(entry, query) {
     var raw = slashFlat(query);
@@ -217,7 +217,7 @@
   function menu(el, items, query, anchor, apply) {
     var keep = last && last.el === el && last.args[1] === items ? last.flat : [];
     last = { el: el, args: [el, items, query, anchor, apply], flat: keep };
-    items = items.concat(parts ? parts.slashItems() : [], plugins ? plugins.slashItems() : [], [GALLERY]);
+    items = items.concat(parts ? parts.slashItems() : [], [GALLERY]);
     var sections = slashSections(items, query, stored(RECENT_KEY, []), stored(FREQ_KEY, {})), flat = [];
     var wide = innerWidth >= 900, sheet = innerWidth < 640;
     el.className = "slash slash-x" + (wide ? " sx-wide" : "") + (sheet ? " sx-sheet" : "");

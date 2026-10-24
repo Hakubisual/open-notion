@@ -93,16 +93,6 @@ test("telemetry posts on every load keep the cache", async () => {
   expect((await f.handle(req("/api/tree"))).headers.get("x-acard-swr")).toBe("hit");
 });
 
-test("a plugin saving its own storage keeps the cache; installing or switching a plugin drops it (issue 144)", async () => {
-  const f = fixture();
-  await f.handle(req("/api/tree"));
-  await f.settle();
-  await f.handle(req("/api/plugins/qa-counter/storage", "PUT"));
-  expect((await f.handle(req("/api/tree"))).headers.get("x-acard-swr")).toBe("hit");
-  await f.handle(req("/api/plugins/qa-counter", "PATCH"));
-  expect((await f.handle(req("/api/tree"))).headers.get("x-acard-swr")).toBeNull();
-});
-
 test("a 401 during refresh wipes the cache and tells the page", async () => {
   const f = fixture();
   await f.handle(req("/api/tree"));

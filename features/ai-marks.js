@@ -1,4 +1,4 @@
-// AI marks for the in-editor AI (/api/ai/polish, /api/ai/write, /api/ai/pick): the editor sends the page and the block ids
+// AI marks for the in-editor AI (/api/ai/polish, /api/ai/write): the editor sends the page and the block ids
 // it wants rewritten (and a [start, end) range for a selection inside one block). A target a person marked lock or ref,
 // or a range over a marked piece, is refused with 423 before any model is called; the prompts are not trusted with it.
 // Without page/blocks (older clients) nothing changes. Top-level so every feature in the worker scope can call it.

@@ -379,7 +379,7 @@ for (const file of (await readdir(lazyDir).catch(() => [] as string[])).sort()) 
   let bytes: Buffer;
   // folders (#16): one IIFE that talks to the page only through window.AcardFolders and DOM events, so full minify is safe.
   // graph and db-tools (#124 #123) are IIFEs too: the graph talks only to /api/graph and the DOM, db-tools only through window.AcardDbTools.
-  if (["reader-navigation", "reader-enhancements", "import", "toc", "folders", "part-form", "part-register", "part-gallery", "graph", "db-tools", "import-engine", "import-obsidian", "import-notion", "paste-md", "plugins", "components"].includes(match[1]) && match[2] === "js") {
+  if (["reader-navigation", "reader-enhancements", "import", "toc", "folders", "part-form", "part-register", "part-gallery", "graph", "db-tools", "import-engine", "import-obsidian", "import-notion", "paste-md", "components", "ai-marks-ui", "context-menu", "command-search", "tab-palette", "page-settings"].includes(match[1]) && match[2] === "js") {
     // components holds the inlined registry source, so it is bundled from a temp copy with the markers filled in.
     const entryFile = match[1] === "components" ? join(ROOT, ".build", "lazy-components.js") : join(lazyDir, file);
     if (match[1] === "components") await writeFile(entryFile, source, "utf8");
@@ -545,7 +545,7 @@ workerOut = workerOut.replaceAll("__FOLDERS_JS__", lazyVersions.folders?.js ?? "
 workerOut = workerOut.replaceAll("__HOME_JS__", uiVersions["home.js"]).replaceAll("__HOME_CSS__", uiVersions["home.css"]).replaceAll("__UI_KIT_CSS__", uiVersions["kit.css"]);
 workerOut = workerOut.replaceAll("__PROJECTS_JS__", lazyVersions.projects?.js ?? "0").replaceAll("__PROJECTS_CSS__", lazyVersions.projects?.css ?? "0");
 workerOut = workerOut.replaceAll("__JOURNAL_JS__", lazyVersions.journal?.js ?? "0").replaceAll("__JOURNAL_CSS__", lazyVersions.journal?.css ?? "0");
-const stampChecks = (text: string) => text.replaceAll("__CHECKS_JS__", lazyVersions.checks?.js ?? "0").replaceAll("__CHECKS_CSS__", lazyVersions.checks?.css ?? "0").replaceAll("__PARTS_JS__", lazyVersions.parts?.js ?? "0").replaceAll("__PLUGINS_JS__", lazyVersions.plugins?.js ?? "0").replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0");
+const stampChecks = (text: string) => text.replaceAll("__CHECKS_JS__", lazyVersions.checks?.js ?? "0").replaceAll("__CHECKS_CSS__", lazyVersions.checks?.css ?? "0").replaceAll("__PARTS_JS__", lazyVersions.parts?.js ?? "0").replaceAll("__BUTTONS_JS__", lazyVersions.buttons?.js ?? "0").replaceAll("__BUTTONS_CSS__", lazyVersions.buttons?.css ?? "0");
 workerOut = stampChecks(workerOut);
 for (const [marker, code] of Object.entries(inlines)) {
   if (!workerOut.includes(marker)) throw new Error("gate/_worker.js is missing the " + marker + " marker");

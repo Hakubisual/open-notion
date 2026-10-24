@@ -1,0 +1,24 @@
+.ps { display: grid; gap: 4px; min-width: 0; max-width: 100%; }
+.editor-panel:has(.ps) { overflow-x: hidden; }
+.ps-sec { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.ps-h { margin: 0 0 10px; font-size: var(--fs-15); font-weight: 700; }
+.ps-fonts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.editor-panel .ps .ps-font { margin: 0; }
+.ps-font { display: grid; place-items: center; gap: 4px; height: 92px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; }
+.ps-font[aria-checked="true"] { border: 2px solid var(--color-accent); background: color-mix(in srgb, var(--color-accent) 8%, var(--bg)); color: var(--color-accent); }
+.ps-sample { font-size: var(--fs-28); line-height: 1; }
+.ps-flabel { font-size: var(--fs-13); }
+.editor-panel .ps .ps-row, .editor-panel .ps .ps-radio { flex-direction: row; margin: 0; font-size: var(--fs-14); font-weight: 400; color: var(--fg); }
+.ps-row, .ps-radio { display: flex; align-items: center; gap: 12px; padding: 8px 0; cursor: pointer; }
+.ps-row { justify-content: space-between; }
+.ps-text { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.ps-text small { color: var(--fg-dim); font-size: var(--fs-13); }
+.editor-panel .ps .ps-switch { min-height: 0; padding: 0; border: 0; }
+.editor-panel .ps .ps-radio input { min-height: 0; padding: 0; }
+.ps-text strong { font-weight: 600; color: var(--fg); }
+.ps-switch { appearance: none; flex: none; width: 44px; height: 26px; border-radius: var(--radius-pill); background: var(--line); position: relative; cursor: pointer; transition: background .15s; }
+.ps-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: var(--radius-pill); background: var(--color-on-accent); box-shadow: var(--shadow-sm); transition: transform .15s; }
+.ps-switch:checked { background: var(--color-accent); }
+.ps-switch:checked::after { transform: translateX(18px); }
+.ps-radio { align-items: flex-start; }
+.ps-radio input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--color-accent); }

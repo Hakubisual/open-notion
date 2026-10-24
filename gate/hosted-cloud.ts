@@ -11,6 +11,8 @@ export type CloudHost = {
 const none = () => new Response(JSON.stringify({ error: "This server does not offer web publishing or cloud backup." }), { status: 404, headers: { "content-type": "application/json; charset=utf-8" } });
 
 export const CLOUD_V1 = /^\/api\/v1\/cloud(?:\/|$)/;
+// Hosted per-account flags have no rows in the self-host edition.
+export async function sb(_env: unknown, _path: string, _init: unknown = {}): Promise<unknown> { return null; }
 export async function cloudV1(_request: Request, _env: CloudEnv, _host: CloudHost, _principal: unknown, _userId: string, _origin: string): Promise<Response> { return none(); }
 export async function cookieExport(_env: unknown, _host: CloudHost): Promise<Response> { return none(); }
 export async function planOf(_env: CloudEnv, _userId: string): Promise<Response> { return none(); }

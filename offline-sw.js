@@ -197,8 +197,7 @@ export function createOfflineWorker(platform, config) {
       const response = await platform.fetch(request);
       if (!(await observe(response, request, epoch, clientId))) return response;
       // Telemetry posts (Cloudflare RUM, beta events) fire on every load and change no content.
-      // A plugin saving its own storage changes no page (issue 144); installs, switches and removals do (CSS, blocks).
-      let contentWrite = /^\/(?:api|edit)\//.test(url.pathname) && !/^\/api\/(?:beta|agent)\//.test(url.pathname) && !/^\/api\/plugins\/[a-z][a-z0-9-]{1,39}\/storage$/.test(url.pathname);
+      let contentWrite = /^\/(?:api|edit)\//.test(url.pathname) && !/^\/api\/(?:beta|agent)\//.test(url.pathname);
       // The editor posts /api/sync on every open and for members it imports nothing: only a sync that reports an import
       // changes content. The answer is read from a clone; an unreadable or incomplete one counts as a write.
       if (response.ok && contentWrite && url.pathname === "/api/sync") contentWrite = await bounded(syncImported(response), true);

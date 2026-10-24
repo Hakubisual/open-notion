@@ -1,4 +1,4 @@
-(function(d,w){function c(h){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}w.acardFont=function(f){f=="serif"&&c("/fonts/serif.css")};w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
+(function(d,w){function c(h){if(!d.querySelector('[href="'+h+'"]')){var l=d.createElement("link");l.rel="stylesheet";l.href=h;d.head.append(l)}}w.acardFont=function(f){f=="serif"?c("/fonts/serif.css"):/^(?!default$|report$)[a-z]+$/.test(f)&&c("/fonts/lib/"+f+".css")};w.addEventListener("load",function(){setTimeout(c,99,"/fonts/fonts.css")})})(document,window);
 (function () {
   "use strict";
   window.mountEditorPages = function (context) {
@@ -33,6 +33,9 @@
       if (window.acardFont) window.acardFont(settings.font);
       document.querySelector("#doc").classList.toggle("full-width", settings.width === "full");
       document.querySelector("#doc").classList.toggle("width-normal", settings.width === "normal");
+      document.querySelector("#doc").classList.toggle("small-text", settings.small === true);
+      document.querySelector("#doc").dataset.aiDefault = settings.ai || "edit";
+      if (settings.ai && settings.ai !== "edit") window.AcardEditor.lazy("ai-marks-ui").catch(function () {});
       widthButtons.forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.width === (settings.width || "default") ? "true" : "false"); });
       cover.hidden = !settings.cover;
       if (settings.cover) cover.src = settings.cover; else cover.removeAttribute("src");
@@ -63,7 +66,7 @@
     var favoriteButton = button(more, "즐겨찾기", function () { return patch({ favorite: !settings.favorite }); });
     button(bar, "페이지 설정", function () {
       open("페이지 설정");
-      [["너비", "width", [["default", "좁게"], ["normal", "보통"], ["full", "넓게"]]], ["글꼴", "font", [["default", "기본"], ["serif", "명조"], ["mono", "고정폭"], ["report", "연구 보고서 (식·그림 번호)"]]]].forEach(function (field) {
+      [["너비", "width", [["default", "좁게"], ["normal", "보통"], ["full", "넓게"]]]].forEach(function (field) {
         var label = document.createElement("label"); label.textContent = field[0];
         var select = document.createElement("select");
         field[2].forEach(function (pair) { var option = document.createElement("option"); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option); });
@@ -71,6 +74,11 @@
         select.addEventListener("change", function () { var value = {}; value[field[1]] = select.value; patch(value).catch(fail); });
         label.appendChild(select); panel.appendChild(label);
       });
+      var fonts = document.createElement("div"); fonts.className = "font-pick"; fonts.setAttribute("role", "group"); fonts.setAttribute("aria-label", "글꼴"); fonts.textContent = "글꼴 목록을 불러오는 중…"; panel.appendChild(fonts);
+      window.AcardEditor.lazy("font-picker").then(function (picker) { picker.mount(fonts, settings.font || "default", function (id) { return patch({ font: id }); }); }).catch(function (error) { fonts.textContent = "글꼴 목록을 불러오지 못했어요."; fail(error); });
+      // 작은 글씨 and the AI default for the page (acard-human-edit) mount after the font list.
+      var look = document.createElement("div"); panel.appendChild(look);
+      window.AcardEditor.lazy("page-settings").then(function (ui) { ui.mount(look, settings, patch); }, function () {});
       button(panel, "페이지 복제", function () { return context.save().then(function () { return api(base + "/duplicate", { method: "POST", body: "{}" }); }).then(function (data) { location.href = "/edit/" + encodeURIComponent(data.slug) + "/"; }); });
       button(panel, "휴지통으로 이동", function () { confirmPanel(state.title + " 휴지통으로 이동", function () { return context.save().then(function () { return api(base + "/trash", { method: "POST" }); }).then(function () { location.href = "/edit/index/"; }); }); });
       button(panel, "템플릿으로 저장", function () { inputPanel("템플릿 이름", state.title, function (name) { return context.save().then(function () { return api("/editor/templates", { method: "POST", body: JSON.stringify({ slug: slug, name: name }) }); }).then(function () { context.setSave("템플릿 저장됨", false); }); }); });

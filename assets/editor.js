@@ -167,6 +167,7 @@
       return function () { var at = listeners.indexOf(fn); if (at >= 0) listeners.splice(at, 1); };
     },
     get state() { return state; },
+    blockTypes: function () { return BLOCK_TYPES.concat(componentItems); }, loadComponents: function () { return loadComponents(); },
     api: api, slug: slug, loadTree: function () { return loadTree(); }, scheduleSave: scheduleSave, render: render, setSave: setSave, save: save,
     transport: function (pageSlug, payload) {
       if (!Number.isSafeInteger(payload.base_updated)) return Promise.resolve(new Response(JSON.stringify({ error: "불러오지 못했어요 · 읽기 전용. 새로고침해 주세요." }), { status: 428 }));
@@ -186,6 +187,21 @@
       block.text = String(text);
       if (block.meta) { block.meta = Object.assign({}, block.meta); delete block.meta.richText; }
       render(); scheduleSave();
+    },
+    // Block commands for the right-click menu and Tab palette (acard-human-edit). acard-core-editing may replace
+    // these with its editor-commands module; callers use only these names.
+    commands: {
+      duplicate: function (id) { var i = indexOf(id); return i < 0 ? null : duplicate(i); },
+      move: function (id, delta) { var i = indexOf(id); if (i >= 0) move(i, delta); },
+      indent: function (id, delta) { var i = indexOf(id); if (i >= 0) indent(i, delta); },
+      remove: function (id) { var i = indexOf(id); if (i < 0) return; state.blocks.splice(i, model.endOf(state.blocks, i) - i); render(); scheduleSave(); undoToast("블록을 지웠어요"); },
+      turnInto: function (id, anchor) { var i = indexOf(id); if (i >= 0) openSlash(anchor, i); },
+      setType: function (id, type) { var i = indexOf(id); if (i < 0) return; slashIndex = i; applySlash(type); },
+      color: function (id, anchor) { var b = state.blocks[indexOf(id)]; if (b) lazy("block-style").then(function (s) { s.open(anchor, b); }); },
+      comment: function (id) { if (pageContext) pageContext.comments(id); },
+      copyLink: function (id) { return navigator.clipboard.writeText(location.origin + "/edit/" + encodeURIComponent(slug) + "/#block-" + encodeURIComponent(id)); },
+      blockMenu: function (id, anchor) { var i = indexOf(id); if (i >= 0) openCtx(anchor, i); },
+      focus: function (id) { focusBlock(id); }
     },
     getSelection: function () {
       var selection = window.getSelection();
@@ -290,6 +306,7 @@
   function uid() {
     return "b" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
+  function indexOf(id) { return state.blocks.findIndex(function (block) { return block.id === id; }); }
 
   function newBlock(type) {
     return { id: uid(), type: type || "paragraph", text: "", checked: false, indent: 0, meta: null };
@@ -331,6 +348,9 @@
     // Block color (notion-parity C6): same bc-* class as the reader; the rules come with the lazy block-style chunk.
     var color = block.type !== "progress" && block.meta && /^(gray|brown|orange|yellow|green|blue|purple|pink|red)(_background)?$/.exec(block.meta.color);
     if (color) { row.classList.add("bc-" + color[0]); lazy("block-style").catch(function () {}); }
+    // AI marks (acard-human-edit): the block's own mark; the marks chunk draws it and any marked text pieces.
+    if (block.meta && /^(lock|ref|edit)$/.test(block.meta.ai)) row.dataset.ai = block.meta.ai;
+    if (row.dataset.ai || (block.meta && Array.isArray(block.meta.richText) && block.meta.richText.some(function (run) { return run && run.ai; }))) lazy("ai-marks-ui").catch(function () {});
 
     var gutter = document.createElement("div");
     gutter.className = "gutter";
@@ -345,7 +365,11 @@
     menuBtn.textContent = "⋮⋮";
     menuBtn.className = "drag-handle";
     wireDrag(menuBtn, row, block);
-    menuBtn.addEventListener("click", function (ev) { ev.stopPropagation(); openCtx(menuBtn, index); });
+    menuBtn.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      if (!humanEdit()) return openCtx(menuBtn, index);
+      lazy("context-menu").then(function (menu) { menu.openBlock(block.id, menuBtn); }, function () { openCtx(menuBtn, index); });
+    });
     gutter.appendChild(addBtn);
     gutter.appendChild(menuBtn);
     var select = document.createElement("input"); select.type = "checkbox"; select.className = "block-select"; select.checked = selectedIds.has(block.id); select.setAttribute("aria-label", "블록 선택");
@@ -480,7 +504,7 @@
     text.contentEditable = "true";
     text.spellcheck = false;
     text.dataset.ph = PH[block.type] || "";
-    if (block.meta && Array.isArray(block.meta.richText) && block.type !== "code") text.innerHTML = model.richHtml(block.meta.richText, block.text);
+    if (block.meta && Array.isArray(block.meta.richText) && block.type !== "code") text.innerHTML = model.richHtml(block.meta.richText, block.text, true);
     else text.textContent = block.text;
     wireText(text, block, row, index);
     host.appendChild(text);
@@ -548,6 +572,10 @@
         render();
         if (prev) focusBlock(prev.id);
         scheduleSave();
+      } else if (ev.key === "Tab" && humanEdit() && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey && block.type === "paragraph" && !text.textContent) {
+        // Tab on an empty line opens the feature palette (acard-human-edit); lists, tables and lines with text keep indenting.
+        ev.preventDefault();
+        lazy("tab-palette").then(function (p) { p.open(block.id, text); }, function () {});
       } else if (ev.key === "Tab") {
         ev.preventDefault();
         if (cm.canIndent(state.blocks, index, ev.shiftKey ? -1 : 1)) model.indent(state.blocks, index, ev.shiftKey ? -1 : 1);
@@ -1707,6 +1735,23 @@
     handle.addEventListener("pointercancel", finish);
     handle.addEventListener("click", function (ev) { if (dragged) { ev.preventDefault(); ev.stopImmediatePropagation(); } }, true);
   }
+
+  // Right-click tools (lazy context-menu chunk): the first right-click on a block loads it and opens there; the chunk then
+  // takes every later one. Shift+right-click keeps the browser menu. Shift+F10 / the menu key work the same way.
+  function humanEdit() { return document.documentElement.getAttribute("data-human-edit") === "on"; }
+  function firstMenu(ev, x, y) {
+    if (!humanEdit() || (window.AcardEditor.contextMenu && window.AcardEditor.contextMenu.openAt)) return;
+    var target = ev.target.nodeType === 1 ? ev.target : ev.target.parentElement;
+    if (!target || !target.closest("#blocks .blk[data-id]") || target.closest("input, textarea, select, iframe")) return;
+    ev.preventDefault();
+    lazy("context-menu").then(function (menu) { menu.openAt(target, x, y); }, function () {});
+  }
+  els.blocks.addEventListener("contextmenu", function (ev) { if (!ev.shiftKey) firstMenu(ev, ev.clientX, ev.clientY); });
+  els.blocks.addEventListener("keydown", function (ev) {
+    if (!((ev.key === "F10" && ev.shiftKey) || ev.key === "ContextMenu")) return;
+    var rect = ev.target.getBoundingClientRect();
+    firstMenu(ev, rect.left + 24, rect.top + 24);
+  });
 
   document.addEventListener("click", function (ev) {
     if (!els.slash.hidden && !els.slash.contains(ev.target) && !els.ctx.contains(ev.target)) hideSlash();

@@ -27,6 +27,9 @@ beforeAll(async () => {
     window.subpagesOf = () => []; window.syncSubpages = () => {};
     window.paintTocs = () => {}; window.emitFeature = () => {}; window.setSave = () => {};
     window.save = () => Promise.resolve();
+    window.palettes = [];
+    window.humanEdit = () => document.documentElement.getAttribute('data-human-edit') === 'on';
+    window.lazy = (name) => { if (name === 'tab-palette') return Promise.resolve({ open: (id) => palettes.push(id) }); return Promise.reject(new Error(name)); };
     window.easy = null; window.formatContext = null; window.slashIndex = -1; window.startupEdited = false;
     let n = 0;
     window.uid = () => 'c' + (++n);
@@ -82,6 +85,31 @@ test("Enter, Backspace and input shortcuts do nothing while an IME composition i
     text.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true }));
     return { prevented, after229, enter, back, backspace, slashes };
   })()`)).toEqual({ prevented: false, after229: false, enter: 4, back: false, backspace: 4, slashes: 0 });
+});
+
+test("Tab on an empty top-level line opens the feature palette; list items and lines with text still indent (acard-human-edit)", async () => {
+  expect(await browser.evaluate(`(async () => {
+    reset(); palettes.length = 0;
+    document.documentElement.removeAttribute('data-human-edit');
+    state.blocks.push({ id: 'off', type: 'paragraph', text: '', indent: 0, meta: null }); render();
+    press('off', { key: 'Tab' });
+    await Promise.resolve(); await Promise.resolve();
+    const flagOff = { palettes: palettes.length, indent: state.blocks.find(b => b.id === 'off').indent };
+    reset(); palettes.length = 0;
+    document.documentElement.setAttribute('data-human-edit', 'on');
+    state.blocks.push({ id: 'e', type: 'paragraph', text: '', indent: 0, meta: null }, { id: 'l', type: 'bulleted', text: '', indent: 0, meta: null });
+    render();
+    const emptyLine = press('e', { key: 'Tab' });
+    await Promise.resolve(); await Promise.resolve();
+    const opened = palettes.slice();
+    const indentsAfterPalette = view().indents;
+    press('l', { key: 'Tab' });
+    const listIndent = state.blocks.find(b => b.id === 'l').indent;
+    press('c', { key: 'Tab' });
+    const textIndent = state.blocks.find(b => b.id === 'c').indent;
+    const composing = press('e', { key: 'Tab', isComposing: true, keyCode: 229 });
+    return { flagOff, emptyLine, opened, indentsAfterPalette, listIndent, textIndent, composing, palettesAfter: palettes.length };
+  })()`)).toEqual({ flagOff: { palettes: 0, indent: 1 }, emptyLine: true, opened: ["e"], indentsAfterPalette: [0, 0, 1, 0, 0, 0], listIndent: 1, textIndent: 1, composing: false, palettesAfter: 1 });
 });
 
 test("Ctrl+D duplicates the block below it with its children, focuses the copy, and Ctrl+Z undoes it", async () => {

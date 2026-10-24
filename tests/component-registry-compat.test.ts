@@ -9,7 +9,7 @@ import * as shared from "../component-registry.js";
 import "../components/index.js";
 
 // Visual kit (acard-visual-kit): the registry grew optional fields (family, presets), componentCss(ids),
-// componentOwnCss, componentIdsIn and per-component inline CSS on pages. The acard-plugins lane registers components
+// componentOwnCss, componentIdsIn and per-component inline CSS on pages. Existing callers register components
 // with the ds10 call shape, so these tests pin that shape as a check, not a promise.
 const ROOT = join(import.meta.dir, "..");
 // Test components go into a separate registry instance so other test files in this bun process never see them.
@@ -30,7 +30,7 @@ const OLD_SHAPE = {
   render(d: any, h: any) { return '<p class="ui-compat-t">' + h.rich(h.str(d.title, "기본 제목", 40)) + "</p>"; },
 };
 
-describe("old registerComponent call shape (acard-plugins contract)", () => {
+describe("old registerComponent call shape", () => {
   const reg = registerComponent(OLD_SHAPE);
 
   test("registers and returns a frozen def with the given fields unchanged", () => {

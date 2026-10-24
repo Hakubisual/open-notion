@@ -1,0 +1,260 @@
+{
+ "version": 1,
+ "previewCss": "/fonts/lib/preview.css",
+ "groups": [
+  {
+   "id": "sans",
+   "label": "산세리프"
+  },
+  {
+   "id": "serif",
+   "label": "세리프"
+  },
+  {
+   "id": "hand",
+   "label": "손글씨"
+  },
+  {
+   "id": "display",
+   "label": "제목용"
+  },
+  {
+   "id": "mono",
+   "label": "고정폭"
+  },
+  {
+   "id": "style",
+   "label": "문서 스타일"
+  }
+ ],
+ "fonts": [
+  {
+   "id": "default",
+   "label": "기본",
+   "category": "sans",
+   "cssFamily": "\"Pretendard Variable\"",
+   "weights": [
+    400,
+    700
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview default\"",
+   "css": null
+  },
+  {
+   "id": "serif",
+   "label": "명조",
+   "category": "serif",
+   "cssFamily": "\"Acard Serif\"",
+   "weights": [
+    400,
+    700
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview serif\"",
+   "css": "/fonts/serif.css"
+  },
+  {
+   "id": "mono",
+   "label": "고정폭",
+   "category": "mono",
+   "cssFamily": "\"JetBrains Mono\"",
+   "weights": [
+    400,
+    700
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview mono\"",
+   "css": "/fonts/lib/mono.css"
+  },
+  {
+   "id": "gothic",
+   "label": "고딕 A1",
+   "category": "sans",
+   "cssFamily": "\"Acard Gothic A1\"",
+   "weights": [
+    400,
+    700
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview gothic\"",
+   "css": "/fonts/lib/gothic.css",
+   "basedOn": "Gothic A1"
+  },
+  {
+   "id": "office",
+   "label": "오피스 고딕",
+   "category": "sans",
+   "cssFamily": "\"Acard Office Sans\"",
+   "weights": [
+    400,
+    700
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview office\"",
+   "css": "/fonts/lib/office.css",
+   "basedOn": "IBM Plex Sans KR"
+  },
+  {
+   "id": "dodum",
+   "label": "고운돋움",
+   "category": "sans",
+   "cssFamily": "\"Acard Gowun Dodum\"",
+   "weights": [
+    400
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview dodum\"",
+   "css": "/fonts/lib/dodum.css",
+   "basedOn": "Gowun Dodum"
+  },
+  {
+   "id": "batang",
+   "label": "고운바탕",
+   "category": "serif",
+   "cssFamily": "\"Acard Gowun Batang\"",
+   "weights": [
+    400,
+    700
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview batang\"",
+   "css": "/fonts/lib/batang.css",
+   "basedOn": "Gowun Batang"
+  },
+  {
+   "id": "myeongjo",
+   "label": "클래식 명조",
+   "category": "serif",
+   "cssFamily": "\"Acard Classic Serif\"",
+   "weights": [
+    400,
+    700
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview myeongjo\"",
+   "css": "/fonts/lib/myeongjo.css",
+   "basedOn": "Nanum Myeongjo"
+  },
+  {
+   "id": "hahmlet",
+   "label": "함렛",
+   "category": "serif",
+   "cssFamily": "\"Acard Hahmlet\"",
+   "weights": [
+    700
+   ],
+   "glyphs": 2788,
+   "headingOnly": true,
+   "previewCss": "font-family:\"Acard Preview hahmlet\"",
+   "css": "/fonts/lib/hahmlet.css",
+   "basedOn": "Hahmlet"
+  },
+  {
+   "id": "pen",
+   "label": "손글씨 펜",
+   "category": "hand",
+   "cssFamily": "\"Acard Pen\"",
+   "weights": [
+    400
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview pen\"",
+   "css": "/fonts/lib/pen.css",
+   "basedOn": "Nanum Pen Script"
+  },
+  {
+   "id": "gamja",
+   "label": "감자꽃",
+   "category": "hand",
+   "cssFamily": "\"Acard Gamja Flower\"",
+   "weights": [
+    400
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview gamja\"",
+   "css": "/fonts/lib/gamja.css",
+   "basedOn": "Gamja Flower"
+  },
+  {
+   "id": "poorstory",
+   "label": "푸어스토리",
+   "category": "hand",
+   "cssFamily": "\"Acard Poor Story\"",
+   "weights": [
+    400
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview poorstory\"",
+   "css": "/fonts/lib/poorstory.css",
+   "basedOn": "Poor Story"
+  },
+  {
+   "id": "dohyeon",
+   "label": "도현",
+   "category": "display",
+   "cssFamily": "\"Acard Do Hyeon\"",
+   "weights": [
+    400
+   ],
+   "glyphs": 2437,
+   "headingOnly": true,
+   "previewCss": "font-family:\"Acard Preview dohyeon\"",
+   "css": "/fonts/lib/dohyeon.css",
+   "basedOn": "Do Hyeon"
+  },
+  {
+   "id": "jua",
+   "label": "주아",
+   "category": "display",
+   "cssFamily": "\"Acard Jua\"",
+   "weights": [
+    400
+   ],
+   "glyphs": 2367,
+   "headingOnly": true,
+   "previewCss": "font-family:\"Acard Preview jua\"",
+   "css": "/fonts/lib/jua.css",
+   "basedOn": "Jua"
+  },
+  {
+   "id": "blackhan",
+   "label": "검은고딕",
+   "category": "display",
+   "cssFamily": "\"Acard Black Han Sans\"",
+   "weights": [
+    400
+   ],
+   "glyphs": 2581,
+   "headingOnly": true,
+   "previewCss": "font-family:\"Acard Preview blackhan\"",
+   "css": "/fonts/lib/blackhan.css",
+   "basedOn": "Black Han Sans"
+  },
+  {
+   "id": "report",
+   "label": "연구 보고서 (식·그림 번호)",
+   "category": "style",
+   "cssFamily": "\"Pretendard Variable\"",
+   "weights": [
+    400,
+    700
+   ],
+   "glyphs": 11172,
+   "headingOnly": false,
+   "previewCss": "font-family:\"Acard Preview default\"",
+   "css": null
+  }
+ ]
+}

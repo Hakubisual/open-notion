@@ -14,6 +14,8 @@ const EDITOR_COLUMNS = [
   "ALTER TABLE editor_page_settings ADD COLUMN ai TEXT NOT NULL DEFAULT 'edit'",
   "ALTER TABLE editor_page_settings ADD COLUMN small INTEGER NOT NULL DEFAULT 0",
 ];
+// The ids of assets/fonts/catalog.json (tests/font-library.test.ts keeps the two equal).
+export const PAGE_FONTS = ["default", "serif", "mono", "gothic", "office", "dodum", "batang", "myeongjo", "hahmlet", "pen", "gamja", "poorstory", "dohyeon", "jua", "blackhan", "report"];
 
 // Remembered per store key, like ensureAgentSchema (#17).
 const editorSchemaReady = new Set();
@@ -107,7 +109,7 @@ function settingsPatch(body) {
   if ("width" in body && !["default", "normal", "full"].includes(body.width)) throw new EditorInputError("Invalid width.");
   // "report" = the research-report page style (the normal page look plus numbered equations and figures): a value of the
   // existing font column, so no schema change; an older build that does not know it draws the page without numbers.
-  if ("font" in body && !["default", "serif", "mono", "report"].includes(body.font)) throw new EditorInputError("Invalid font.");
+  if ("font" in body && !PAGE_FONTS.includes(body.font)) throw new EditorInputError("Invalid font.");
   if ("favorite" in body && typeof body.favorite !== "boolean") throw new EditorInputError("Invalid favorite.");
   if ("ai" in body && !["edit", "lock", "ref", "smart"].includes(body.ai)) throw new EditorInputError("Invalid ai.");
   if ("small" in body && typeof body.small !== "boolean") throw new EditorInputError("Invalid small.");

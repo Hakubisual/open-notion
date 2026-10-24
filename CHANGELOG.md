@@ -2,6 +2,23 @@
 
 All notable changes to this project. Dates are UTC.
 
+## 0.3.2 - 2026-10-24
+
+### Fixed
+
+- The block menu that opens on `/` hit a script error in 0.3.1 and could not draw its grouped list. It works again,
+  and a test now draws the built menu in a browser.
+
+### Removed
+
+- The last plugin code: the plugin block type in Markdown (such a fence from the hosted app now imports as a code block), the
+  plugin frame helpers in the sandbox policy, the plugin entries in the build and the plugin strings in the UI
+  dictionaries. This edition has no plugins.
+
+### Added
+
+- More page fonts to pick in Page settings, served from this server (OFL; their licenses are in `LICENSES/`).
+
 ## 0.3.1 - 2026-10-24
 
 ### Added
